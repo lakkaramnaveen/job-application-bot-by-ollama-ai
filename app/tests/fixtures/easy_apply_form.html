@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form</title></head>
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="resume-upload">Resume</label>
+    <input id="resume-upload" type="file" />
+
+    <label for="years-python">Years of Python experience</label>
+    <input id="years-python" type="text" />
+
+    <fieldset>
+      <legend>Are you authorized to work in the US?</legend>
+      <input id="auth-yes" type="radio" name="auth" />
+      <label for="auth-yes">Yes</label>
+      <input id="auth-no" type="radio" name="auth" />
+      <label for="auth-no">No</label>
+    </fieldset>
+
+    <label for="start-date">Preferred start date</label>
+    <select id="start-date">
+      <option value="">Select an option</option>
+      <option value="immediately">Immediately</option>
+      <option value="2weeks">In 2 weeks</option>
+    </select>
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

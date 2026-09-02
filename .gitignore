@@ -1,1 +1,12 @@
 .DS_Store
+
+# app/ (job_bot local agent)
+app/.venv/
+app/__pycache__/
+app/**/__pycache__/
+app/.env
+app/data/
+app/*.egg-info/
+app/.pytest_cache/
+app/.mypy_cache/
+app/.ruff_cache/
