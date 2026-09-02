@@ -8,6 +8,7 @@ cmd_run never invoked it until this was fixed).
 """
 
 import argparse
+import json
 from contextlib import contextmanager
 
 from job_bot.browser.base_adapter import JobPosting
@@ -23,8 +24,11 @@ JOB = JobPosting(
 
 
 class FakeProvider(LLMProvider):
-    def __init__(self):
+    def __init__(self, application_answer: ApplicationAnswer | None = None):
         self.schemas_requested: list[type] = []
+        self._application_answer = application_answer or ApplicationAnswer(
+            answer="5 years", confidence=0.9, based_on_resume=True
+        )
 
     def generate_structured(self, *, system, prompt, schema):
         self.schemas_requested.append(schema)
@@ -47,7 +51,7 @@ class FakeProvider(LLMProvider):
         if schema is CoverLetter:
             return CoverLetter(body="Dear Acme, I would love to join your team.")
         if schema is ApplicationAnswer:
-            return ApplicationAnswer(answer="5 years", confidence=0.9, based_on_resume=True)
+            return self._application_answer
         raise AssertionError(f"Unexpected schema requested: {schema}")
 
 
@@ -193,3 +197,32 @@ def test_run_uploads_the_original_resume_file_not_a_generated_one(tmp_path, monk
 
     call = captured_adapter["adapter"].fill_and_submit_calls[0]
     assert call["resume_path"] == str(settings.resume_path)
+
+
+def test_run_caches_high_confidence_answers_to_faq(tmp_path, monkeypatch):
+    provider = FakeProvider(
+        application_answer=ApplicationAnswer(answer="5 years", confidence=0.9, based_on_resume=True)
+    )
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args())
+
+    faq = json.loads(settings.faq_path.read_text())
+    assert faq == {"Years of experience?": "5 years"}
+
+
+def test_run_does_not_cache_low_confidence_answers_to_faq(tmp_path, monkeypatch):
+    provider = FakeProvider(
+        application_answer=ApplicationAnswer(answer="Not sure", confidence=0.2, based_on_resume=False)
+    )
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args())
+
+    assert not settings.faq_path.exists()

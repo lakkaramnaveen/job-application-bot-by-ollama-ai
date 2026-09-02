@@ -132,6 +132,22 @@ job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_res
 `data/audit.log`. Valid statuses are listed in
 `job_bot.tracker.db.TRACKER_STATUSES`.
 
+Answers `job-bot run` is confident in (grounded in your resume/FAQ, above
+`FAQ_SAVE_CONFIDENCE` in `.env`) are automatically cached to `FAQ_PATH` for
+reuse on future applications - the bot gets faster and more consistent the
+more you use it, without ever caching a low-confidence guess.
+
+## Company blacklist
+
+```bash
+job-bot blacklist add "Company Name"      # job-bot run will always skip it
+job-bot blacklist remove "Company Name"
+job-bot blacklist list
+```
+
+Backed by `BLACKLIST_PATH` (default `data/company_blacklist.json`); matching
+is case-insensitive.
+
 ## Dashboard
 
 A live, one-page view of every tracked application:

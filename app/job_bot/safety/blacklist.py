@@ -31,5 +31,22 @@ class CompanyBlacklist:
 
     def add(self, company_name: str) -> None:
         self._companies.add(self._normalize(company_name))
+        self._save()
+
+    def remove(self, company_name: str) -> bool:
+        """Returns True if the company was on the list (and is now removed),
+        False if it wasn't there to begin with.
+        """
+        normalized = self._normalize(company_name)
+        if normalized not in self._companies:
+            return False
+        self._companies.discard(normalized)
+        self._save()
+        return True
+
+    def list_companies(self) -> list[str]:
+        return sorted(self._companies)
+
+    def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(sorted(self._companies), indent=2), encoding="utf-8")

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
 
     daily_application_cap: int = 20
     require_confirm_before_submit: bool = True
+    # Only answers at/above this confidence AND grounded in the resume/FAQ
+    # (not a guess) get cached to faq_path for reuse on future applications -
+    # a low-confidence answer getting cached would otherwise compound into
+    # future prompts as if it were a verified previous answer.
+    faq_save_confidence: float = 0.7
 
     db_path: Path = APP_DIR / "data" / "job_bot.sqlite3"
     browser_profile_dir: Path = APP_DIR / "data" / "browser_profile"

@@ -111,6 +111,8 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             def answer(question: str, job_id: str = posting.job_id) -> str:
                 result = answer_question(provider, resume_text, resume_store.faq_answers(), question)
                 tracker.record_qa(job_id, question, result.answer)
+                if result.based_on_resume and result.confidence >= settings.faq_save_confidence:
+                    resume_store.save_faq_answer(question, result.answer)
                 return result.answer
 
             if not confirmer.confirm(f"Apply to {posting.title} at {posting.company}?"):
@@ -194,6 +196,25 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
             print(f"  - {subject}")
 
 
+def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
+    blacklist = CompanyBlacklist(settings.blacklist_path)
+    if args.blacklist_action == "add":
+        blacklist.add(args.company)
+        print(f"Added to blacklist: {args.company}")
+    elif args.blacklist_action == "remove":
+        removed = blacklist.remove(args.company)
+        print(
+            f"Removed from blacklist: {args.company}" if removed else f"Not on the blacklist: {args.company}"
+        )
+    elif args.blacklist_action == "list":
+        companies = blacklist.list_companies()
+        if not companies:
+            print("Blacklist is empty.")
+        else:
+            for company in companies:
+                print(company)
+
+
 def cmd_dashboard(settings: Settings, args: argparse.Namespace) -> None:
     port = args.port if args.port is not None else settings.dashboard_port
     run_dashboard(settings.db_path, port=port, open_browser=not args.no_open)
@@ -269,6 +290,14 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_p.add_argument("--port", type=int, default=None, help="default: from .env (8765)")
     dashboard_p.add_argument("--no-open", action="store_true", help="Don't auto-open a browser tab.")
 
+    blacklist_p = sub.add_parser("blacklist", help="Manage the list of companies to never apply to.")
+    blacklist_sub = blacklist_p.add_subparsers(dest="blacklist_action", required=True)
+    add_p = blacklist_sub.add_parser("add", help="Add a company to the blacklist.")
+    add_p.add_argument("company")
+    remove_p = blacklist_sub.add_parser("remove", help="Remove a company from the blacklist.")
+    remove_p.add_argument("company")
+    blacklist_sub.add_parser("list", help="List blacklisted companies.")
+
     return parser
 
 
@@ -296,6 +325,8 @@ def main() -> None:
             cmd_gmail_sync(settings, args)
         elif args.command == "dashboard":
             cmd_dashboard(settings, args)
+        elif args.command == "blacklist":
+            cmd_blacklist(settings, args)
     except EXPECTED_ERRORS as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
