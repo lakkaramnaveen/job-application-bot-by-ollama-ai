@@ -10,12 +10,32 @@ prep - closing the loop on generation without auto-submitting unreviewed
 content.
 """
 
+import re
 from pathlib import Path
 
 from job_bot.models.schemas import CoverLetter, TailoredResume
 
+# job_id ultimately comes from a scraped LinkedIn data-job-id DOM attribute -
+# untrusted data (see linkedin_adapter.py's search()) - and is used below as
+# a filesystem path component. Restrict it to a safe charset (no "/", "\",
+# or other separators) and reject the two reserved components that would
+# otherwise resolve to a different directory even within that charset, so a
+# malicious or malformed job_id can never write outside base_dir.
+_SAFE_JOB_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+_RESERVED_COMPONENTS = {".", ".."}
+
+
+class UnsafeJobId(ValueError):
+    pass
+
 
 def _job_dir(base_dir: Path, job_id: str) -> Path:
+    if not _SAFE_JOB_ID.fullmatch(job_id) or job_id in _RESERVED_COMPONENTS:
+        raise UnsafeJobId(
+            f"Refusing to use job_id {job_id!r} as a filesystem path component - "
+            "job IDs are scraped, untrusted data, and this value doesn't look "
+            "like a real LinkedIn job ID."
+        )
     out_dir = base_dir / job_id
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir

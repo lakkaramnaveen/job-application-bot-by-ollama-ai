@@ -5,7 +5,7 @@ from job_bot.browser.linkedin_adapter import LinkedInAdapter
 from job_bot.browser.session import browser_session
 from job_bot.config import Settings, SettingsError, get_settings
 from job_bot.dashboard.server import run_dashboard
-from job_bot.generation.artifacts import write_cover_letter, write_tailored_resume
+from job_bot.generation.artifacts import UnsafeJobId, write_cover_letter, write_tailored_resume
 from job_bot.generation.cover_letter import generate_cover_letter
 from job_bot.generation.qa_answerer import answer_question
 from job_bot.generation.resume_tailor import tailor_resume
@@ -32,6 +32,7 @@ EXPECTED_ERRORS = (
     SettingsError,
     InvalidStatus,
     GmailClientError,
+    UnsafeJobId,
 )
 
 
