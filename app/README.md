@@ -124,6 +124,54 @@ job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_res
 `data/audit.log`. Valid statuses are listed in
 `job_bot.tracker.db.TRACKER_STATUSES`.
 
+## Dashboard
+
+A live, one-page view of every tracked application:
+
+```bash
+job-bot dashboard              # opens http://127.0.0.1:8765 in your browser
+job-bot dashboard --port 9000 --no-open
+```
+
+It's a read-only local HTTP server (bound to `127.0.0.1` only, never your
+network) that queries `data/job_bot.sqlite3` directly and polls itself every
+5 seconds - no build step, no separate frontend, nothing to deploy. Shows
+title, company, fit score, status (color-coded), and applied date for every
+job `job-bot run` has seen.
+
+## Gmail sync
+
+Recruiters reply by email, not through LinkedIn - `job-bot gmail-sync` reads
+your recent Gmail, classifies each message with the LLM (interview invite /
+rejection / offer / application confirmation / not job-related), matches it
+to a tracked application by company name, and updates its status. It **never**
+updates on an ambiguous match (multiple or zero tracked jobs match the
+guessed company), a low-confidence classification, or a job already in a
+terminal status (`offer`/`rejected`/`withdrawn`/`no_response`) - see
+`job_bot/integrations/gmail_sync.py`'s module docstring for the exact rules.
+
+**One-time setup** (Google Cloud Console):
+1. Create or pick a project at [console.cloud.google.com](https://console.cloud.google.com).
+2. Enable the **Gmail API** (APIs & Services -> Library -> search "Gmail API" -> Enable).
+3. Configure the OAuth consent screen (External is fine for personal use;
+   add your own Gmail address as a test user).
+4. Create credentials -> OAuth client ID -> Application type **Desktop app**.
+5. Download the JSON and save it to the path in `GMAIL_CREDENTIALS_PATH`
+   (default `data/gmail_credentials.json`).
+
+**Usage:**
+
+```bash
+job-bot gmail-sync --dry-run     # see what would change, writes nothing
+job-bot gmail-sync               # first run opens a browser for the Google OAuth consent screen
+job-bot gmail-sync --days 30 --max-emails 100
+```
+
+The first run opens a browser tab for you to grant **read-only** access
+(`gmail.readonly` - this tool cannot send, delete, or modify mail) and saves
+a refresh token to `GMAIL_TOKEN_PATH` (`data/gmail_token.json`) so you won't
+be prompted again. Both files are gitignored; see `SECURITY.md`.
+
 ## Data storage
 
 Everything stays local, under `app/data/` (gitignored):
@@ -132,6 +180,8 @@ Everything stays local, under `app/data/` (gitignored):
 - `data/audit.log` - a redacted, append-only log of every action taken
 - `data/company_blacklist.json` - companies to always skip
 - `data/faq_answers.json` - previously given answers, reused as context
+- `data/gmail_credentials.json` / `data/gmail_token.json` - your Gmail OAuth
+  client and refresh token, if you've set up Gmail sync
 
 Your `.env` (API keys) and everything in `data/` never leave your machine
 except for the LLM API calls you configure.
@@ -153,9 +203,12 @@ installed) on Python 3.11-3.13 on every push/PR touching `app/`, plus a
 dependency-review check on PRs.
 
 Tests are fully offline: the Claude provider is tested against a mocked SDK
-client, the Ollama provider against a mocked HTTP server (`respx`), and the
+client, the Ollama provider against a mocked HTTP server (`respx`), the
 LinkedIn search/form-filling logic against local static HTML fixtures
-(`tests/fixtures/`) - no test ever calls a real API or touches linkedin.com.
+(`tests/fixtures/`), the Gmail client against a fake `googleapiclient`
+Resource (no OAuth flow, no network), and the dashboard against a real
+`ThreadingHTTPServer` bound to an ephemeral localhost port - no test ever
+calls a real API, touches linkedin.com, or hits Google's servers.
 
 ## Extending to other job boards
 

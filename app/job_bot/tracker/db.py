@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 # The single authoritative set of values the `jobs.status` column may hold.
 # `seen`/`applied`/`skipped` are written by `job_bot run` itself; the rest
@@ -113,6 +114,26 @@ class Tracker:
         with self._connect() as conn:
             rows = conn.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status").fetchall()
         return dict(rows)
+
+    def list_jobs(self, status: str | None = None) -> list[dict[str, Any]]:
+        """All tracked jobs (optionally filtered to one status), newest
+        first. Used by the dashboard and by gmail_sync's company matching.
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            if status is not None:
+                rows = conn.execute(
+                    "SELECT * FROM jobs WHERE status = ? ORDER BY first_seen_at DESC", (status,)
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM jobs ORDER BY first_seen_at DESC").fetchall()
+        return [dict(row) for row in rows]
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+        return dict(row) if row else None
 
     def record_qa(self, job_id: str, question: str, answer: str) -> None:
         now = datetime.now(UTC).isoformat()

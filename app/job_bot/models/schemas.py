@@ -34,7 +34,9 @@ class JobMatchScore(BaseModel):
     )
     technical_fit: int = Field(ge=0, le=100, description="How well required/preferred skills match")
     experience_fit: int = Field(ge=0, le=100, description="How well work history matches what's sought")
-    culture_fit: int = Field(ge=0, le=100, description="Likely culture/working-style fit, from posting tone/values")
+    culture_fit: int = Field(
+        ge=0, le=100, description="Likely culture/working-style fit, from posting tone/values"
+    )
     score: int = Field(ge=0, le=100, description="Overall fit score, 0 (no match) to 100 (perfect match)")
     reasoning: str = Field(description="Brief explanation of the score")
     should_apply: bool = Field(description="Whether this job clears the bar to apply to")
@@ -67,3 +69,25 @@ class ApplicationAnswer(BaseModel):
     based_on_resume: bool = Field(
         description="Whether this answer is directly supported by resume/FAQ content"
     )
+
+
+# What kind of job-application-related email this is, if any. "other" covers
+# both "not job related" and "job related but doesn't fit another bucket" -
+# gmail_sync only acts on the four specific categories below.
+EmailCategory = Literal["interview_invite", "rejection", "offer", "application_confirmation", "other"]
+
+
+class EmailClassification(BaseModel):
+    """LLM's read of one email, for matching it back to a tracked application.
+
+    company_guess/role_guess are free-text extractions from the email, not
+    validated against the tracker - job_bot.integrations.gmail_sync does that
+    matching itself and never updates a tracked job on a guess it can't
+    confidently tie to exactly one row.
+    """
+
+    is_job_related: bool = Field(description="Whether this email concerns a specific job application")
+    category: EmailCategory = Field(description="Best-fit category if is_job_related, else 'other'")
+    company_guess: str = Field(default="", description="Company name this email appears to be from/about")
+    role_guess: str = Field(default="", description="Job title this email appears to reference, if any")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in is_job_related and category")

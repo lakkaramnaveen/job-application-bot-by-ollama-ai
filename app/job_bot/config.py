@@ -36,6 +36,15 @@ class Settings(BaseSettings):
     browser_profile_dir: Path = APP_DIR / "data" / "browser_profile"
     audit_log_path: Path = APP_DIR / "data" / "audit.log"
 
+    # --- Gmail sync (optional) ---
+    gmail_credentials_path: Path = APP_DIR / "data" / "gmail_credentials.json"
+    gmail_token_path: Path = APP_DIR / "data" / "gmail_token.json"
+    gmail_sync_days: int = 14
+    gmail_match_confidence: float = 0.6
+
+    # --- Dashboard ---
+    dashboard_port: int = 8765
+
     def effective_daily_cap(self) -> int:
         """The daily cap actually enforced: never above the hard ceiling."""
         return min(self.daily_application_cap, HARD_DAILY_APPLICATION_CEILING)

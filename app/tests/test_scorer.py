@@ -52,7 +52,9 @@ def test_eligibility_fail_forces_should_apply_false_even_if_model_disagreed():
     posting) must never be overridden by a model that scored should_apply=True
     anyway - this is enforced in code, not just requested in the prompt.
     """
-    provider = FakeProvider(make_score(eligibility="fail", eligibility_note="US citizens only", should_apply=True))
+    provider = FakeProvider(
+        make_score(eligibility="fail", eligibility_note="US citizens only", should_apply=True)
+    )
 
     result = score_job_match(provider, resume_text="resume", job_description="US citizens only")
 
