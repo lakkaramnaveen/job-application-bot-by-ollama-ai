@@ -43,6 +43,39 @@ def test_render_rows_html_escapes_title_and_url():
     assert "<img src=x onerror=alert(1)>" not in html
 
 
+def test_render_rows_html_does_not_render_javascript_scheme_as_a_link():
+    """javascript: (and any other non-http(s) scheme) must never reach an
+    href - html.escape() alone doesn't neutralize it since it contains no
+    HTML metacharacters. See app/SECURITY.md's dashboard XSS note.
+    """
+    malicious = make_job(title="Click me", url="javascript:alert(document.cookie)")
+    html = render_rows_html([malicious])
+    assert "javascript:" not in html
+    assert "<a " not in html
+    assert "Click me" in html  # still shown, just not as a link
+
+
+def test_render_rows_html_does_not_render_data_scheme_as_a_link():
+    malicious = make_job(url="data:text/html,<script>alert(1)</script>")
+    html = render_rows_html([malicious])
+    assert "data:text/html" not in html
+    assert "<a " not in html
+
+
+def test_render_rows_html_renders_http_and_https_as_links():
+    html = render_rows_html([make_job(url="http://example.com/job")])
+    assert 'href="http://example.com/job"' in html
+    html = render_rows_html([make_job(url="https://example.com/job")])
+    assert 'href="https://example.com/job"' in html
+
+
+def test_render_rows_html_handles_empty_or_malformed_url_gracefully():
+    html = render_rows_html([make_job(url="")])
+    assert "<a " not in html
+    html = render_rows_html([make_job(url="not a url at all ::::")])
+    assert "<a " not in html
+
+
 def test_render_rows_html_handles_missing_score_and_applied_at():
     job = make_job(match_score=None, applied_at=None)
     html = render_rows_html([job])

@@ -5,6 +5,14 @@ for the HTTP layer that calls this.
 
 import html
 from typing import Any
+from urllib.parse import urlparse
+
+# job.url ultimately comes from a scraped LinkedIn anchor href (see
+# linkedin_adapter.py's search()) - untrusted data. html.escape() alone
+# neutralizes attribute breakout but not a javascript: URI, which would
+# execute in the dashboard's origin on click. Only ever render an <a href>
+# for these two schemes; anything else renders as plain, unlinked text.
+_SAFE_URL_SCHEMES = frozenset({"http", "https"})
 
 STATUS_COLORS = {
     "seen": "#9ca3af",
@@ -29,6 +37,21 @@ def _badge(status: str) -> str:
     )
 
 
+def _title_cell(title: str, raw_url: str) -> str:
+    """Link the title to its posting only when the URL is http(s) - any
+    other scheme (javascript:, data:, ...) renders as plain text instead of
+    a clickable link, since raw_url is untrusted scraped/emailed data.
+    """
+    try:
+        scheme = urlparse(raw_url).scheme.lower()
+    except ValueError:
+        scheme = ""
+    if scheme not in _SAFE_URL_SCHEMES:
+        return html.escape(title)
+    safe_url = html.escape(raw_url, quote=True)
+    return f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">{html.escape(title)}</a>'
+
+
 def render_rows_html(jobs: list[dict[str, Any]]) -> str:
     """The <tbody> contents only - reused by both the full page and the
     polling endpoint that refreshes just the table body.
@@ -38,16 +61,15 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
 
     rows = []
     for job in jobs:
-        title = html.escape(str(job.get("title", "")))
+        title_cell = _title_cell(str(job.get("title", "")), str(job.get("url", "")))
         company = html.escape(str(job.get("company", "")))
-        url = html.escape(str(job.get("url", "")), quote=True)
         score = job.get("match_score")
         score_text = str(score) if score is not None else "-"
         status = html.escape(str(job.get("status", "")))
         applied_at = html.escape(str(job.get("applied_at") or "-"))
         rows.append(
             "<tr>"
-            f'<td><a href="{url}" target="_blank" rel="noopener noreferrer">{title}</a></td>'
+            f"<td>{title_cell}</td>"
             f"<td>{company}</td>"
             f"<td>{score_text}</td>"
             f"<td>{_badge(status)}</td>"
