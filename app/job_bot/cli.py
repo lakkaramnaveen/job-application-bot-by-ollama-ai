@@ -5,8 +5,10 @@ from job_bot.browser.linkedin_adapter import LinkedInAdapter
 from job_bot.browser.session import browser_session
 from job_bot.config import Settings, SettingsError, get_settings
 from job_bot.dashboard.server import run_dashboard
+from job_bot.generation.artifacts import write_cover_letter, write_tailored_resume
 from job_bot.generation.cover_letter import generate_cover_letter
 from job_bot.generation.qa_answerer import answer_question
+from job_bot.generation.resume_tailor import tailor_resume
 from job_bot.integrations.gmail_client import GmailClient, GmailClientError
 from job_bot.integrations.gmail_sync import sync_gmail
 from job_bot.llm.claude_provider import ClaudeProviderError
@@ -99,7 +101,11 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 tracker.mark_skipped(posting.job_id)
                 continue
 
+            tailored = tailor_resume(provider, resume_text, description)
             cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
+            write_tailored_resume(settings.applications_dir, posting.job_id, tailored)
+            write_cover_letter(settings.applications_dir, posting.job_id, cover_letter)
+            audit.log("generated_materials", job_id=posting.job_id)
 
             def answer(question: str, job_id: str = posting.job_id) -> str:
                 result = answer_question(provider, resume_text, resume_store.faq_answers(), question)

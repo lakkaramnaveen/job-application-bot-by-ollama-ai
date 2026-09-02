@@ -110,6 +110,14 @@ job-bot run --provider ollama --model deepseek-r1:8b --dry-run
 job-bot run --provider claude --model claude-opus-5 --dry-run
 ```
 
+For every job that passes the fit/eligibility gate (even on a `--dry-run`),
+`job-bot run` writes a tailored resume and cover letter to
+`data/applications/<job_id>/` for you to read, copy from, or reuse in
+interview prep. The file actually uploaded to the LinkedIn form is still
+always your own `RESUME_PATH` document, unedited - the generated tailored
+resume is a reference artifact, not something auto-substituted into a real
+submission without your review. See `job_bot/generation/artifacts.py`.
+
 ## Tracking outcomes
 
 `job-bot run` only ever writes `seen`, `applied`, or `skipped` - it has no way
@@ -182,6 +190,8 @@ Everything stays local, under `app/data/` (gitignored):
 - `data/faq_answers.json` - previously given answers, reused as context
 - `data/gmail_credentials.json` / `data/gmail_token.json` - your Gmail OAuth
   client and refresh token, if you've set up Gmail sync
+- `data/applications/<job_id>/` - the tailored resume and cover letter
+  generated for each job you passed the fit gate on
 
 Your `.env` (API keys) and everything in `data/` never leave your machine
 except for the LLM API calls you configure.

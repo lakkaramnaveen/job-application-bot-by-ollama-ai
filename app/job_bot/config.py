@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     db_path: Path = APP_DIR / "data" / "job_bot.sqlite3"
     browser_profile_dir: Path = APP_DIR / "data" / "browser_profile"
     audit_log_path: Path = APP_DIR / "data" / "audit.log"
+    applications_dir: Path = APP_DIR / "data" / "applications"
 
     # --- Gmail sync (optional) ---
     gmail_credentials_path: Path = APP_DIR / "data" / "gmail_credentials.json"
