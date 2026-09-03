@@ -16,7 +16,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import cast
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from job_bot.dashboard.render import PAGE_SIZE, render_page_html, render_qa_html, render_rows_html
 from job_bot.tracker.db import InvalidSort, InvalidStatus, Tracker
@@ -65,15 +65,18 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
             self._send(status, "application/json", json.dumps(payload).encode("utf-8"))
 
         def _is_same_origin(self) -> bool:
-            """Reject a POST whose Origin header (sent by browsers on
-            cross-origin fetches) doesn't match this dashboard's own
-            host:port. A request with no Origin header (same-page navigation,
-            curl, tests) is allowed through - Origin is specifically a
-            cross-origin signal, so its absence isn't evidence of an attack.
+            """Reject a POST unless its Origin header matches this
+            dashboard's own host:port. Real browsers attach Origin to every
+            POST/PUT/DELETE fetch, same-origin or cross-origin alike, so the
+            dashboard's own JS (which only ever calls fetch() from the page
+            it's served from) always has one - a missing Origin header means
+            the request didn't come from a browser honoring same-origin
+            semantics at all (e.g. a bare HTTP client), which is exactly the
+            case this check exists to reject, not a case to wave through.
             """
             origin = self.headers.get("Origin")
             if origin is None:
-                return True
+                return False
             port = cast(ThreadingHTTPServer, self.server).server_port
             expected = {f"http://{DASHBOARD_HOST}:{port}", f"http://localhost:{port}"}
             return origin in expected
@@ -82,12 +85,17 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
             """Extract `{job_id}` from a path shaped like
             f"{prefix}{{job_id}}{suffix}", or None if it doesn't match.
             job_id is only ever used as a parameterized SQL value, so no
-            further sanitization is needed here beyond "non-empty".
+            further sanitization is needed here beyond "non-empty" - but it
+            does need percent-decoding first: the frontend sends it via
+            encodeURIComponent (render.py's qa-button/status-select handlers)
+            so a job_id containing e.g. a space or '#' arrives as raw
+            "%20"/"%23" in self.path, which must be decoded back to the
+            literal value actually stored in the database before use.
             """
             path = urlparse(self.path).path
             if not (path.startswith(prefix) and path.endswith(suffix)):
                 return None
-            job_id = path[len(prefix) : len(path) - len(suffix)]
+            job_id = unquote(path[len(prefix) : len(path) - len(suffix)])
             return job_id or None
 
         def do_GET(self) -> None:  # noqa: N802 - required name for BaseHTTPRequestHandler

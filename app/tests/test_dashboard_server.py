@@ -3,6 +3,7 @@ import threading
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -16,6 +17,9 @@ def live_server(tmp_path):
     tracker = Tracker(db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://example.com/job1", match_score=80)
     tracker.mark_applied("job1")
+    # A job_id needing percent-encoding, to exercise the frontend's
+    # encodeURIComponent(job_id) round-tripping through the server.
+    tracker.upsert_job("job 2", "Frontend Engineer", "Acme Corp", "https://example.com/job2")
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db_path))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -48,9 +52,8 @@ def test_api_jobs_returns_json(live_server):
     with urllib.request.urlopen(f"{live_server}/api/jobs") as resp:
         assert resp.headers["Content-Type"] == "application/json"
         data = json.loads(resp.read().decode("utf-8"))
-    assert len(data) == 1
-    assert data[0]["job_id"] == "job1"
-    assert data[0]["status"] == "applied"
+    by_id = {job["job_id"]: job for job in data}
+    assert by_id["job1"]["status"] == "applied"
 
 
 def test_unknown_path_returns_404(live_server):
@@ -59,11 +62,20 @@ def test_unknown_path_returns_404(live_server):
     assert exc_info.value.code == 404
 
 
-def _post_json(url: str, payload: dict, headers: dict | None = None):
+def _post_json(url: str, payload: dict, headers: dict | None = None, *, same_origin: bool = True):
+    """POSTs `payload` as JSON. Real browsers attach an Origin header to
+    every POST, same-origin included, so `same_origin=True` (the default)
+    mimics that by setting Origin to the request's own origin - matching
+    what the dashboard's own JS would send. Pass same_origin=False (or an
+    explicit Origin in `headers`) to exercise a request without that.
+    """
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=body, method="POST", headers={"Content-Type": "application/json", **(headers or {})}
-    )
+    request_headers = {"Content-Type": "application/json"}
+    if same_origin:
+        split = urlsplit(url)
+        request_headers["Origin"] = f"{split.scheme}://{split.netloc}"
+    request_headers.update(headers or {})
+    req = urllib.request.Request(url, data=body, method="POST", headers=request_headers)
     return urllib.request.urlopen(req)
 
 
@@ -81,7 +93,7 @@ def test_api_rows_supports_search(live_server):
 
 def test_api_rows_reports_total_via_header(live_server):
     with urllib.request.urlopen(f"{live_server}/api/rows") as resp:
-        assert resp.headers["X-Total-Jobs"] == "1"
+        assert resp.headers["X-Total-Jobs"] == "2"
 
 
 def test_api_rows_rejects_invalid_sort_column(live_server):
@@ -111,7 +123,8 @@ def test_post_status_updates_job(live_server):
 
     with urllib.request.urlopen(f"{live_server}/api/jobs") as verify:
         jobs = json.loads(verify.read().decode("utf-8"))
-    assert jobs[0]["status"] == "interviewing"
+    by_id = {job["job_id"]: job for job in jobs}
+    assert by_id["job1"]["status"] == "interviewing"
 
 
 def test_post_status_rejects_unknown_status(live_server):
@@ -131,7 +144,10 @@ def test_post_status_rejects_non_json_content_type(live_server):
         f"{live_server}/api/jobs/job1/status",
         data=b"status=offer",
         method="POST",
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": live_server,
+        },
     )
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(req)
@@ -153,10 +169,18 @@ def test_post_status_rejects_cross_origin_request(live_server):
     assert exc_info.value.code == 403
 
 
+def test_post_status_rejects_missing_origin(live_server):
+    """A real browser attaches Origin to every POST, same-origin included -
+    a request with none isn't a browser honoring same-origin semantics at
+    all, so it's rejected rather than trusted by default.
+    """
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/jobs/job1/status", {"status": "offer"}, same_origin=False)
+    assert exc_info.value.code == 403
+
+
 def test_post_status_allows_same_origin_request(live_server):
-    resp = _post_json(
-        f"{live_server}/api/jobs/job1/status", {"status": "offer"}, headers={"Origin": live_server}
-    )
+    resp = _post_json(f"{live_server}/api/jobs/job1/status", {"status": "offer"})
     assert resp.status == 200
 
 
@@ -165,3 +189,19 @@ def test_post_status_rejects_oversized_body(live_server):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         _post_json(f"{live_server}/api/jobs/job1/status", huge_payload)
     assert exc_info.value.code == 400
+
+
+def test_post_status_decodes_percent_encoded_job_id(live_server):
+    """The frontend sends job_id via encodeURIComponent (see render.py) -
+    the server must decode it back before matching against the stored
+    value, or a job_id with a space never resolves.
+    """
+    resp = _post_json(f"{live_server}/api/jobs/job%202/status", {"status": "applied"})
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "job_id": "job 2", "status": "applied"}
+
+
+def test_qa_endpoint_decodes_percent_encoded_job_id(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/jobs/job%202/qa") as resp:
+        assert resp.status == 200
