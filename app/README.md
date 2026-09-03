@@ -118,6 +118,12 @@ always your own `RESUME_PATH` document, unedited - the generated tailored
 resume is a reference artifact, not something auto-substituted into a real
 submission without your review. See `job_bot/generation/artifacts.py`.
 
+Unlike the resume, the generated cover letter *is* used directly in the
+submission: if the Easy Apply form has a "Cover letter" text field, it's
+filled with the generated text (a text field is per-application content
+you can always edit or clear before submitting, unlike a formal resume
+document) - see `_looks_like_cover_letter_field()` in `linkedin_adapter.py`.
+
 ## Tracking outcomes
 
 `job-bot run` only ever writes `seen`, `applied`, or `skipped` - it has no way

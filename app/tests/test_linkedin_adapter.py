@@ -109,6 +109,47 @@ def test_no_upload_attempted_when_resume_path_is_none(playwright_page):
     assert uploaded == 0
 
 
+def test_cover_letter_field_is_filled_from_generated_cover_letter(playwright_page):
+    posting = JobPosting(job_id="5", title="X", company="Y", url=f"file://{FIXTURE_PATH}", description="")
+    adapter = LinkedInAdapter(playwright_page)
+
+    def answer_question(label: str) -> str:
+        assert "cover letter" not in label.casefold(), (
+            f"answer_question should not be called for the cover letter field, got label={label!r}"
+        )
+        return ""
+
+    adapter.fill_and_submit(
+        posting,
+        answer_question=answer_question,
+        resume_path=None,
+        cover_letter_text="Dear Hiring Manager, I'm excited to apply.",
+        dry_run=True,
+    )
+
+    assert (
+        playwright_page.locator("#cover-letter").input_value() == "Dear Hiring Manager, I'm excited to apply."
+    )
+
+
+def test_cover_letter_field_falls_back_to_qa_when_no_cover_letter_given(playwright_page):
+    posting = JobPosting(job_id="6", title="X", company="Y", url=f"file://{FIXTURE_PATH}", description="")
+    adapter = LinkedInAdapter(playwright_page)
+
+    def answer_question(label: str) -> str:
+        return "fallback answer" if "cover letter" in label.casefold() else ""
+
+    adapter.fill_and_submit(
+        posting,
+        answer_question=answer_question,
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert playwright_page.locator("#cover-letter").input_value() == "fallback answer"
+
+
 def test_search_skips_already_applied_and_deduplicates_across_pages(playwright_page, monkeypatch):
     real_goto = playwright_page.goto
     monkeypatch.setattr(playwright_page, "goto", lambda url, **kw: real_goto(f"file://{SEARCH_FIXTURE_PATH}"))

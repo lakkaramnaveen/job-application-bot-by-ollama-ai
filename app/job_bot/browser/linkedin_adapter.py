@@ -132,7 +132,7 @@ class LinkedInAdapter(JobBoardAdapter):
         max_steps = 20  # hard cap so a stuck form can't loop forever
         for _ in range(max_steps):
             self._upload_resume_if_requested(dialog, resume_path)
-            self._fill_visible_fields(dialog, answer_question)
+            self._fill_visible_fields(dialog, answer_question, cover_letter_text)
 
             submit_btn = dialog.locator(SELECTORS["submit_button"])
             if submit_btn.count() > 0:
@@ -188,11 +188,19 @@ class LinkedInAdapter(JobBoardAdapter):
             file_input.set_input_files(resume_path)
             file_input.evaluate("el => el.setAttribute('data-job-bot-uploaded', '1')")
 
-    def _fill_visible_fields(self, dialog: Locator, answer_question: Callable[[str], str]) -> None:
+    def _fill_visible_fields(
+        self,
+        dialog: Locator,
+        answer_question: Callable[[str], str],
+        cover_letter_text: str | None = None,
+    ) -> None:
         for text_input in dialog.locator('input[type="text"], input[type="number"], textarea').all():
             if (text_input.input_value() or "").strip():
                 continue
             label = self._label_for(text_input)
+            if cover_letter_text and label and self._looks_like_cover_letter_field(label):
+                text_input.fill(cover_letter_text)
+                continue
             answer = answer_question(label) if label else ""
             if answer:
                 text_input.fill(answer)
@@ -215,6 +223,10 @@ class LinkedInAdapter(JobBoardAdapter):
             label = self._label_for(select)
             answer = answer_question(label) if label else ""
             self._select_best_option(select, options, answer)
+
+    @staticmethod
+    def _looks_like_cover_letter_field(label: str) -> bool:
+        return "cover letter" in label.casefold()
 
     @staticmethod
     def _label_for(el: Locator) -> str:
