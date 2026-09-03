@@ -22,7 +22,7 @@ from job_bot.resume.store import ResumeStore
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.safety.confirm import SubmitConfirmer
-from job_bot.safety.rate_limiter import RateLimiter
+from job_bot.safety.rate_limiter import DailyCapReached, RateLimiter
 from job_bot.tracker.db import TRACKER_STATUSES, InvalidStatus, Tracker
 
 EXPECTED_ERRORS = (
@@ -133,11 +133,23 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 continue
 
             if submitted:
-                rate_limiter.record_application()
+                # The browser has already clicked Submit for real at this
+                # point - mark_applied() must run before anything that could
+                # raise, so a real submission is never lost from the tracker
+                # (which would risk a duplicate real application on a future
+                # run). record_application()'s own cap check is defense in
+                # depth against a second concurrent `job-bot run` process
+                # racing this one; if it loses that race, stop cleanly
+                # rather than crash mid-loop.
                 tracker.mark_applied(posting.job_id)
                 audit.log("applied", job_id=posting.job_id, company=posting.company)
                 applied += 1
                 print(f"Applied: {posting.title} at {posting.company}")
+                try:
+                    rate_limiter.record_application()
+                except DailyCapReached:
+                    print("Daily application cap reached (possibly by a concurrent run). Stopping.")
+                    break
             else:
                 audit.log("dry_run_stopped", job_id=posting.job_id)
                 print(f"[dry-run] Would apply to {posting.title} at {posting.company}")

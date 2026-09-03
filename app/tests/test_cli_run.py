@@ -16,10 +16,17 @@ from job_bot.cli import cmd_run
 from job_bot.config import Settings
 from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import ApplicationAnswer, CoverLetter, JobMatchScore, TailoredResume
+from job_bot.safety.rate_limiter import DailyCapReached
 from job_bot.tracker.db import Tracker
 
 JOB = JobPosting(
     job_id="job1", title="Backend Engineer", company="Acme Corp", url="https://x/1", description=""
+)
+JOB2 = JobPosting(
+    job_id="job2", title="Platform Engineer", company="Acme Corp", url="https://x/2", description=""
+)
+JOB3 = JobPosting(
+    job_id="job3", title="Infra Engineer", company="Acme Corp", url="https://x/3", description=""
 )
 
 
@@ -78,6 +85,15 @@ class FakeAdapter:
             }
         )
         return not dry_run
+
+
+class MultiJobAdapter(FakeAdapter):
+    """Same as FakeAdapter but with more than one Easy-Apply result, for
+    tests that need to exercise more than one loop iteration of cmd_run.
+    """
+
+    def search(self, keywords, location, max_results=25):
+        return [JOB, JOB2, JOB3]
 
 
 class FakePage:
@@ -226,3 +242,48 @@ def test_run_does_not_cache_low_confidence_answers_to_faq(tmp_path, monkeypatch)
     cmd_run(settings, make_args())
 
     assert not settings.faq_path.exists()
+
+
+class FakeRateLimiterHittingCapOnSecondCall:
+    """Simulates the daily cap being reached mid-loop by something other
+    than cmd_run's own top-of-loop check - e.g. a second concurrent
+    `job-bot run` process racing the same SQLite DB. remaining_today()
+    always reports room (like a stale read would), so the loop's own guard
+    never trips; only record_application() raises, on its second call.
+    """
+
+    def __init__(self, db_path, daily_cap):
+        self.record_calls = 0
+
+    def remaining_today(self):
+        return 99
+
+    def record_application(self):
+        self.record_calls += 1
+        if self.record_calls == 2:
+            raise DailyCapReached("cap reached by a concurrent process")
+
+
+def test_run_still_marks_applied_when_rate_limiter_raises_after_a_real_submission(tmp_path, monkeypatch):
+    """A submission the browser already clicked through must be recorded in
+    the tracker even if record_application() then raises - otherwise the
+    job would look un-applied and a future run could apply to it again for
+    real. See the comment above tracker.mark_applied() in cli.cmd_run.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+    monkeypatch.setattr("job_bot.cli.RateLimiter", FakeRateLimiterHittingCapOnSecondCall)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10))  # would process all 3 jobs if not stopped by the cap
+
+    tracker = Tracker(settings.db_path)
+    # job1's record_application() succeeded (call #1); job2's raised on
+    # call #2, but mark_applied() for job2 must still have run first.
+    assert tracker.has_applied("job1") is True
+    assert tracker.has_applied("job2") is True
+    # The loop must have stopped cleanly after job2 rather than crashing -
+    # job3 was never reached.
+    assert tracker.get_job("job3") is None
