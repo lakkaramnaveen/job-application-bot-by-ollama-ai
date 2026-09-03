@@ -11,7 +11,8 @@ Safety properties (see SECURITY.md):
   matches the email (never on an ambiguous or zero match), the classifier's
   confidence clears `confidence_threshold`, and the move is forward-only
   (STATUS_RANK below) - so a low-signal or garbled email can't downgrade or
-  overwrite a status you already confirmed by hand.
+  overwrite a status you already confirmed by hand. A `skipped` job (the bot
+  chose not to apply) is likewise never touched - see NEVER_UPDATE_VIA_EMAIL.
 """
 
 import dataclasses
@@ -21,6 +22,7 @@ from job_bot.integrations.gmail_client import EmailMessage, GmailClient
 from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import EmailCategory
 from job_bot.safety.audit_log import AuditLogger
+from job_bot.text_utils import normalize_company_name
 from job_bot.tracker.db import Tracker
 
 CATEGORY_TO_STATUS: dict[EmailCategory, str] = {
@@ -44,6 +46,12 @@ STATUS_RANK = {
     "no_response": 3,
 }
 TERMINAL_STATUSES = frozenset({"offer", "rejected", "withdrawn", "no_response"})
+# "skipped" means the bot decided *not* to apply - there's no real
+# application behind it to correlate an email with, so it's excluded from
+# email-driven updates the same way a terminal status is, rather than
+# defaulting to STATUS_RANK's fallback of 0 (same rank as "seen"), which
+# would let a loosely-matched email overwrite it as if the bot had applied.
+NEVER_UPDATE_VIA_EMAIL = TERMINAL_STATUSES | {"skipped"}
 
 DEFAULT_QUERY_TEMPLATE = (
     "newer_than:{days}d (interview OR application OR applying OR position OR role "
@@ -61,24 +69,20 @@ class GmailSyncResult:
     skipped_low_confidence: int = 0
 
 
-def _normalize(name: str) -> str:
-    return " ".join(name.strip().casefold().split())
-
-
 def find_matching_job(jobs: list[dict], company_guess: str) -> dict | None:
     """Match a classifier's company guess to exactly one tracked job by
     substring overlap on the normalized company name. Returns None on zero
     or multiple candidates - an ambiguous match is treated as no match,
     never resolved by guessing.
     """
-    norm_guess = _normalize(company_guess)
+    norm_guess = normalize_company_name(company_guess)
     if not norm_guess:
         return None
 
     candidates = [
         job
         for job in jobs
-        if (norm_company := _normalize(job["company"]))
+        if (norm_company := normalize_company_name(job["company"]))
         and (norm_company in norm_guess or norm_guess in norm_company)
     ]
     if len(candidates) == 1:
@@ -87,7 +91,7 @@ def find_matching_job(jobs: list[dict], company_guess: str) -> dict | None:
 
 
 def _should_update(current_status: str, new_status: str) -> bool:
-    if current_status in TERMINAL_STATUSES:
+    if current_status in NEVER_UPDATE_VIA_EMAIL:
         return False
     if current_status == new_status:
         return False

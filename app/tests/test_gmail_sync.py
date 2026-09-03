@@ -152,6 +152,24 @@ def test_sync_gmail_never_updates_a_terminal_status(tmp_path):
     assert tracker.get_job("job1")["status"] == "offer"
 
 
+def test_sync_gmail_never_updates_a_skipped_job(tmp_path):
+    """A "skipped" job means the bot chose not to apply - there's no real
+    application to correlate an email with, so it must never be touched by
+    gmail-sync even on a plausible-looking company match (unlike "seen",
+    which also ranks 0 but legitimately can be moved forward by e.g. an
+    application_confirmation email arriving before the tracker's own upsert
+    caught up).
+    """
+    tracker = make_tracker_with_job(tmp_path, status="skipped")
+    gmail = FakeGmailClient([make_email()])
+    provider = QueueProvider([make_classification(category="rejection")])
+
+    result = sync_gmail(provider, gmail, tracker)
+
+    assert result.updated == []
+    assert tracker.get_job("job1")["status"] == "skipped"
+
+
 def test_sync_gmail_never_moves_status_backward(tmp_path):
     tracker = make_tracker_with_job(tmp_path, status="interviewing")
     gmail = FakeGmailClient([make_email()])

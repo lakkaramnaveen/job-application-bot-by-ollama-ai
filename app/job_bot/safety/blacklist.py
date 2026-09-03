@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from job_bot.text_utils import normalize_company_name
+
 
 class CompanyBlacklist:
     """Companies to never apply to. Defaults to an empty list plus whatever the
@@ -24,7 +26,7 @@ class CompanyBlacklist:
 
     @staticmethod
     def _normalize(name: str) -> str:
-        return name.strip().casefold()
+        return normalize_company_name(name)
 
     def is_blocked(self, company_name: str) -> bool:
         return self._normalize(company_name) in self._companies

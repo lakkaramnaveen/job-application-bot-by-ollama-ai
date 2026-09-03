@@ -53,3 +53,16 @@ def test_list_companies_returns_sorted_normalized_names(tmp_path):
     blacklist.add("Acme Corp")
 
     assert blacklist.list_companies() == ["acme corp", "zebra corp"]
+
+
+def test_is_blocked_collapses_internal_whitespace_like_gmail_sync_does(tmp_path):
+    """blacklist.py and gmail_sync.py both normalize company names to decide
+    whether two strings mean the same company - they must agree, or a
+    company blocked here could still slip past the other subsystem's
+    matching on the exact same pair of strings. See job_bot/text_utils.py.
+    """
+    blacklist = CompanyBlacklist(tmp_path / "blacklist.json")
+    blacklist.add("Foo   Bar Inc")
+
+    assert blacklist.is_blocked("Foo Bar Inc") is True
+    assert blacklist.is_blocked("foo\tbar inc") is True
