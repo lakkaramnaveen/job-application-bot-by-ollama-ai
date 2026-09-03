@@ -1,5 +1,8 @@
 import argparse
+import csv
 import sys
+from pathlib import Path
+from typing import TextIO
 
 from job_bot.browser.linkedin_adapter import LinkedInAdapter
 from job_bot.browser.session import browser_session
@@ -188,6 +191,38 @@ def cmd_report(settings: Settings) -> None:
     print(f"{'total':<{width}}  {sum(counts.values())}")
 
 
+EXPORT_FIELDS = (
+    "job_id",
+    "title",
+    "company",
+    "status",
+    "match_score",
+    "first_seen_at",
+    "applied_at",
+    "url",
+)
+
+
+def _write_export_csv(stream: TextIO, jobs: list[dict]) -> None:
+    writer = csv.DictWriter(stream, fieldnames=EXPORT_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(jobs)
+
+
+def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
+    tracker = Tracker(settings.db_path)
+    jobs = tracker.list_jobs(status=args.status, sort="first_seen_at", direction="asc")
+
+    if args.out:
+        # newline="" so csv's own \r\n line terminator isn't doubled up by
+        # universal-newline text-mode translation on write.
+        with args.out.open("w", newline="", encoding="utf-8") as f:
+            _write_export_csv(f, jobs)
+        print(f"Exported {len(jobs)} job(s) to {args.out}")
+    else:
+        _write_export_csv(sys.stdout, jobs)
+
+
 def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
     provider = get_provider(settings)
     gmail_client = GmailClient(settings.gmail_credentials_path, settings.gmail_token_path)
@@ -293,6 +328,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("report", help="Print a count of tracked jobs by status.")
 
+    export_p = sub.add_parser("export", help="Export tracked jobs as CSV.")
+    export_p.add_argument("--status", choices=sorted(TRACKER_STATUSES), default=None)
+    export_p.add_argument(
+        "--out", type=Path, default=None, help="Write to this file instead of stdout."
+    )
+
     gmail_p = sub.add_parser(
         "gmail-sync",
         help="Scan recent Gmail for replies to tracked applications and update their status.",
@@ -342,6 +383,8 @@ def main() -> None:
             cmd_status(settings, args)
         elif args.command == "report":
             cmd_report(settings)
+        elif args.command == "export":
+            cmd_export(settings, args)
         elif args.command == "gmail-sync":
             cmd_gmail_sync(settings, args)
         elif args.command == "dashboard":

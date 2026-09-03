@@ -132,6 +132,8 @@ to observe what happens after you submit. Record what you hear back by hand:
 ```bash
 job-bot report                          # counts of tracked jobs by status
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response
+job-bot export                          # all tracked jobs as CSV, to stdout
+job-bot export --status applied --out applied.csv
 ```
 
 `<job_id>` is the LinkedIn job id, printed by `job-bot run` and visible in
