@@ -271,12 +271,19 @@ class LinkedInAdapter(JobBoardAdapter):
         radios = group.locator('input[type="radio"]')
         labels = [LinkedInAdapter._label_for_id(group.page, radios.nth(i)) for i in range(radios.count())]
         idx = LinkedInAdapter._best_match_index(labels, answer)
-        radios.nth(idx).check()
+        if idx is not None:
+            radios.nth(idx).check()
+        # else: leave unselected rather than guess on a field that may be
+        # sponsorship/authorization/eligibility-shaped. If the field is
+        # required, LinkedIn's own validation blocks the Next/Review click
+        # and fill_and_submit's stuck-form detection surfaces that as a
+        # clear error instead of a silently wrong high-stakes answer.
 
     @staticmethod
     def _select_best_option(select: Locator, options: list[str], answer: str) -> None:
         idx = LinkedInAdapter._best_match_index(options, answer)
-        select.select_option(index=idx)
+        if idx is not None:
+            select.select_option(index=idx)
 
     @staticmethod
     def _label_for_id(page: Page, input_el: Locator) -> str:
@@ -287,23 +294,24 @@ class LinkedInAdapter(JobBoardAdapter):
         return label.first.inner_text().strip() if label.count() > 0 else ""
 
     @staticmethod
-    def _best_match_index(options: list[str], answer: str) -> int:
-        """Pick the option whose text best matches the LLM's answer.
-        Falls back to the first non-empty option if nothing matches -
-        never guesses on high-stakes fields like sponsorship/authorization
-        without at least attempting a real text match first.
+    def _best_match_index(options: list[str], answer: str) -> int | None:
+        """Pick the option whose text best matches the LLM's answer, or
+        None if nothing matches at all. Never falls back to an arbitrary
+        option (e.g. "the first one") - on a field like work
+        authorization/sponsorship, silently selecting a guessed answer is
+        worse than leaving it blank and letting the caller detect a stuck
+        form. See _select_best_radio()/_select_best_option().
         """
         answer_norm = answer.strip().casefold()
+        if not answer_norm:
+            return None
         for i, opt in enumerate(options):
             if opt.strip().casefold() == answer_norm:
                 return i
         for i, opt in enumerate(options):
-            if answer_norm and answer_norm in opt.strip().casefold():
+            if answer_norm in opt.strip().casefold():
                 return i
-        for i, opt in enumerate(options):
-            if opt.strip():
-                return i
-        return 0
+        return None
 
     def _click_if_present(self, dialog: Locator, selector: str) -> bool:
         loc = dialog.locator(selector)

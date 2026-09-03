@@ -75,6 +75,31 @@ def test_unanswered_label_gets_empty_string_not_a_crash(playwright_page):
 
     assert submitted is False
     assert playwright_page.locator("#years-python").input_value() == ""
+    # A high-stakes radio group (work authorization) with no matching
+    # answer must be left unselected, never guessed - see
+    # _best_match_index()'s docstring.
+    assert not playwright_page.locator("#auth-yes").is_checked()
+    assert not playwright_page.locator("#auth-no").is_checked()
+
+
+def test_non_matching_answer_never_guesses_a_radio_option(playwright_page):
+    """An answer that doesn't correspond to either radio option's text
+    (e.g. the LLM said something not literally "Yes"/"No") must not fall
+    back to picking an arbitrary option on a field this sensitive.
+    """
+    posting = JobPosting(job_id="2b", title="X", company="Y", url=f"file://{FIXTURE_PATH}", description="")
+    adapter = LinkedInAdapter(playwright_page)
+
+    adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "I am not sure how to answer that",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert not playwright_page.locator("#auth-yes").is_checked()
+    assert not playwright_page.locator("#auth-no").is_checked()
 
 
 def test_resume_is_uploaded_when_resume_path_given(playwright_page):
