@@ -93,20 +93,29 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
                 continue
 
-            description = adapter.load_description(posting)
-            match: JobMatchScore = score_job_match(provider, resume_text, description)
-            tracker.upsert_job(posting.job_id, posting.title, posting.company, posting.url, match.score)
-            audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=match.should_apply)
+            try:
+                description = adapter.load_description(posting)
+                match: JobMatchScore = score_job_match(provider, resume_text, description)
+                tracker.upsert_job(
+                    posting.job_id, posting.title, posting.company, posting.url, match.score
+                )
+                audit.log(
+                    "scored", job_id=posting.job_id, score=match.score, should_apply=match.should_apply
+                )
 
-            if not match.should_apply:
-                tracker.mark_skipped(posting.job_id)
+                if not match.should_apply:
+                    tracker.mark_skipped(posting.job_id)
+                    continue
+
+                tailored = tailor_resume(provider, resume_text, description)
+                cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
+                write_tailored_resume(settings.applications_dir, posting.job_id, tailored)
+                write_cover_letter(settings.applications_dir, posting.job_id, cover_letter)
+                audit.log("generated_materials", job_id=posting.job_id)
+            except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
+                audit.log("prep_error", job_id=posting.job_id, error=str(e))
+                print(f"Error preparing application for {posting.title} at {posting.company}: {e}")
                 continue
-
-            tailored = tailor_resume(provider, resume_text, description)
-            cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
-            write_tailored_resume(settings.applications_dir, posting.job_id, tailored)
-            write_cover_letter(settings.applications_dir, posting.job_id, cover_letter)
-            audit.log("generated_materials", job_id=posting.job_id)
 
             def answer(question: str, job_id: str = posting.job_id) -> str:
                 result = answer_question(provider, resume_text, resume_store.faq_answers(), question)

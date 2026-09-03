@@ -264,6 +264,40 @@ class FakeRateLimiterHittingCapOnSecondCall:
             raise DailyCapReached("cap reached by a concurrent process")
 
 
+class LoadDescriptionFailsForFirstJobAdapter(FakeAdapter):
+    """job1's load_description() raises (as e.g. a network hiccup, a
+    provider error during scoring, or artifacts.py's UnsafeJobId could) -
+    job2 and job3 must still be processed rather than the whole run
+    aborting on one bad posting.
+    """
+
+    def search(self, keywords, location, max_results=25):
+        return [JOB, JOB2, JOB3]
+
+    def load_description(self, posting):
+        if posting.job_id == "job1":
+            raise RuntimeError("simulated failure loading job1's description")
+        return "We need a backend engineer with Python experience."
+
+
+def test_run_continues_past_a_posting_that_fails_during_prep(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", LoadDescriptionFailsForFirstJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10))
+
+    tracker = Tracker(settings.db_path)
+    # job1 never got far enough to be tracked at all (it failed before the
+    # upsert_job() call in the scoring step).
+    assert tracker.get_job("job1") is None
+    # job2 and job3 were still processed and applied to.
+    assert tracker.has_applied("job2") is True
+    assert tracker.has_applied("job3") is True
+
+
 def test_run_still_marks_applied_when_rate_limiter_raises_after_a_real_submission(tmp_path, monkeypatch):
     """A submission the browser already clicked through must be recorded in
     the tracker even if record_application() then raises - otherwise the
