@@ -18,6 +18,32 @@ def test_upsert_then_has_applied_is_false_until_marked(tmp_path):
     assert tracker.has_applied("1") is True
 
 
+def test_has_applied_stays_true_after_status_moves_on(tmp_path):
+    """has_applied() must key off applied_at, not the current status - once
+    a real submission happened, no later status change (a legitimate
+    progression to "interviewing"/"offer", or a manual correction via
+    `job-bot status` or the dashboard) may make the run loop's dedup check
+    (`if tracker.has_applied(...): continue`) forget that and let a second
+    real application through for the same job.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+    tracker.mark_applied("1")
+
+    tracker.update_status("1", "interviewing")
+    assert tracker.has_applied("1") is True
+
+    tracker.update_status("1", "seen")
+    assert tracker.has_applied("1") is True
+
+
+def test_mark_applied_raises_for_unknown_job_id(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    with pytest.raises(ValueError, match="No tracked job"):
+        tracker.mark_applied("does-not-exist")
+
+
 def test_mark_skipped_sets_status(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")

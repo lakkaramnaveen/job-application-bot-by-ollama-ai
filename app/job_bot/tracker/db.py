@@ -1,4 +1,6 @@
+import contextlib
 import sqlite3
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -49,8 +51,27 @@ class Tracker:
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._db_path)
 
+    @contextlib.contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        """A connection that's both transactional (commits on success, rolls
+        back on exception, like `with self._connect() as conn:`) and
+        actually closed afterward - sqlite3.Connection's own context manager
+        only handles the transaction, never closes the connection, so a
+        `with self._connect() as conn:` at every call site (as this used to
+        be) leaks one open connection per call. The dashboard in particular
+        constructs a fresh Tracker per HTTP request and calls several of
+        these methods per request, so that leak compounds quickly under
+        sustained polling.
+        """
+        conn = self._connect()
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -81,7 +102,7 @@ class Tracker:
         self, job_id: str, title: str, company: str, url: str, match_score: int | None = None
     ) -> None:
         now = datetime.now(UTC).isoformat()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 """
                 INSERT INTO jobs (job_id, title, company, url, match_score, first_seen_at)
@@ -92,12 +113,21 @@ class Tracker:
             )
 
     def mark_applied(self, job_id: str) -> None:
+        """Raises ValueError if job_id isn't tracked yet - silently no-oping
+        here (as this used to) would let a real LinkedIn submission go
+        unrecorded with no error, which is exactly the "lost from the
+        tracker" failure a real submission must never suffer (see
+        record_application()'s own defense-in-depth comment in
+        safety/rate_limiter.py and cli.py's cmd_run).
+        """
         now = datetime.now(UTC).isoformat()
-        with self._connect() as conn:
-            conn.execute(
+        with self._transaction() as conn:
+            cursor = conn.execute(
                 "UPDATE jobs SET status = 'applied', applied_at = ? WHERE job_id = ?",
                 (now, job_id),
             )
+            if cursor.rowcount == 0:
+                raise ValueError(f"No tracked job with id {job_id!r}")
 
     def mark_skipped(self, job_id: str) -> None:
         self.update_status(job_id, "skipped")
@@ -112,18 +142,29 @@ class Tracker:
             raise InvalidStatus(
                 f"Unknown status {status!r}. Valid statuses: {', '.join(sorted(TRACKER_STATUSES))}"
             )
-        with self._connect() as conn:
+        with self._transaction() as conn:
             cursor = conn.execute("UPDATE jobs SET status = ? WHERE job_id = ?", (status, job_id))
             if cursor.rowcount == 0:
                 raise ValueError(f"No tracked job with id {job_id!r}")
 
     def has_applied(self, job_id: str) -> bool:
-        with self._connect() as conn:
-            row = conn.execute("SELECT status FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
-        return bool(row) and row[0] == "applied"
+        """True once mark_applied() has ever run for this job_id - checked
+        against `applied_at` rather than the current `status`, since status
+        can legitimately move on afterward (`interviewing`, `offer`, ...) or
+        be corrected by hand (`job-bot status`, the dashboard's inline
+        status control). Keying this off `status == "applied"` instead would
+        make has_applied() flip back to False the moment status changes to
+        anything else, and the run loop's `if tracker.has_applied(...):
+        continue` dedup check would then let a real second application go
+        through for a job already applied to - reopening the exact
+        duplicate-submission risk fixed in commit a853e9b.
+        """
+        with self._transaction() as conn:
+            row = conn.execute("SELECT applied_at FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+        return bool(row) and row[0] is not None
 
     def status_counts(self) -> dict[str, int]:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             rows = conn.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status").fetchall()
         return dict(rows)
 
@@ -176,26 +217,26 @@ class Tracker:
             query += " LIMIT ? OFFSET ?"
             params = [*params, limit, offset]
 
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
     def count_jobs(self, status: str | None = None, search: str | None = None) -> int:
         where, params = self._where_clause(status, search)
-        with self._connect() as conn:
+        with self._transaction() as conn:
             row = conn.execute(f"SELECT COUNT(*) FROM jobs {where}", params).fetchone()
         return int(row[0])
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         return dict(row) if row else None
 
     def record_qa(self, job_id: str, question: str, answer: str) -> None:
         now = datetime.now(UTC).isoformat()
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 "INSERT INTO qa_history (job_id, question, answer, created_at) VALUES (?, ?, ?, ?)",
                 (job_id, question, answer, now),
@@ -203,7 +244,7 @@ class Tracker:
 
     def list_qa(self, job_id: str) -> list[dict[str, Any]]:
         """A job's answered-question transcript, oldest first."""
-        with self._connect() as conn:
+        with self._transaction() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT question, answer, created_at FROM qa_history WHERE job_id = ? ORDER BY id ASC",
