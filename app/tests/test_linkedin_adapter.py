@@ -16,6 +16,10 @@ from job_bot.browser.linkedin_adapter import LinkedInAdapter
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
 SEARCH_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results.html"
 RESUME_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_resume.txt"
+AMBIGUOUS_FILE_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_ambiguous_file_field.html"
+SELECT_NO_PLACEHOLDER_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_select_no_placeholder.html"
+)
 
 
 @pytest.fixture
@@ -102,6 +106,31 @@ def test_non_matching_answer_never_guesses_a_radio_option(playwright_page):
     assert not playwright_page.locator("#auth-no").is_checked()
 
 
+def test_select_with_no_blank_placeholder_still_gets_answered(playwright_page):
+    """A <select> with no blank "Select an option" placeholder has its first
+    real option auto-selected by the browser with nothing chosen by anyone.
+    The old heuristic (any non-empty, non-placeholder-text value means
+    "already answered") would treat that as a real answer and skip the
+    field entirely, silently submitting the unvetted default. The fix
+    (selectedIndex == 0 means "unanswered") must still consult
+    answer_question() and select the right option.
+    """
+    posting = JobPosting(
+        job_id="2c", title="X", company="Y", url=f"file://{SELECT_NO_PLACEHOLDER_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "Yes",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert playwright_page.locator("#work-auth").input_value() == "yes"
+
+
 def test_resume_is_uploaded_when_resume_path_given(playwright_page):
     posting = JobPosting(job_id="3", title="X", company="Y", url=f"file://{FIXTURE_PATH}", description="")
     adapter = LinkedInAdapter(playwright_page)
@@ -138,6 +167,32 @@ def test_resume_is_not_uploaded_to_a_differently_labeled_file_field(playwright_p
     assert resume_field_count == 0
     uploaded = playwright_page.evaluate("document.getElementById('resume-upload').files[0]?.name")
     assert uploaded == RESUME_FIXTURE_PATH.name
+
+
+def test_resume_is_not_uploaded_when_a_second_file_field_is_ambiguous(playwright_page):
+    """Two file fields on the same step, one clearly the resume ("Resume")
+    and one neither positively resume-shaped nor denylisted ("Additional
+    attachment") - the ambiguous one must be left alone rather than
+    guessed, even though it isn't on the non-resume denylist. See
+    _upload_resume_if_requested()'s multi-field branch.
+    """
+    posting = JobPosting(
+        job_id="3c", title="X", company="Y", url=f"file://{AMBIGUOUS_FILE_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "",
+        resume_path=str(RESUME_FIXTURE_PATH),
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    uploaded = playwright_page.evaluate("document.getElementById('resume-upload').files[0]?.name")
+    assert uploaded == RESUME_FIXTURE_PATH.name
+    mystery_count = playwright_page.evaluate("document.getElementById('mystery-file').files.length")
+    assert mystery_count == 0
 
 
 def test_no_upload_attempted_when_resume_path_is_none(playwright_page):
@@ -217,3 +272,32 @@ def test_search_respects_max_results(playwright_page, monkeypatch):
     postings = adapter.search("python", "Remote", max_results=1)
 
     assert len(postings) == 1
+
+
+# --- _best_match_index (no browser needed - pure string matching) ---
+
+
+def test_best_match_index_exact_match():
+    assert LinkedInAdapter._best_match_index(["Yes", "No"], "No") == 1
+
+
+def test_best_match_index_word_boundary_fallback_matches_correctly():
+    options = ["Not sure", "Yes, I am authorized"]
+    assert LinkedInAdapter._best_match_index(options, "yes") == 1
+
+
+def test_best_match_index_does_not_match_an_unrelated_option_containing_the_answer_as_a_substring():
+    """Plain (unanchored) substring containment would match answer "no"
+    against option "None" (which contains "no") or "Notice period" - wrong
+    option, silently selected, on a field this sensitive. Word-boundarying
+    the fallback match must return None here instead of guessing.
+    """
+    assert LinkedInAdapter._best_match_index(["None", "Notice period"], "no") is None
+
+
+def test_best_match_index_word_boundary_still_matches_within_a_longer_option():
+    """The word-boundary fix must not become *too* strict - a short answer
+    that's genuinely a whole word within a longer option's text should still
+    match (this is the case the fallback tier exists for).
+    """
+    assert LinkedInAdapter._best_match_index(["I am not sure", "No, I am not"], "no") == 1

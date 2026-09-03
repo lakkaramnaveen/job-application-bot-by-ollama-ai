@@ -15,8 +15,10 @@ selector changes without submitting anything.
 """
 
 import logging
+import re
 import time
 from collections.abc import Callable
+from urllib.parse import quote
 
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -61,8 +63,8 @@ class LinkedInAdapter(JobBoardAdapter):
             start = page_num * RESULTS_PER_PAGE
             url = (
                 "https://www.linkedin.com/jobs/search/"
-                f"?keywords={keywords.replace(' ', '%20')}"
-                f"&location={location.replace(' ', '%20')}"
+                f"?keywords={quote(keywords, safe='')}"
+                f"&location={quote(location, safe='')}"
                 f"&start={start}"
                 "&f_AL=true"  # Easy Apply filter
             )
@@ -179,21 +181,39 @@ class LinkedInAdapter(JobBoardAdapter):
         if not resume_path:
             return
         file_inputs = dialog.locator('input[type="file"]')
-        for i in range(file_inputs.count()):
-            file_input = file_inputs.nth(i)
-            # Skip file inputs that already have a resume selected (LinkedIn
-            # often pre-fills with a previously uploaded resume).
-            if file_input.get_attribute("data-job-bot-uploaded") == "1":
-                continue
+        # Skip file inputs that already have a resume selected (LinkedIn
+        # often pre-fills with a previously uploaded resume).
+        pending = [
+            file_inputs.nth(i)
+            for i in range(file_inputs.count())
+            if file_inputs.nth(i).get_attribute("data-job-bot-uploaded") != "1"
+        ]
+        for file_input in pending:
             label = self._label_for(file_input)
-            if label and self._looks_like_non_resume_file_field(label):
-                # A labeled file field for something else (cover letter
-                # document, portfolio, transcript, ...) - never guess a
-                # resume upload into a field meant for a different document.
+            if len(pending) > 1:
+                # Multiple file fields on this step - only upload into one we
+                # can positively identify as the resume field. An unlabeled
+                # field, or one whose label isn't recognized either way, is
+                # left alone rather than guessed: with several file inputs
+                # present, defaulting to "upload unless denylisted" risks
+                # silently landing the resume in a cover-letter/portfolio/
+                # transcript field whose label just isn't on the denylist.
+                if not (label and self._looks_like_resume_file_field(label)):
+                    logger.warning(
+                        "Skipping ambiguous file field (label=%r): multiple file inputs are "
+                        "present on this step and this one isn't confidently a resume field.",
+                        label,
+                    )
+                    continue
+            elif label and self._looks_like_non_resume_file_field(label):
+                # The single file field on this step is explicitly labeled
+                # for something else - never guess a resume upload into a
+                # field meant for a different document.
                 continue
             file_input.set_input_files(resume_path)
             file_input.evaluate("el => el.setAttribute('data-job-bot-uploaded', '1')")
 
+    _RESUME_FILE_LABEL_MARKERS = ("resume", "cv")
     _NON_RESUME_FILE_LABEL_MARKERS = (
         "cover letter",
         "portfolio",
@@ -202,6 +222,11 @@ class LinkedInAdapter(JobBoardAdapter):
         "certificate",
         "license",
     )
+
+    @classmethod
+    def _looks_like_resume_file_field(cls, label: str) -> bool:
+        normalized = label.casefold()
+        return any(marker in normalized for marker in cls._RESUME_FILE_LABEL_MARKERS)
 
     @classmethod
     def _looks_like_non_resume_file_field(cls, label: str) -> bool:
@@ -236,10 +261,18 @@ class LinkedInAdapter(JobBoardAdapter):
             self._select_best_radio(group, answer)
 
         for select in dialog.locator("select").all():
-            selected = select.input_value()
-            options = select.locator("option").all_inner_texts()
-            if selected and selected.strip() and selected not in ("", "Select an option"):
+            # A select with no blank placeholder option has its first real
+            # option auto-selected by the browser with nothing chosen by
+            # anyone - indistinguishable from a real answer by value/text
+            # alone (there may be no "Select an option" placeholder to
+            # compare against). selectedIndex == 0 covers both that case and
+            # an explicit blank placeholder, and is always safe to treat as
+            # "unanswered": _select_best_option() below never guesses either,
+            # so at worst this re-confirms whatever was already selected.
+            selected_index = select.evaluate("el => el.selectedIndex")
+            if selected_index > 0:
                 continue
+            options = select.locator("option").all_inner_texts()
             label = self._label_for(select)
             answer = answer_question(label) if label else ""
             self._select_best_option(select, options, answer)
@@ -308,8 +341,14 @@ class LinkedInAdapter(JobBoardAdapter):
         for i, opt in enumerate(options):
             if opt.strip().casefold() == answer_norm:
                 return i
+        # Fallback: the answer as a whole word within the option's text
+        # (e.g. answer "yes" matching option "Yes, I am authorized"). Plain
+        # substring containment here would also match e.g. answer "no"
+        # against option "None" or "Notice period" - wrong option, silently
+        # selected, on a field this sensitive - so word-boundary the match.
+        pattern = re.compile(rf"\b{re.escape(answer_norm)}\b")
         for i, opt in enumerate(options):
-            if answer_norm in opt.strip().casefold():
+            if pattern.search(opt.strip().casefold()):
                 return i
         return None
 
