@@ -185,8 +185,28 @@ class LinkedInAdapter(JobBoardAdapter):
             # often pre-fills with a previously uploaded resume).
             if file_input.get_attribute("data-job-bot-uploaded") == "1":
                 continue
+            label = self._label_for(file_input)
+            if label and self._looks_like_non_resume_file_field(label):
+                # A labeled file field for something else (cover letter
+                # document, portfolio, transcript, ...) - never guess a
+                # resume upload into a field meant for a different document.
+                continue
             file_input.set_input_files(resume_path)
             file_input.evaluate("el => el.setAttribute('data-job-bot-uploaded', '1')")
+
+    _NON_RESUME_FILE_LABEL_MARKERS = (
+        "cover letter",
+        "portfolio",
+        "writing sample",
+        "transcript",
+        "certificate",
+        "license",
+    )
+
+    @classmethod
+    def _looks_like_non_resume_file_field(cls, label: str) -> bool:
+        normalized = label.casefold()
+        return any(marker in normalized for marker in cls._NON_RESUME_FILE_LABEL_MARKERS)
 
     def _fill_visible_fields(
         self,

@@ -93,6 +93,28 @@ def test_resume_is_uploaded_when_resume_path_given(playwright_page):
     assert uploaded == RESUME_FIXTURE_PATH.name
 
 
+def test_resume_is_not_uploaded_to_a_differently_labeled_file_field(playwright_page):
+    """A file input explicitly labeled for something else (a cover letter
+    document, in this fixture) must never receive the resume file - see
+    _looks_like_non_resume_file_field().
+    """
+    posting = JobPosting(job_id="3b", title="X", company="Y", url=f"file://{FIXTURE_PATH}", description="")
+    adapter = LinkedInAdapter(playwright_page)
+
+    adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "",
+        resume_path=str(RESUME_FIXTURE_PATH),
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    resume_field_count = playwright_page.evaluate("document.getElementById('cover-letter-file').files.length")
+    assert resume_field_count == 0
+    uploaded = playwright_page.evaluate("document.getElementById('resume-upload').files[0]?.name")
+    assert uploaded == RESUME_FIXTURE_PATH.name
+
+
 def test_no_upload_attempted_when_resume_path_is_none(playwright_page):
     posting = JobPosting(job_id="4", title="X", company="Y", url=f"file://{FIXTURE_PATH}", description="")
     adapter = LinkedInAdapter(playwright_page)
