@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 import anthropic
-import httpx2
+import httpx
 import pytest
 
 from job_bot.llm.claude_provider import ClaudeProvider, ClaudeProviderError
@@ -69,9 +69,9 @@ def test_authentication_error_wrapped(monkeypatch):
     provider = make_provider()
 
     def fake_parse(**kwargs):
-        response = httpx2.Response(
+        response = httpx.Response(
             401,
-            request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"),
+            request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
             json={"error": {"message": "bad key"}},
         )
         raise anthropic.AuthenticationError("bad key", response=response, body=None)
