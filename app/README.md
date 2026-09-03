@@ -163,11 +163,22 @@ job-bot dashboard              # opens http://127.0.0.1:8765 in your browser
 job-bot dashboard --port 9000 --no-open
 ```
 
-It's a read-only local HTTP server (bound to `127.0.0.1` only, never your
-network) that queries `data/job_bot.sqlite3` directly and polls itself every
-5 seconds - no build step, no separate frontend, nothing to deploy. Shows
-title, company, fit score, status (color-coded), and applied date for every
-job `job-bot run` has seen.
+It's a local HTTP server (bound to `127.0.0.1` only, never your network) that
+queries `data/job_bot.sqlite3` directly and polls itself every 5 seconds - no
+build step, no separate frontend, nothing to deploy. Shows title, company, fit
+score, status (color-coded), and applied date for every job `job-bot run` has
+seen, and lets you:
+
+- **Search** by title or company, and **filter** by status.
+- **Sort** by newest/oldest, recently applied, fit score, company, or title.
+- **Update a job's status inline** from the row - no need to drop to
+  `job-bot status <job_id> <status>` for a quick correction.
+- **View a job's Q&A history** (every application-question answer the bot
+  gave, and what it was based on) in a modal, without querying the DB by hand.
+
+The dashboard has no login (it's a local tool over your own data), so the one
+state-changing endpoint (the inline status update) only accepts same-origin
+requests - see `job_bot/dashboard/server.py`'s module docstring.
 
 ## Gmail sync
 

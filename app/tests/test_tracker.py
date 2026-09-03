@@ -1,6 +1,6 @@
 import pytest
 
-from job_bot.tracker.db import InvalidStatus, Tracker
+from job_bot.tracker.db import InvalidSort, InvalidStatus, Tracker
 
 
 def make_tracker(tmp_path) -> Tracker:
@@ -73,3 +73,103 @@ def test_record_qa_and_upsert_job_do_not_conflict(tmp_path):
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1", match_score=90)
 
     assert tracker.status_counts() == {"seen": 1}
+
+
+def test_list_qa_returns_chronological_transcript(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+
+    tracker.record_qa("1", "Years of experience?", "5")
+    tracker.record_qa("1", "Willing to relocate?", "No")
+
+    qa = tracker.list_qa("1")
+
+    assert [entry["question"] for entry in qa] == ["Years of experience?", "Willing to relocate?"]
+    assert qa[0]["answer"] == "5"
+
+
+def test_list_qa_empty_for_job_with_no_questions(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+
+    assert tracker.list_qa("1") == []
+
+
+def test_list_jobs_filters_by_status(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Designer", "Acme", "https://example.com/2")
+    tracker.mark_applied("1")
+
+    applied = tracker.list_jobs(status="applied")
+
+    assert [j["job_id"] for j in applied] == ["1"]
+
+
+def test_list_jobs_search_matches_title_or_company_case_insensitively(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Designer", "Widgets Inc", "https://example.com/2")
+
+    by_title = tracker.list_jobs(search="engineer")
+    by_company = tracker.list_jobs(search="widgets")
+
+    assert [j["job_id"] for j in by_title] == ["1"]
+    assert [j["job_id"] for j in by_company] == ["2"]
+
+
+def test_list_jobs_search_escapes_like_wildcards(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "50% Time Role", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Full Time Role", "Acme", "https://example.com/2")
+
+    results = tracker.list_jobs(search="50%")
+
+    assert [j["job_id"] for j in results] == ["1"]
+
+
+def test_list_jobs_sorts_by_match_score(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "A", "Acme", "https://example.com/1", match_score=40)
+    tracker.upsert_job("2", "B", "Acme", "https://example.com/2", match_score=90)
+
+    ranked = tracker.list_jobs(sort="match_score", direction="desc")
+
+    assert [j["job_id"] for j in ranked] == ["2", "1"]
+
+
+def test_list_jobs_paginates_with_limit_and_offset(tmp_path):
+    tracker = make_tracker(tmp_path)
+    for i in range(5):
+        tracker.upsert_job(str(i), f"Job {i}", "Acme", f"https://example.com/{i}")
+
+    page1 = tracker.list_jobs(sort="title", direction="asc", limit=2, offset=0)
+    page2 = tracker.list_jobs(sort="title", direction="asc", limit=2, offset=2)
+
+    assert [j["job_id"] for j in page1] == ["0", "1"]
+    assert [j["job_id"] for j in page2] == ["2", "3"]
+
+
+def test_list_jobs_rejects_unknown_sort_column(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    with pytest.raises(InvalidSort):
+        tracker.list_jobs(sort="job_id; DROP TABLE jobs;--")
+
+
+def test_list_jobs_rejects_unknown_direction(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    with pytest.raises(InvalidSort):
+        tracker.list_jobs(direction="sideways")
+
+
+def test_count_jobs_reflects_filters(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Designer", "Acme", "https://example.com/2")
+    tracker.mark_applied("1")
+
+    assert tracker.count_jobs() == 2
+    assert tracker.count_jobs(status="applied") == 1
+    assert tracker.count_jobs(search="designer") == 1

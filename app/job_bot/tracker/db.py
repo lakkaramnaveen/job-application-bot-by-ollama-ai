@@ -26,6 +26,18 @@ class InvalidStatus(ValueError):
     pass
 
 
+class InvalidSort(ValueError):
+    pass
+
+
+# Whitelisted so `sort` (which reaches list_jobs()/count_jobs() as a query
+# string from the dashboard) can never be interpolated into SQL as anything
+# other than one of these exact, known-safe column names.
+SORTABLE_COLUMNS = frozenset(
+    {"first_seen_at", "applied_at", "title", "company", "match_score", "status"}
+)
+
+
 class Tracker:
     """SQLite-backed record of jobs seen and applications submitted."""
 
@@ -115,19 +127,65 @@ class Tracker:
             rows = conn.execute("SELECT status, COUNT(*) FROM jobs GROUP BY status").fetchall()
         return dict(rows)
 
-    def list_jobs(self, status: str | None = None) -> list[dict[str, Any]]:
-        """All tracked jobs (optionally filtered to one status), newest
-        first. Used by the dashboard and by gmail_sync's company matching.
+    @staticmethod
+    def _where_clause(status: str | None, search: str | None) -> tuple[str, list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if search:
+            # Escape LIKE wildcards in user input so e.g. a search for "50%"
+            # matches literally rather than acting as a wildcard.
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append("(title LIKE ? ESCAPE '\\' OR company LIKE ? ESCAPE '\\')")
+            like = f"%{escaped}%"
+            params.extend([like, like])
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where, params
+
+    def list_jobs(
+        self,
+        status: str | None = None,
+        search: str | None = None,
+        sort: str = "first_seen_at",
+        direction: str = "desc",
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Tracked jobs, optionally filtered by status and/or a title/company
+        substring search, sorted, and paginated. Used by the dashboard and by
+        gmail_sync's company matching (which relies on the no-filter default
+        returning every tracked job).
+
+        `sort` must be one of SORTABLE_COLUMNS and `direction` one of
+        "asc"/"desc" - both are validated here (raising InvalidSort) rather
+        than interpolated as-is, since they come from a query string.
         """
+        if sort not in SORTABLE_COLUMNS:
+            raise InvalidSort(f"Unknown sort column {sort!r}. Valid: {', '.join(sorted(SORTABLE_COLUMNS))}")
+        if direction not in ("asc", "desc"):
+            raise InvalidSort(f"Unknown sort direction {direction!r}. Valid: asc, desc")
+
+        where, params = self._where_clause(status, search)
+        query = (
+            f"SELECT * FROM jobs {where} "
+            f"ORDER BY {sort} {direction.upper()}, job_id {direction.upper()}"
+        )
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            params = [*params, limit, offset]
+
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
-            if status is not None:
-                rows = conn.execute(
-                    "SELECT * FROM jobs WHERE status = ? ORDER BY first_seen_at DESC", (status,)
-                ).fetchall()
-            else:
-                rows = conn.execute("SELECT * FROM jobs ORDER BY first_seen_at DESC").fetchall()
+            rows = conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
+
+    def count_jobs(self, status: str | None = None, search: str | None = None) -> int:
+        where, params = self._where_clause(status, search)
+        with self._connect() as conn:
+            row = conn.execute(f"SELECT COUNT(*) FROM jobs {where}", params).fetchone()
+        return int(row[0])
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -142,3 +200,13 @@ class Tracker:
                 "INSERT INTO qa_history (job_id, question, answer, created_at) VALUES (?, ?, ?, ?)",
                 (job_id, question, answer, now),
             )
+
+    def list_qa(self, job_id: str) -> list[dict[str, Any]]:
+        """A job's answered-question transcript, oldest first."""
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT question, answer, created_at FROM qa_history WHERE job_id = ? ORDER BY id ASC",
+                (job_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
