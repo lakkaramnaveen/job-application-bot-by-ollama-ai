@@ -1,6 +1,7 @@
 import argparse
 import csv
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
@@ -200,7 +201,51 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
     print(f"{args.job_id} -> {args.status}")
 
 
-def cmd_report(settings: Settings) -> None:
+# Score buckets for `job-bot report --by-score`'s outcome breakdown, widest
+# (worst-fit) first so a job with a null match_score never fits any bucket
+# and is simply left out - it hasn't been through the LLM scorer yet.
+SCORE_BUCKETS = ((0, 59), (60, 69), (70, 79), (80, 89), (90, 100))
+
+
+def _score_bucket_label(score: int) -> str:
+    for lo, hi in SCORE_BUCKETS:
+        if lo <= score <= hi:
+            return f"{lo}-{hi}"
+    return "?"
+
+
+def _print_score_breakdown(tracker: Tracker) -> None:
+    scored_jobs = [job for job in tracker.list_jobs() if job["match_score"] is not None]
+    if not scored_jobs:
+        return
+
+    buckets: dict[str, dict[str, int]] = {}
+    for job in scored_jobs:
+        by_status = buckets.setdefault(_score_bucket_label(job["match_score"]), {})
+        by_status[job["status"]] = by_status.get(job["status"], 0) + 1
+
+    statuses = sorted({job["status"] for job in scored_jobs})
+    print("\nOutcomes by match score:")
+    header = "score".ljust(8) + "".join(status.ljust(14) for status in statuses) + "total"
+    print(header)
+    for lo, hi in SCORE_BUCKETS:
+        bucket_counts = buckets.get(f"{lo}-{hi}")
+        if not bucket_counts:
+            continue
+        row = f"{lo}-{hi}".ljust(8) + "".join(str(bucket_counts.get(s, 0)).ljust(14) for s in statuses)
+        print(row + str(sum(bucket_counts.values())))
+
+
+def _stale_applications(tracker: Tracker, days: int) -> list[dict]:
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    return [
+        job
+        for job in tracker.list_jobs(status="applied", sort="applied_at", direction="asc")
+        if job["applied_at"] and job["applied_at"] < cutoff
+    ]
+
+
+def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
     tracker = Tracker(settings.db_path)
     counts = tracker.status_counts()
     if not counts:
@@ -210,6 +255,16 @@ def cmd_report(settings: Settings) -> None:
     for status in sorted(counts):
         print(f"{status:<{width}}  {counts[status]}")
     print(f"{'total':<{width}}  {sum(counts.values())}")
+
+    stale_days = args.stale_days if args.stale_days is not None else settings.stale_after_days
+    stale = _stale_applications(tracker, stale_days)
+    if stale:
+        print(f"\nApplied {stale_days}+ days ago with no reply ({len(stale)}):")
+        for job in stale:
+            print(f"  {job['job_id']}  {job['company']} - {job['title']}  (applied {job['applied_at'][:10]})")
+
+    if args.by_score:
+        _print_score_breakdown(tracker)
 
 
 EXPORT_FIELDS = (
@@ -347,7 +402,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status_p.add_argument("status", choices=sorted(TRACKER_STATUSES))
 
-    sub.add_parser("report", help="Print a count of tracked jobs by status.")
+    report_p = sub.add_parser("report", help="Print a count of tracked jobs by status.")
+    report_p.add_argument(
+        "--stale-days",
+        type=int,
+        default=None,
+        help="Flag applications with no reply after this many days (default: from .env).",
+    )
+    report_p.add_argument(
+        "--by-score", action="store_true", help="Break outcomes down by match-score bucket."
+    )
 
     export_p = sub.add_parser("export", help="Export tracked jobs as CSV.")
     export_p.add_argument("--status", choices=sorted(TRACKER_STATUSES), default=None)
@@ -403,7 +467,7 @@ def main() -> None:
         elif args.command == "status":
             cmd_status(settings, args)
         elif args.command == "report":
-            cmd_report(settings)
+            cmd_report(settings, args)
         elif args.command == "export":
             cmd_export(settings, args)
         elif args.command == "gmail-sync":

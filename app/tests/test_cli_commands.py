@@ -7,6 +7,8 @@ blacklist file, or stdout/a file.
 import argparse
 import csv
 import io
+import sqlite3
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -30,6 +32,23 @@ def make_settings(tmp_path, **overrides) -> Settings:
     )
     defaults.update(overrides)
     return Settings(**defaults)
+
+
+def report_args(**overrides) -> argparse.Namespace:
+    defaults = dict(stale_days=None, by_score=False)
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def _backdate_applied_at(db_path, job_id: str, when: datetime) -> None:
+    """Directly rewrite applied_at, since mark_applied() always stamps
+    "now" - tests that need a stale application have to backdate it after
+    the fact rather than through the public Tracker API.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.execute("UPDATE jobs SET applied_at = ? WHERE job_id = ?", (when.isoformat(), job_id))
+    conn.commit()
+    conn.close()
 
 
 # --- status ---
@@ -67,7 +86,7 @@ def test_report_prints_status_counts(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Acme", "https://x/2")
     tracker.mark_applied("job2")
 
-    cmd_report(settings)
+    cmd_report(settings, report_args())
 
     out = capsys.readouterr().out
     assert "seen" in out
@@ -80,9 +99,77 @@ def test_report_on_empty_tracker_says_so(tmp_path, capsys):
     settings = make_settings(tmp_path)
     Tracker(settings.db_path)
 
-    cmd_report(settings)
+    cmd_report(settings, report_args())
 
     assert "No jobs tracked yet." in capsys.readouterr().out
+
+
+def test_report_flags_stale_applications_past_the_threshold(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.mark_applied("job1")
+    _backdate_applied_at(settings.db_path, "job1", datetime.now(UTC) - timedelta(days=20))
+    tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
+    tracker.mark_applied("job2")  # applied just now - not stale
+
+    cmd_report(settings, report_args(stale_days=14))
+
+    out = capsys.readouterr().out
+    assert "Applied 14+ days ago with no reply (1):" in out
+    assert "job1" in out
+    assert "job2" not in out.split("Applied 14+")[1]
+
+
+def test_report_stale_days_defaults_to_settings(tmp_path, capsys):
+    settings = make_settings(tmp_path, stale_after_days=5)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.mark_applied("job1")
+    _backdate_applied_at(settings.db_path, "job1", datetime.now(UTC) - timedelta(days=10))
+
+    cmd_report(settings, report_args())
+
+    assert "Applied 5+ days ago with no reply (1):" in capsys.readouterr().out
+
+
+def test_report_omits_stale_section_when_nothing_is_stale(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.mark_applied("job1")
+
+    cmd_report(settings, report_args(stale_days=14))
+
+    assert "no reply" not in capsys.readouterr().out
+
+
+def test_report_by_score_breaks_down_outcomes_by_score_bucket(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score("job1", "Backend Engineer", "Acme", "https://x/1", score=92, should_apply=True)
+    tracker.update_status("job1", "offer")
+    tracker.record_score("job2", "Frontend Engineer", "Beta", "https://x/2", score=40, should_apply=False)
+    tracker.upsert_job("job3", "Unscored Role", "Gamma", "https://x/3")  # no match_score yet
+
+    cmd_report(settings, report_args(by_score=True))
+
+    out = capsys.readouterr().out
+    assert "Outcomes by match score:" in out
+    assert "90-100" in out
+    assert "0-59" in out
+    # job3 has no match_score and must not appear in the breakdown at all.
+    assert out.count("job3") == 0
+
+
+def test_report_by_score_omitted_without_the_flag(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score("job1", "Backend Engineer", "Acme", "https://x/1", score=92, should_apply=True)
+
+    cmd_report(settings, report_args())
+
+    assert "Outcomes by match score" not in capsys.readouterr().out
 
 
 # --- blacklist ---

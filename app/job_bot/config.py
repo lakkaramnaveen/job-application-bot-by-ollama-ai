@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     daily_application_cap: int = 20
     require_confirm_before_submit: bool = True
+    # `job-bot report`'s default for how long an application can sit in
+    # "applied" with no reply before it's worth a manual follow-up nudge.
+    stale_after_days: int = 14
     # Only answers at/above this confidence AND grounded in the resume/FAQ
     # (not a guess) get cached to faq_path for reuse on future applications -
     # a low-confidence answer getting cached would otherwise compound into
