@@ -7,7 +7,7 @@ from typing import TextIO
 
 from job_bot.browser.linkedin_adapter import LinkedInAdapter
 from job_bot.browser.session import browser_session
-from job_bot.config import Settings, SettingsError, get_settings
+from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError, get_settings
 from job_bot.dashboard.server import run_dashboard
 from job_bot.generation.artifacts import UnsafeJobId, write_cover_letter, write_tailored_resume
 from job_bot.generation.cover_letter import generate_cover_letter
@@ -366,6 +366,71 @@ def cmd_test_provider(settings: Settings) -> None:
     print(result)
 
 
+def cmd_doctor(settings: Settings) -> None:
+    """Check local setup for the common ways `job-bot run` fails partway
+    through rather than up front - deliberately file/config checks only, no
+    network calls, so it's fast and safe to run anytime. LLM connectivity
+    itself (which does make a real API call) is `job-bot test-provider`'s job.
+    """
+    print("job-bot doctor")
+    print("-" * 40)
+
+    checks: list[tuple[str, bool, str]] = [
+        ("Resume file", settings.resume_path.exists(), str(settings.resume_path)),
+    ]
+
+    if settings.llm_provider == "claude":
+        checks.append(("Anthropic API key (ANTHROPIC_API_KEY)", bool(settings.anthropic_api_key), ""))
+    else:
+        checks.append(
+            ("Ollama base URL configured", bool(settings.ollama_base_url), settings.ollama_base_url)
+        )
+
+    session_ready = settings.browser_profile_dir.exists() and any(settings.browser_profile_dir.iterdir())
+    checks.append(
+        (
+            "LinkedIn session saved",
+            session_ready,
+            str(settings.browser_profile_dir) if session_ready else "run `job-bot login` first",
+        )
+    )
+
+    gmail_ready = settings.gmail_credentials_path.exists()
+    checks.append(
+        (
+            "Gmail credentials (optional, for gmail-sync)",
+            gmail_ready,
+            "" if gmail_ready else str(settings.gmail_credentials_path),
+        )
+    )
+
+    cap_ok = settings.daily_application_cap <= HARD_DAILY_APPLICATION_CEILING
+    checks.append(
+        (
+            "Daily application cap within hard ceiling",
+            cap_ok,
+            ""
+            if cap_ok
+            else (
+                f"{settings.daily_application_cap} > {HARD_DAILY_APPLICATION_CEILING}; "
+                "the ceiling will be used instead"
+            ),
+        )
+    )
+
+    passed = 0
+    for label, ok, detail in checks:
+        line = f"[{'OK' if ok else '!!'}] {label}"
+        if detail:
+            line += f" - {detail}"
+        print(line)
+        passed += ok
+
+    print("-" * 40)
+    print(f"{passed}/{len(checks)} checks passed.")
+    print("Run `job-bot test-provider` to verify LLM connectivity (makes one real API call).")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="job_bot")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -393,6 +458,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("test-provider", help="Sanity-check the configured LLM provider with one call.")
+
+    sub.add_parser(
+        "doctor", help="Check local setup (resume, API key, LinkedIn session, Gmail creds) for problems."
+    )
 
     status_p = sub.add_parser(
         "status", help="Record an application outcome (interviewing, offer, rejected, ...) by hand."
@@ -464,6 +533,8 @@ def main() -> None:
             cmd_run(settings, args)
         elif args.command == "test-provider":
             cmd_test_provider(settings)
+        elif args.command == "doctor":
+            cmd_doctor(settings)
         elif args.command == "status":
             cmd_status(settings, args)
         elif args.command == "report":

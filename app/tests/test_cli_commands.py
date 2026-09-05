@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from job_bot.cli import cmd_blacklist, cmd_export, cmd_report, cmd_status
+from job_bot.cli import cmd_blacklist, cmd_doctor, cmd_export, cmd_report, cmd_status
 from job_bot.config import Settings
 from job_bot.tracker.db import Tracker
 
@@ -252,3 +252,50 @@ def test_export_with_no_jobs_writes_header_only(tmp_path, capsys):
     lines = capsys.readouterr().out.strip("\r\n").splitlines()
     assert len(lines) == 1
     assert lines[0].split(",")[0] == "job_id"
+
+
+# --- doctor ---
+
+
+def test_doctor_flags_missing_resume_and_passes_api_key_check(tmp_path, capsys):
+    settings = make_settings(tmp_path)  # resume_path points at a file that was never created
+
+    cmd_doctor(settings)
+
+    out = capsys.readouterr().out
+    assert "[!!] Resume file" in out
+    assert "[OK] Anthropic API key" in out
+    assert "checks passed." in out
+
+
+def test_doctor_passes_resume_check_once_the_file_exists(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.resume_path.write_text("resume", encoding="utf-8")
+
+    cmd_doctor(settings)
+
+    assert "[OK] Resume file" in capsys.readouterr().out
+
+
+def test_doctor_flags_missing_anthropic_api_key(tmp_path, capsys):
+    settings = make_settings(tmp_path, anthropic_api_key=None)
+
+    cmd_doctor(settings)
+
+    assert "[!!] Anthropic API key" in capsys.readouterr().out
+
+
+def test_doctor_checks_ollama_base_url_when_using_ollama(tmp_path, capsys):
+    settings = make_settings(tmp_path, llm_provider="ollama", anthropic_api_key=None)
+
+    cmd_doctor(settings)
+
+    assert "[OK] Ollama base URL configured" in capsys.readouterr().out
+
+
+def test_doctor_flags_daily_cap_above_the_hard_ceiling(tmp_path, capsys):
+    settings = make_settings(tmp_path, daily_application_cap=999)
+
+    cmd_doctor(settings)
+
+    assert "[!!] Daily application cap within hard ceiling" in capsys.readouterr().out
