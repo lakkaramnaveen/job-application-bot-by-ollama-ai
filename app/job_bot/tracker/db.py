@@ -112,6 +112,30 @@ class Tracker:
                 (job_id, title, company, url, match_score, now),
             )
 
+    def record_score(
+        self, job_id: str, title: str, company: str, url: str, score: int, should_apply: bool
+    ) -> None:
+        """Upsert a job together with its LLM match score and the resulting
+        seen/skipped status, in one transaction - as opposed to an
+        upsert_job() call followed by a separate mark_skipped(), which would
+        leave a crash between the two calls able to record a score without
+        ever recording the "don't apply" decision that went with it. cmd_run
+        relies on that atomicity: on a later run, a tracked job with
+        status="seen" and a non-null match_score is trusted to mean "already
+        scored, and the LLM said apply" without needing to re-check should_apply.
+        """
+        status = "seen" if should_apply else "skipped"
+        now = datetime.now(UTC).isoformat()
+        with self._transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO jobs (job_id, title, company, url, match_score, status, first_seen_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(job_id) DO UPDATE SET match_score = excluded.match_score, status = excluded.status
+                """,
+                (job_id, title, company, url, score, status, now),
+            )
+
     def mark_applied(self, job_id: str) -> None:
         """Raises ValueError if job_id isn't tracked yet - silently no-oping
         here (as this used to) would let a real LinkedIn submission go

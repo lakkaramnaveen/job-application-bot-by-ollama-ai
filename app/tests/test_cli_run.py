@@ -298,6 +298,43 @@ def test_run_continues_past_a_posting_that_fails_during_prep(tmp_path, monkeypat
     assert tracker.has_applied("job3") is True
 
 
+def test_run_reuses_an_earlier_runs_score_instead_of_rescoring(tmp_path, monkeypatch):
+    """Simulates resuming after a crash: JOB was already scored (and judged
+    worth applying to) by an earlier `job-bot run` that didn't get as far as
+    submitting. This run must apply to it without spending another
+    JobMatchScore call re-judging it.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(JOB.job_id, JOB.title, JOB.company, JOB.url, score=90, should_apply=True)
+
+    cmd_run(settings, make_args())
+
+    assert JobMatchScore not in provider.schemas_requested
+    assert tracker.has_applied(JOB.job_id) is True
+
+
+def test_run_skips_a_posting_already_skipped_in_an_earlier_run(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(JOB.job_id, JOB.title, JOB.company, JOB.url, score=20, should_apply=False)
+
+    cmd_run(settings, make_args())
+
+    assert provider.schemas_requested == []
+    assert tracker.get_job(JOB.job_id)["status"] == "skipped"
+
+
 def test_run_still_marks_applied_when_rate_limiter_raises_after_a_real_submission(tmp_path, monkeypatch):
     """A submission the browser already clicked through must be recorded in
     the tracker even if record_application() then raises - otherwise the

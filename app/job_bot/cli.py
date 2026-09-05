@@ -95,20 +95,41 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             if blacklist.is_blocked(posting.company):
                 audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
                 continue
+            existing = tracker.get_job(posting.job_id)
+            if existing is not None and existing["status"] != "seen":
+                # Already decided against in an earlier run (skipped by the
+                # bot, or corrected to a terminal status by hand without
+                # ever being applied to) - leave it alone rather than
+                # re-scoring it every run.
+                continue
 
             try:
                 description = adapter.load_description(posting)
-                match: JobMatchScore = score_job_match(provider, resume_text, description)
-                tracker.upsert_job(
-                    posting.job_id, posting.title, posting.company, posting.url, match.score
-                )
-                audit.log(
-                    "scored", job_id=posting.job_id, score=match.score, should_apply=match.should_apply
-                )
 
-                if not match.should_apply:
-                    tracker.mark_skipped(posting.job_id)
-                    continue
+                if existing is not None and existing["match_score"] is not None:
+                    # status == "seen" (checked above) with a score already
+                    # recorded means an earlier run already judged this
+                    # posting worth applying to - via record_score()'s
+                    # atomic score+status write, that judgement can't be
+                    # stale, only unfinished (e.g. the run crashed before
+                    # reaching Submit). Reuse it instead of spending another
+                    # LLM call re-scoring a posting we've already decided on.
+                    audit.log("reused_score", job_id=posting.job_id, score=existing["match_score"])
+                else:
+                    match: JobMatchScore = score_job_match(provider, resume_text, description)
+                    tracker.record_score(
+                        posting.job_id,
+                        posting.title,
+                        posting.company,
+                        posting.url,
+                        match.score,
+                        match.should_apply,
+                    )
+                    audit.log(
+                        "scored", job_id=posting.job_id, score=match.score, should_apply=match.should_apply
+                    )
+                    if not match.should_apply:
+                        continue
 
                 tailored = tailor_resume(provider, resume_text, description)
                 cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)

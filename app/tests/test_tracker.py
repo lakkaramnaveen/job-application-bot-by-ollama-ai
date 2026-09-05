@@ -54,6 +54,37 @@ def test_mark_skipped_sets_status(tmp_path):
     assert tracker.status_counts() == {"skipped": 1}
 
 
+def test_record_score_should_apply_sets_seen_status_and_score(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=85, should_apply=True)
+
+    job = tracker.get_job("1")
+    assert job["status"] == "seen"
+    assert job["match_score"] == 85
+
+
+def test_record_score_not_should_apply_sets_skipped_status(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=20, should_apply=False)
+
+    job = tracker.get_job("1")
+    assert job["status"] == "skipped"
+    assert job["match_score"] == 20
+
+
+def test_record_score_on_existing_job_updates_score_and_status(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=20, should_apply=False)
+
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=90, should_apply=True)
+
+    job = tracker.get_job("1")
+    assert job["status"] == "seen"
+    assert job["match_score"] == 90
+
+
 def test_update_status_accepts_valid_outcome_status(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
