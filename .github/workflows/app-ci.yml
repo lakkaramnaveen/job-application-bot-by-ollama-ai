@@ -59,7 +59,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: playwright install --with-deps chromium
-      - run: pytest -q
+      - run: pytest --cov=job_bot --cov-report=term-missing
 
   dependency-review:
     name: Dependency review

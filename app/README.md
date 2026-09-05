@@ -235,17 +235,19 @@ except for the LLM API calls you configure.
 
 ```bash
 source .venv/bin/activate
-pytest              # tests
-ruff check .         # lint
-ruff format .        # formatting
-mypy job_bot         # type check
+pytest                                          # tests
+pytest --cov=job_bot --cov-report=term-missing  # tests + coverage
+ruff check .                                    # lint
+ruff format .                                   # formatting
+mypy job_bot                                    # type check
 ```
 
 Optionally, `pre-commit install` (config in `.pre-commit-config.yaml`) runs
 ruff automatically on every commit. CI (`.github/workflows/app-ci.yml`, at the
 repo root) runs lint + mypy + the full pytest suite (with Playwright's browser
-installed) on Python 3.11-3.13 on every push/PR touching `app/`, plus a
-dependency-review check on PRs.
+installed, and a coverage floor of 70% enforced via `[tool.coverage.report]`
+in `pyproject.toml`) on Python 3.11-3.13 on every push/PR touching `app/`,
+plus a dependency-review check on PRs.
 
 Tests are fully offline: the Claude provider is tested against a mocked SDK
 client, the Ollama provider against a mocked HTTP server (`respx`), the

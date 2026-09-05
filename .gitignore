@@ -10,3 +10,6 @@ app/*.egg-info/
 app/.pytest_cache/
 app/.mypy_cache/
 app/.ruff_cache/
+app/.coverage
+app/.coverage.*
+app/htmlcov/

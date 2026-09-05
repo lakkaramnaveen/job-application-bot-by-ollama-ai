@@ -26,6 +26,7 @@ dependencies = [
 dev = [
     "pytest>=8.3,<9.0",
     "pytest-mock>=3.14,<4.0",
+    "pytest-cov>=5.0,<6.0",
     "respx>=0.21,<1.0",
     "ruff>=0.6,<1.0",
     "mypy>=1.11,<2.0",
@@ -40,6 +41,18 @@ include = ["job_bot*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["job_bot"]
+
+[tool.coverage.report]
+show_missing = true
+# A floor well below the current ~76%, meant to catch a real regression
+# (a large new untested module, a test file accidentally skipped) rather
+# than to chase 100% - a lot of the uncovered code is Playwright-driven
+# browser interaction and the CLI's own argparse/main() wiring, which
+# isn't meaningfully unit-testable without a real browser or process.
+fail_under = 70
 
 [tool.ruff]
 line-length = 110
