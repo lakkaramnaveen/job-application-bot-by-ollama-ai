@@ -170,6 +170,28 @@ def test_sync_gmail_never_updates_a_skipped_job(tmp_path):
     assert tracker.get_job("job1")["status"] == "skipped"
 
 
+def test_sync_gmail_application_confirmation_stamps_applied_at(tmp_path):
+    """A job that's only ever been "seen" (never run through mark_applied())
+    can legitimately be moved to "applied" by an application_confirmation
+    email - e.g. it arrived before the tracker's own upsert caught up, or
+    the application went out through a path the bot didn't observe. That
+    transition must stamp applied_at, or has_applied() (which the run
+    loop's dedup check and report --stale-days both rely on) stays False
+    for a job the tracker itself now calls "applied".
+    """
+    tracker = make_tracker_with_job(tmp_path, status="seen")
+    gmail = FakeGmailClient([make_email()])
+    provider = QueueProvider([make_classification(category="application_confirmation")])
+
+    result = sync_gmail(provider, gmail, tracker)
+
+    assert result.updated == [("job1", "Acme Corp", "applied")]
+    job = tracker.get_job("job1")
+    assert job["status"] == "applied"
+    assert job["applied_at"] is not None
+    assert tracker.has_applied("job1") is True
+
+
 def test_sync_gmail_never_moves_status_backward(tmp_path):
     tracker = make_tracker_with_job(tmp_path, status="interviewing")
     gmail = FakeGmailClient([make_email()])

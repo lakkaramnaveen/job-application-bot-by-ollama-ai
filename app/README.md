@@ -195,6 +195,10 @@ updates on an ambiguous match (multiple or zero tracked jobs match the
 guessed company), a low-confidence classification, or a job already in a
 terminal status (`offer`/`rejected`/`withdrawn`/`no_response`) - see
 `job_bot/integrations/gmail_sync.py`'s module docstring for the exact rules.
+A job moved to `applied` this way - or by hand, via `job-bot status <id>
+applied` - gets the same applied-date bookkeeping a real submission through
+`job-bot run` gets, so it's correctly picked up by `job-bot report`'s
+follow-up nudges (see Tracking outcomes above).
 
 **One-time setup** (Google Cloud Console):
 1. Create or pick a project at [console.cloud.google.com](https://console.cloud.google.com).

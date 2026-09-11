@@ -161,13 +161,29 @@ class Tracker:
         e.g. `interviewing`, `offer`, `rejected` - as you hear back on an
         application. Raises InvalidStatus for anything not in
         TRACKER_STATUSES, and ValueError if job_id isn't tracked yet.
+
+        A transition to "applied" here (gmail_sync's application_confirmation
+        match, or a manual `job-bot status <id> applied`) is just as real a
+        signal that an application went out as mark_applied() is - so it
+        stamps applied_at too, via COALESCE so an existing timestamp (set by
+        mark_applied() itself) is never overwritten. Leaving applied_at unset
+        on this path would silently break has_applied()'s dedup check in the
+        run loop (which keys off applied_at, not status) and `report
+        --stale-days`'s follow-up nudge (which requires applied_at) for any
+        job whose "applied" status came from here instead.
         """
         if status not in TRACKER_STATUSES:
             raise InvalidStatus(
                 f"Unknown status {status!r}. Valid statuses: {', '.join(sorted(TRACKER_STATUSES))}"
             )
         with self._transaction() as conn:
-            cursor = conn.execute("UPDATE jobs SET status = ? WHERE job_id = ?", (status, job_id))
+            if status == "applied":
+                cursor = conn.execute(
+                    "UPDATE jobs SET status = ?, applied_at = COALESCE(applied_at, ?) WHERE job_id = ?",
+                    (status, datetime.now(UTC).isoformat(), job_id),
+                )
+            else:
+                cursor = conn.execute("UPDATE jobs SET status = ? WHERE job_id = ?", (status, job_id))
             if cursor.rowcount == 0:
                 raise ValueError(f"No tracked job with id {job_id!r}")
 

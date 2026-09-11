@@ -95,6 +95,37 @@ def test_update_status_accepts_valid_outcome_status(tmp_path):
     assert tracker.status_counts() == {"interviewing": 1}
 
 
+def test_update_status_to_applied_stamps_applied_at(tmp_path):
+    """A job moved to "applied" via update_status() (gmail_sync's
+    application_confirmation match, or a manual `job-bot status <id>
+    applied`) never went through mark_applied(), which is the only other
+    place applied_at gets set. Leaving it null here would make
+    has_applied() return False for a job the tracker itself says is
+    applied - and the run loop's dedup check, and report --stale-days's
+    follow-up nudge, both key off applied_at rather than status.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+
+    tracker.update_status("1", "applied")
+
+    job = tracker.get_job("1")
+    assert job["status"] == "applied"
+    assert job["applied_at"] is not None
+    assert tracker.has_applied("1") is True
+
+
+def test_update_status_to_applied_does_not_overwrite_an_existing_applied_at(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+    tracker.mark_applied("1")
+    original_applied_at = tracker.get_job("1")["applied_at"]
+
+    tracker.update_status("1", "applied")
+
+    assert tracker.get_job("1")["applied_at"] == original_applied_at
+
+
 def test_update_status_rejects_unknown_status(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
