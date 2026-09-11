@@ -184,7 +184,15 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
                 self._send_text(400, "Content-Type must be application/json")
                 return
 
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                # A client-supplied header, so it isn't necessarily a number
+                # at all - int() raising here used to escape do_POST entirely,
+                # dumping a traceback and dropping the connection with no
+                # HTTP response rather than answering 400.
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._send_text(400, "Invalid Content-Length header")
+                return
             if length <= 0 or length > MAX_BODY_BYTES:
                 self._send_text(400, "Request body missing or too large")
                 return

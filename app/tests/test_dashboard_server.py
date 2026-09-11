@@ -1,4 +1,5 @@
 import json
+import socket
 import threading
 import urllib.error
 import urllib.request
@@ -189,6 +190,37 @@ def test_post_status_rejects_oversized_body(live_server):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         _post_json(f"{live_server}/api/jobs/job1/status", huge_payload)
     assert exc_info.value.code == 400
+
+
+def test_post_status_rejects_a_non_numeric_content_length(live_server):
+    """Content-Length is client-supplied and needn't be a number. Parsing it
+    unguarded raised ValueError out of do_POST, which dropped the connection
+    with no HTTP response at all (and a traceback on the server console)
+    instead of answering 400. Raw socket, since http.client refuses to send
+    a malformed Content-Length in the first place.
+    """
+    parts = urlsplit(live_server)
+    sock = socket.create_connection((parts.hostname, parts.port), timeout=5)
+    try:
+        sock.sendall(
+            f"POST /api/jobs/job1/status HTTP/1.1\r\n"
+            f"Host: {parts.hostname}:{parts.port}\r\n"
+            f"Origin: {live_server}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: not-a-number\r\n\r\n".encode()
+        )
+        # Read to EOF rather than a single recv() - headers and body can
+        # arrive in separate TCP segments. The server closes the connection
+        # after responding (HTTP/1.0), so this terminates on its own.
+        chunks = []
+        while chunk := sock.recv(4096):
+            chunks.append(chunk)
+        response = b"".join(chunks).decode("utf-8", errors="replace")
+    finally:
+        sock.close()
+
+    assert response.startswith("HTTP/1.0 400") or response.startswith("HTTP/1.1 400")
+    assert "Invalid Content-Length" in response
 
 
 def test_post_status_decodes_percent_encoded_job_id(live_server):
