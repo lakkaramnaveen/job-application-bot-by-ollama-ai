@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: job posting the candidate is a weak match for</title></head>
+<!--
+  The second posting in the end-to-end run - a role the fixture resume
+  doesn't fit, so the scorer marks it should_apply=false and the run skips
+  it before generating anything or opening the Easy Apply form.
+-->
+<body>
+  <h1>Data Engineer</h1>
+  <div class="jobs-description__content">
+    Data Engineer wanted to own our Spark and Hadoop data pipelines. Requires
+    deep Scala experience and 8+ years building large-scale ETL systems.
+  </div>
+
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="years-scala">Years of Scala experience</label>
+    <input id="years-scala" type="text" />
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

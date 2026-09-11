@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: full job posting page</title></head>
+<!--
+  A single page standing in for a real LinkedIn job posting, used by the
+  end-to-end test: it carries both the description block that
+  load_description() reads AND the Easy Apply button/modal that
+  fill_and_submit() drives, because the run flow visits the same posting URL
+  for both steps.
+-->
+<body>
+  <h1>Backend Engineer</h1>
+  <div class="jobs-description__content">
+    We are hiring a backend engineer with strong Python experience to build
+    and operate data services. You will work with FastAPI, PostgreSQL, and
+    AWS. 5+ years of professional software engineering experience required.
+  </div>
+
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="resume-upload">Resume</label>
+    <input id="resume-upload" type="file" />
+
+    <label for="years-python">Years of Python experience</label>
+    <input id="years-python" type="text" />
+
+    <fieldset>
+      <legend>Are you authorized to work in the US?</legend>
+      <input id="auth-yes" type="radio" name="auth" />
+      <label for="auth-yes">Yes</label>
+      <input id="auth-no" type="radio" name="auth" />
+      <label for="auth-no">No</label>
+    </fieldset>
+
+    <label for="cover-letter">Cover letter</label>
+    <textarea id="cover-letter"></textarea>
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: search results for the end-to-end run</title></head>
+<!--
+  Two applicable postings plus one from a blacklisted company, with the
+  root-relative hrefs LinkedIn actually serves - so the end-to-end test
+  exercises URL resolution, blacklist filtering, and the apply/skip split
+  in one pass.
+-->
+<body>
+  <div data-job-id="901">
+    <a href="/jobs/view/901/?refId=e2e">Backend Engineer</a>
+    <span class="job-card-subtitle">Acme Corp</span>
+  </div>
+  <div data-job-id="902">
+    <a href="/jobs/view/902/">Data Engineer</a>
+    <span class="job-card-subtitle">Beta Industries</span>
+  </div>
+  <div data-job-id="903">
+    <a href="/jobs/view/903/">Staff Engineer</a>
+    <span class="job-card-subtitle">Blocked Corp</span>
+  </div>
+</body>
+</html>
