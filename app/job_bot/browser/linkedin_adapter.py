@@ -18,7 +18,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -46,6 +46,13 @@ ACTION_DELAY_SECONDS = 1.0
 RESULTS_PER_PAGE = 25
 MAX_SEARCH_PAGES = 8  # hard cap so a huge search can't page forever
 NAVIGATION_RETRIES = 2
+
+# Job-card anchors on the search page carry root-relative hrefs
+# ("/jobs/view/4012345678/?refId=..."), so every scraped href is resolved
+# against this before being stored. A relative URL would be unusable
+# everywhere it's later consumed: page.goto() rejects it, and the dashboard
+# would render it as a link to the dashboard's own localhost origin.
+LINKEDIN_BASE_URL = "https://www.linkedin.com"
 
 
 class LinkedInAdapter(JobBoardAdapter):
@@ -78,12 +85,19 @@ class LinkedInAdapter(JobBoardAdapter):
             if not cards:
                 break
 
-            new_on_this_page = 0
+            # Counts job ids not seen on an earlier page, NOT postings kept -
+            # a page can legitimately yield zero postings while still being
+            # real progress through the results (e.g. every card on it is
+            # already marked Applied). Ending the search on "kept nothing
+            # here" would stop at the first such page and never reach the
+            # applicable jobs behind it.
+            new_ids_on_this_page = 0
             for card in cards:
                 job_id = card.get_attribute("data-job-id") or ""
                 if not job_id or job_id in seen_ids:
                     continue
                 seen_ids.add(job_id)
+                new_ids_on_this_page += 1
 
                 if card.locator(SELECTORS["applied_badge"]).count() > 0:
                     logger.info("Skipping job %s: already marked Applied on LinkedIn", job_id)
@@ -97,14 +111,21 @@ class LinkedInAdapter(JobBoardAdapter):
 
                 if job_id and title:
                     postings.append(
-                        JobPosting(job_id=job_id, title=title, company=company, url=href, description="")
+                        JobPosting(
+                            job_id=job_id,
+                            title=title,
+                            company=company,
+                            url=urljoin(LINKEDIN_BASE_URL, href) if href else "",
+                            description="",
+                        )
                     )
-                    new_on_this_page += 1
                     if len(postings) >= max_results:
                         break
 
-            if new_on_this_page == 0:
-                break  # this page had nothing new; further pages won't either
+            if new_ids_on_this_page == 0:
+                # Every card here was already seen on an earlier page, which
+                # is how LinkedIn behaves when you page past the last result.
+                break
 
         return postings
 

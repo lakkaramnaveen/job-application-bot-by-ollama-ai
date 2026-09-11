@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: search results with relative hrefs</title></head>
+<!--
+  Mirrors how linkedin.com actually serves job-card anchors: the href is
+  root-relative, not absolute. The adapter has to resolve these against
+  LINKEDIN_BASE_URL, since a relative URL is unusable both for page.goto()
+  and as a dashboard link.
+-->
+<body>
+  <div data-job-id="201">
+    <a href="/jobs/view/201/?refId=abc&amp;trackingId=xyz">Backend Engineer</a>
+    <span class="job-card-subtitle">Acme Corp</span>
+  </div>
+  <div data-job-id="202">
+    <a href="/jobs/view/202/">Platform Engineer</a>
+    <span class="job-card-subtitle">Gizmo LLC</span>
+  </div>
+</body>
+</html>

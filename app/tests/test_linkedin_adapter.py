@@ -6,15 +6,19 @@ verifies the field-detection and answer-matching logic in isolation.
 """
 
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from playwright.sync_api import sync_playwright
 
 from job_bot.browser.base_adapter import JobPosting
-from job_bot.browser.linkedin_adapter import LinkedInAdapter
+from job_bot.browser.linkedin_adapter import RESULTS_PER_PAGE, LinkedInAdapter
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
 SEARCH_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results.html"
+RELATIVE_HREF_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_relative_hrefs.html"
+ALL_APPLIED_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_all_applied.html"
+PAGE_TWO_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_page_two.html"
 RESUME_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "sample_resume.txt"
 AMBIGUOUS_FILE_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_ambiguous_file_field.html"
 SELECT_NO_PLACEHOLDER_FIXTURE_PATH = (
@@ -301,3 +305,87 @@ def test_best_match_index_word_boundary_still_matches_within_a_longer_option():
     match (this is the case the fallback tier exists for).
     """
     assert LinkedInAdapter._best_match_index(["I am not sure", "No, I am not"], "no") == 1
+
+
+# --- search() URL handling and pagination ---
+
+
+def test_search_resolves_relative_hrefs_to_absolute_linkedin_urls(playwright_page, monkeypatch):
+    """LinkedIn serves job-card anchors with root-relative hrefs. Storing
+    those verbatim makes every downstream consumer break: page.goto()
+    rejects a relative URL outright (so load_description/fill_and_submit
+    can't open the posting), and the dashboard renders it as a link to its
+    own localhost origin.
+    """
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(
+        playwright_page, "goto", lambda url, **kw: real_goto(f"file://{RELATIVE_HREF_FIXTURE_PATH}")
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    postings = adapter.search("python", "Remote", max_results=10)
+
+    assert [p.url for p in postings] == [
+        "https://www.linkedin.com/jobs/view/201/?refId=abc&trackingId=xyz",
+        "https://www.linkedin.com/jobs/view/202/",
+    ]
+
+
+def test_search_leaves_an_already_absolute_href_untouched(playwright_page, monkeypatch):
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(playwright_page, "goto", lambda url, **kw: real_goto(f"file://{SEARCH_FIXTURE_PATH}"))
+    adapter = LinkedInAdapter(playwright_page)
+
+    postings = adapter.search("python", "Remote", max_results=10)
+
+    assert all(p.url.startswith("https://example.com/jobs/") for p in postings)
+
+
+def test_search_pages_past_a_page_whose_results_are_all_already_applied(playwright_page, monkeypatch):
+    """A first page of results the user has already applied to is common in
+    an active search. It yields zero postings, but it is still real progress
+    through the result set - ending the search there (as keying the
+    stop-condition off "postings kept on this page" did) never reaches the
+    applicable jobs on the next page.
+    """
+    real_goto = playwright_page.goto
+    requested_starts = []
+
+    def fake_goto(url, **kw):
+        start = int(parse_qs(urlparse(url).query).get("start", ["0"])[0])
+        requested_starts.append(start)
+        if start == 0:
+            return real_goto(f"file://{ALL_APPLIED_FIXTURE_PATH}")
+        if start == RESULTS_PER_PAGE:
+            return real_goto(f"file://{PAGE_TWO_FIXTURE_PATH}")
+        return real_goto("about:blank")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    adapter = LinkedInAdapter(playwright_page)
+
+    postings = adapter.search("python", "Remote", max_results=10)
+
+    assert [p.job_id for p in postings] == ["403"]
+    assert requested_starts[:2] == [0, RESULTS_PER_PAGE]
+
+
+def test_search_stops_when_a_page_repeats_only_already_seen_jobs(playwright_page, monkeypatch):
+    """The stop condition that remains: LinkedIn re-serving results already
+    collected from an earlier page is how paging past the last result looks,
+    and the search must end rather than loop to MAX_SEARCH_PAGES.
+    """
+    real_goto = playwright_page.goto
+    page_loads = []
+
+    def fake_goto(url, **kw):
+        page_loads.append(url)
+        return real_goto(f"file://{SEARCH_FIXTURE_PATH}")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    adapter = LinkedInAdapter(playwright_page)
+
+    postings = adapter.search("python", "Remote", max_results=50)
+
+    assert {p.job_id for p in postings} == {"101", "103"}
+    # Page 1 collects them, page 2 repeats them and ends the search.
+    assert len(page_loads) == 2
