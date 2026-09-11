@@ -23,9 +23,12 @@ pull) - pick one per run with `--provider`.
   boards - that's a real risk you're taking on by running this, independent of
   anything this tool does or doesn't do to reduce detectability.
 - **Submission is confirmed by default.** Every application pauses for a
-  yes/no prompt before the final Submit click. There's also a hard daily cap
-  (`DAILY_APPLICATION_CAP` in `.env`, capped in code at 50 no matter what you
-  set) so a bug or a bad match-score threshold can't spam applications.
+  yes/no prompt before the final Submit click. Running with no terminal
+  attached to answer that prompt from (cron, a pipe, CI) is treated as "no" -
+  it never silently assumes yes - so pass `--yes-i-understand-the-risk` for
+  any unattended run. There's also a hard daily cap (`DAILY_APPLICATION_CAP`
+  in `.env`, capped in code at 50 no matter what you set) so a bug or a bad
+  match-score threshold can't spam applications.
 - **Selectors may need tuning.** LinkedIn's page structure isn't public and
   changes over time. If a run stops finding a button/field it used to find,
   check `job_bot/browser/linkedin_adapter.py`'s `SELECTORS` dict first, and use

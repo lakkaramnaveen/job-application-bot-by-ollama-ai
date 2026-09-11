@@ -14,7 +14,19 @@ class SubmitConfirmer:
 
     @staticmethod
     def _default_ask(prompt: str) -> bool:
-        reply = input(f"{prompt} [y/N] ").strip().lower()
+        try:
+            reply = input(f"{prompt} [y/N] ").strip().lower()
+        except EOFError:
+            # No terminal attached to answer from (cron, a pipe, CI). input()
+            # raising EOFError here used to propagate straight out of
+            # cmd_run uncaught - not in EXPECTED_ERRORS, so it crashed the
+            # whole run with a raw traceback instead of the same "declined"
+            # outcome a literal "no" answer produces. Never treat an absent
+            # answer as "yes" on a real-money action like submitting an
+            # application.
+            print()
+            print("No input available to confirm - treating as 'no'. Use --yes-i-understand-the-risk to skip this prompt.")
+            return False
         return reply in ("y", "yes")
 
     def confirm(self, summary: str) -> bool:
