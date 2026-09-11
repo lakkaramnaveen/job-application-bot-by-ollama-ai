@@ -307,6 +307,33 @@ def test_best_match_index_word_boundary_still_matches_within_a_longer_option():
     assert LinkedInAdapter._best_match_index(["I am not sure", "No, I am not"], "no") == 1
 
 
+@pytest.mark.parametrize(
+    ("answer", "options", "expected"),
+    [
+        ("5+", ["Select an option", "1-2 years", "5+ years"], 2),
+        ("C++", ["Java", "C++ developer"], 1),
+        ("100%", ["50% travel", "100% remote"], 1),
+    ],
+)
+def test_best_match_index_matches_answers_ending_in_a_non_word_character(answer, options, expected):
+    """An answer whose first or last character isn't a word character
+    ("5+", "C++", "100%") used to match nothing at all: \\b is defined
+    relative to the adjacent character on both sides, so r"\\b5\\+\\b" can
+    never match "5+ years" - the position after "+" sits between two
+    non-word characters. The field was then left blank, which stalls the
+    Easy Apply form on a required question.
+    """
+    assert LinkedInAdapter._best_match_index(options, answer) == expected
+
+
+def test_best_match_index_non_word_answer_still_rejects_a_partial_number_match():
+    """The looser matching must not make "5+" match "15+ years" - the digit
+    is butted against another digit, which is exactly what the boundary
+    check exists to reject.
+    """
+    assert LinkedInAdapter._best_match_index(["15+ years", "Not sure"], "5+") is None
+
+
 # --- search() URL handling and pagination ---
 
 

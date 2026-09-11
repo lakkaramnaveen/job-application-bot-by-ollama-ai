@@ -366,8 +366,17 @@ class LinkedInAdapter(JobBoardAdapter):
         # (e.g. answer "yes" matching option "Yes, I am authorized"). Plain
         # substring containment here would also match e.g. answer "no"
         # against option "None" or "Notice period" - wrong option, silently
-        # selected, on a field this sensitive - so word-boundary the match.
-        pattern = re.compile(rf"\b{re.escape(answer_norm)}\b")
+        # selected, on a field this sensitive - so require that the match
+        # isn't butted up against surrounding word characters.
+        #
+        # These lookarounds rather than \b: \b is defined relative to the
+        # adjacent character in the *pattern* too, so an answer that starts
+        # or ends with a non-word character ("5+", "C++", "100%") could never
+        # match anything - r"\b5\+\b" doesn't match "5+ years", because the
+        # position after "+" sits between two non-word characters. That left
+        # such fields blank and stalled the form. (?<!\w)/(?!\w) still reject
+        # "no" inside "None" while matching "5+" in "5+ years".
+        pattern = re.compile(rf"(?<!\w){re.escape(answer_norm)}(?!\w)")
         for i, opt in enumerate(options):
             if pattern.search(opt.strip().casefold()):
                 return i
