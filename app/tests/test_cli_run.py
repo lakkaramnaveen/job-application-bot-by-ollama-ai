@@ -97,7 +97,14 @@ class MultiJobAdapter(FakeAdapter):
 
 
 class FakePage:
-    pass
+    def __init__(self):
+        self._closed = False
+
+    def is_closed(self):
+        return self._closed
+
+    def close(self):
+        self._closed = True
 
 
 class FakeContext:
@@ -296,6 +303,84 @@ def test_run_continues_past_a_posting_that_fails_during_prep(tmp_path, monkeypat
     # job2 and job3 were still processed and applied to.
     assert tracker.has_applied("job2") is True
     assert tracker.has_applied("job3") is True
+
+
+class PrepClosesTheBrowserForFirstJobAdapter(FakeAdapter):
+    """job1's load_description() fails because the browser itself died mid
+    -call (the window was closed, crashed, or the process was killed) -
+    distinct from LoadDescriptionFailsForFirstJobAdapter's ordinary failure
+    above. Every remaining posting shares the same page, so the whole run
+    must stop rather than churn through job2/job3 against a dead page.
+    """
+
+    def search(self, keywords, location, max_results=25):
+        return [JOB, JOB2, JOB3]
+
+    def load_description(self, posting):
+        if posting.job_id == "job1":
+            self.page.close()
+            raise RuntimeError("Target page, context or browser has been closed")
+        return "We need a backend engineer with Python experience."
+
+
+def test_run_stops_the_whole_run_when_the_browser_closes_during_prep(tmp_path, monkeypatch, capsys):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", PrepClosesTheBrowserForFirstJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10))
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.get_job("job1") is None
+    # job2 and job3 were never reached at all - the run stopped as soon as
+    # it noticed the browser was gone, rather than repeating the same
+    # failure for the rest of the search pool.
+    assert tracker.get_job("job2") is None
+    assert tracker.get_job("job3") is None
+    assert "Browser window was closed" in capsys.readouterr().out
+
+
+class ApplyClosesTheBrowserForFirstJobAdapter(FakeAdapter):
+    """Same idea as PrepClosesTheBrowserForFirstJobAdapter, but the browser
+    dies during fill_and_submit() (the apply step) instead of during prep -
+    the two are separate except blocks in cmd_run, each needing its own
+    is_closed() check.
+    """
+
+    def search(self, keywords, location, max_results=25):
+        return [JOB, JOB2, JOB3]
+
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        if posting.job_id == "job1":
+            self.page.close()
+            raise RuntimeError("Target page, context or browser has been closed")
+        return super().fill_and_submit(
+            posting,
+            answer_question=answer_question,
+            resume_path=resume_path,
+            cover_letter_text=cover_letter_text,
+            dry_run=dry_run,
+        )
+
+
+def test_run_stops_the_whole_run_when_the_browser_closes_during_apply(tmp_path, monkeypatch, capsys):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", ApplyClosesTheBrowserForFirstJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10))
+
+    tracker = Tracker(settings.db_path)
+    # job1 was scored (worth applying to) before the browser died, but the
+    # submission itself never went through.
+    assert tracker.has_applied("job1") is False
+    assert tracker.get_job("job2") is None
+    assert tracker.get_job("job3") is None
+    assert "Browser window was closed" in capsys.readouterr().out
 
 
 def test_run_reuses_an_earlier_runs_score_instead_of_rescoring(tmp_path, monkeypatch):

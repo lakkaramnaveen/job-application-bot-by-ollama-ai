@@ -219,6 +219,13 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
                 audit.log("prep_error", job_id=posting.job_id, error=str(e))
                 print(f"Error preparing application for {posting.title} at {posting.company}: {e}")
+                if page.is_closed():
+                    # The browser itself is gone (closed, crashed, killed) -
+                    # every remaining posting shares this one page and would
+                    # fail identically on it, so stop here instead of
+                    # repeating the same failure once per remaining posting.
+                    print("Browser window was closed - stopping the run.")
+                    break
                 continue
 
             def answer(question: str, job_id: str = posting.job_id) -> str:
@@ -243,6 +250,9 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             except Exception as e:  # noqa: BLE001 - surface and continue to the next job
                 audit.log("apply_error", job_id=posting.job_id, error=str(e))
                 print(f"Error applying to {posting.title} at {posting.company}: {e}")
+                if page.is_closed():
+                    print("Browser window was closed - stopping the run.")
+                    break
                 continue
 
             if submitted:
