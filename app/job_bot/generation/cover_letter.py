@@ -14,6 +14,10 @@ SYSTEM_PROMPT = (
 def generate_cover_letter(
     provider: LLMProvider, resume_text: str, job_description: str, company_name: str
 ) -> CoverLetter:
+    """One cover letter per job, generated fresh from the resume and this
+    posting's description - never cached or reused across jobs, so it's
+    always specific to the company/role it's about.
+    """
     prompt = (
         "## Candidate resume\n"
         f"{resume_text}\n\n"

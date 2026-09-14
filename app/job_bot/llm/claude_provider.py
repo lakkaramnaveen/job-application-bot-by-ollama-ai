@@ -1,3 +1,9 @@
+"""LLMProvider backed by the Anthropic API. Uses the SDK's structured-output
+`messages.parse()` (output_format=schema) rather than free-text completion +
+manual JSON parsing, so a schema-invalid response is the SDK's problem to
+detect, not this module's.
+"""
+
 import anthropic
 
 from job_bot.llm.base import LLMProvider, SchemaT
@@ -11,6 +17,12 @@ class ClaudeProviderError(RuntimeError):
 
 class ClaudeProvider(LLMProvider):
     def __init__(self, api_key: str | None, model: str):
+        """Raises ClaudeProviderError immediately if no API key is
+        configured, rather than deferring the failure to the first real
+        call - callers (see llm/factory.py) construct this eagerly at
+        startup specifically so a missing key is caught before opening a
+        browser window.
+        """
         if not api_key:
             raise ClaudeProviderError(
                 "ANTHROPIC_API_KEY is not set. Add it to app/.env, or switch "

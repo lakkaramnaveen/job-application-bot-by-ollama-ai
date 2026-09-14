@@ -1,3 +1,9 @@
+"""Every structured shape an LLM call in job_bot can return. Each model here
+is passed as the `schema` argument to LLMProvider.generate_structured() (see
+llm/base.py) - the provider validates the model's output against it, so
+every call site gets a type-checked result instead of parsing free text.
+"""
+
 from typing import Literal
 
 from pydantic import BaseModel, Field

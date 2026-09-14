@@ -12,6 +12,11 @@ SYSTEM_PROMPT = (
 
 
 def tailor_resume(provider: LLMProvider, resume_text: str, job_description: str) -> TailoredResume:
+    """Produce a per-job-tailored summary/skills/bullets. This is never the
+    document actually uploaded to the employer (see generation/artifacts.py's
+    module docstring) - it's written to disk for the user to read and reuse,
+    while the real upload always stays the user's own verified resume file.
+    """
     prompt = (
         "## Candidate resume\n"
         f"{resume_text}\n\n"

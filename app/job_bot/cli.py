@@ -1,3 +1,18 @@
+"""The `job-bot` command-line entry point.
+
+Each `cmd_*` function implements one subcommand and is wired to it in two
+places: an `add_parser`/`add_argument` block in build_parser(), and a branch
+in main()'s dispatch. `cmd_run` is the core flow (search -> score -> tailor
+-> apply) and the one place safety modules (safety/) compose together;
+every other command is a thinner read/write against the tracker DB or a
+single integration.
+
+EXPECTED_ERRORS are exceptions any command may raise as an expected,
+user-facing failure (bad config, an unreachable API, ...) - main() catches
+just this list and prints the message instead of a traceback. Anything else
+propagating out of a command is a real bug.
+"""
+
 import argparse
 import csv
 import sys
@@ -41,6 +56,10 @@ EXPECTED_ERRORS = (
 
 
 def _apply_provider_overrides(settings: Settings, args: argparse.Namespace) -> None:
+    """Let `--provider`/`--model` on `run`/`gmail-sync` override .env for
+    this invocation only - settings is a fresh in-memory instance per
+    process, so this never writes back to .env.
+    """
     if getattr(args, "provider", None):
         settings.llm_provider = args.provider
     if getattr(args, "model", None):
@@ -51,6 +70,11 @@ def _apply_provider_overrides(settings: Settings, args: argparse.Namespace) -> N
 
 
 def cmd_login(settings: Settings) -> None:
+    """Open a visible, persistent-profile browser window for the user to log
+    into LinkedIn by hand - the bot never sees or stores the password itself,
+    only the resulting session cookies Chromium's profile directory keeps
+    (see browser/session.py). Run once; `job-bot run` reuses that profile.
+    """
     with browser_session(settings.browser_profile_dir, headless=False) as context:
         page = context.new_page()
         page.goto("https://www.linkedin.com/login")
@@ -63,6 +87,13 @@ def cmd_login(settings: Settings) -> None:
 
 
 def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
+    """The main loop: search Easy-Apply postings, score each against the
+    resume, generate tailored materials for the ones worth applying to, and
+    submit (unless --dry-run). Every safety mechanism in safety/ is composed
+    here - the daily cap (rate_limiter), the confirmation prompt (confirm),
+    the blacklist, and the audit log - so this is the one place to read to
+    understand what actually happens during a real run.
+    """
     for warning in settings.validate_ready():
         print(f"Warning: {warning}")
 
@@ -192,6 +223,11 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
+    """Record an outcome the bot has no way to observe on its own -
+    `job-bot run` only ever writes seen/applied/skipped; everything past
+    that (interviewing, offer, ...) is reported by the user by hand, or by
+    `job-bot gmail-sync` reading a reply email.
+    """
     tracker = Tracker(settings.db_path)
     try:
         tracker.update_status(args.job_id, args.status)
@@ -246,6 +282,11 @@ def _stale_applications(tracker: Tracker, days: int) -> list[dict]:
 
 
 def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
+    """Print status counts, plus two optional sections: `--stale-days`
+    (applications with no reply worth a manual follow-up) and `--by-score`
+    (how match score correlates with actual outcomes, to sanity-check
+    whether the LLM scorer's judgment tracks reality).
+    """
     tracker = Tracker(settings.db_path)
     counts = tracker.status_counts()
     if not counts:
@@ -286,6 +327,9 @@ def _write_export_csv(stream: TextIO, jobs: list[dict]) -> None:
 
 
 def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
+    """Dump tracked jobs as CSV - to a file with `--out`, or stdout so it
+    pipes straight into another tool.
+    """
     tracker = Tracker(settings.db_path)
     jobs = tracker.list_jobs(status=args.status, sort="first_seen_at", direction="asc")
 
@@ -300,6 +344,10 @@ def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
+    """Read recent Gmail, classify each message, and advance the matching
+    tracked job's status - see gmail_sync.py's module docstring for the
+    exact never-guess/never-downgrade rules this delegates to.
+    """
     provider = get_provider(settings)
     gmail_client = GmailClient(settings.gmail_credentials_path, settings.gmail_token_path)
     tracker = Tracker(settings.db_path)
@@ -329,6 +377,9 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
+    """add/remove/list companies `job-bot run` will always skip - see
+    build_parser()'s `blacklist` subparser for the three actions.
+    """
     blacklist = CompanyBlacklist(settings.blacklist_path)
     if args.blacklist_action == "add":
         blacklist.add(args.company)
@@ -348,11 +399,19 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_dashboard(settings: Settings, args: argparse.Namespace) -> None:
+    """Serve the local tracker dashboard - see dashboard/server.py's module
+    docstring for why it binds to localhost only and has no login.
+    """
     port = args.port if args.port is not None else settings.dashboard_port
     run_dashboard(settings.db_path, port=port, open_browser=not args.no_open)
 
 
 def cmd_test_provider(settings: Settings) -> None:
+    """One real API call to the configured LLM provider, to confirm the key/
+    model/local server actually work before trusting them to score real
+    postings. See also `job-bot doctor`, which checks everything else
+    (resume, LinkedIn session, ...) without making a network call.
+    """
     provider = get_provider(settings)
     result = provider.generate_structured(
         system="You are a test.",
@@ -432,6 +491,11 @@ def cmd_doctor(settings: Settings) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Defines every `job-bot <command>` and its flags. Each subparser here
+    pairs with one `cmd_*` function above and one branch in main()'s
+    dispatch - run `job-bot <command> --help` for the flags themselves
+    rather than reading this as documentation.
+    """
     parser = argparse.ArgumentParser(prog="job_bot")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -518,6 +582,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Entry point registered as the `job-bot` console script (see
+    pyproject.toml's [project.scripts]). Parses argv, builds one Settings
+    for the whole invocation, dispatches to the matching cmd_*, and turns
+    any EXPECTED_ERRORS into a clean one-line message instead of a
+    traceback - anything else raised here is a bug, not user error.
+    """
     configure_logging()
     parser = build_parser()
     args = parser.parse_args()

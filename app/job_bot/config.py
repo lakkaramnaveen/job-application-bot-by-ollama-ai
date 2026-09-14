@@ -1,3 +1,11 @@
+"""Application configuration, loaded from app/.env (see .env.example) with
+pydantic-settings' usual mapping: each field below is set by the
+case-insensitive environment variable of the same name (e.g. `llm_provider`
+<- `LLM_PROVIDER`). Every field has a default, so job_bot runs out of the box
+with no .env at all except for whatever validate_ready() below flags as
+actually required (a resume file, and an API key if using Claude).
+"""
+
 from pathlib import Path
 
 from pydantic import Field
@@ -11,6 +19,13 @@ HARD_DAILY_APPLICATION_CEILING = 50
 
 
 class Settings(BaseSettings):
+    """All configuration for one job_bot invocation. Constructed once, at CLI
+    startup (see cli.py's get_settings() call in main()), then threaded
+    explicitly through every command rather than read from a global - keeps
+    every function's dependencies visible in its signature and makes tests
+    trivial to isolate (see e.g. tests/test_cli_run.py's make_settings()).
+    """
+
     model_config = SettingsConfigDict(
         env_file=str(APP_DIR / ".env"),
         env_file_encoding="utf-8",

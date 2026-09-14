@@ -1,3 +1,10 @@
+"""SQLite-backed persistence for every job the bot has seen, applied to, or
+been told about by hand - the single source of truth cli.py's cmd_run,
+cmd_report/export/status, gmail_sync.py, and the dashboard all read and
+write. See Tracker below for the schema and every read/write method; the
+`_transaction()` helper each of them uses is worth reading first.
+"""
+
 import contextlib
 import sqlite3
 from collections.abc import Iterator

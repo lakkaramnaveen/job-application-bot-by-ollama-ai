@@ -23,6 +23,13 @@ def answer_question(
     faq_answers: dict[str, str],
     question: str,
 ) -> ApplicationAnswer:
+    """Answer one Easy Apply form question the browser adapter couldn't fill
+    deterministically (see linkedin_adapter.py's _fill_visible_fields()).
+    Callers decide what to do with a low-confidence/not-based-on-resume
+    answer - this always returns one, it never refuses to answer - see
+    cli.py's cmd_run, which only caches an answer to faq_answers for reuse
+    when it clears settings.faq_save_confidence.
+    """
     prompt = (
         "## Candidate resume\n"
         f"{resume_text}\n\n"

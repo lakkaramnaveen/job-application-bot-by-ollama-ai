@@ -1,8 +1,19 @@
+"""Extracts plain text from the user's resume file, in whatever format they
+kept it in (PDF, DOCX, or plain text). Every downstream consumer (scoring,
+tailoring, cover letters, Q&A) works from this text, not the original file -
+see resume/store.py, which caches the result of parse_resume() for the
+lifetime of one run.
+"""
+
 from pathlib import Path
 
 
 class ResumeParseError(RuntimeError):
-    pass
+    """Raised for a missing file, an unsupported extension, or a PDF/DOCX
+    that yields no extractable text (e.g. a scanned image with no OCR text
+    layer) - caught in cli.py's EXPECTED_ERRORS and reported as a clean
+    message rather than a traceback.
+    """
 
 
 def parse_resume(path: Path) -> str:

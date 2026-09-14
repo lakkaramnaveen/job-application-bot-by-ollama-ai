@@ -25,6 +25,11 @@ SYSTEM_PROMPT = (
 
 
 def score_job_match(provider: LLMProvider, resume_text: str, job_description: str) -> JobMatchScore:
+    """Ask the LLM to score fit and check eligibility, then enforce the one
+    rule the prompt above can only ask the model to follow, not guarantee:
+    an eligibility='fail' verdict always forces should_apply=False in the
+    returned result, regardless of what the model itself set.
+    """
     prompt = (
         "## Candidate resume\n"
         f"{resume_text}\n\n"
