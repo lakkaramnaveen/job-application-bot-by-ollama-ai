@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form with a link-based entry point</title></head>
+<!--
+  Identical to easy_apply_form.html except the "Easy Apply" control is an
+  <a> (LinkedIn's actual current markup, confirmed against a live job
+  posting - href="…/apply/?openSDUIApplyFlow=true…", intercepted by JS to
+  open the modal inline) rather than a <button>. Exercises that
+  SELECTORS["easy_apply_button"] matches both tags rather than assuming one.
+-->
+<body>
+  <a href="#" aria-label="Easy Apply" onclick="return false;">Easy Apply</a>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="resume-upload">Resume</label>
+    <input id="resume-upload" type="file" />
+
+    <label for="years-python">Years of Python experience</label>
+    <input id="years-python" type="text" />
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

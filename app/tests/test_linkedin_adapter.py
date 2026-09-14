@@ -15,6 +15,7 @@ from job_bot.browser.base_adapter import JobPosting
 from job_bot.browser.linkedin_adapter import RESULTS_PER_PAGE, LinkedInAdapter
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
+LINK_ENTRY_POINT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_link_entry_point.html"
 SEARCH_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results.html"
 RELATIVE_HREF_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_relative_hrefs.html"
 ALL_APPLIED_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_all_applied.html"
@@ -67,6 +68,34 @@ def test_dry_run_fills_fields_and_stops_before_submit(playwright_page):
     assert playwright_page.locator("#auth-yes").is_checked()
     assert not playwright_page.locator("#auth-no").is_checked()
     assert playwright_page.locator("#start-date").input_value() == "immediately"
+
+
+def test_easy_apply_entry_point_matches_an_anchor_tag_not_just_a_button(playwright_page):
+    """LinkedIn's actual current markup for the "Easy Apply" control is an
+    <a> (confirmed against a live job posting - an href to an /apply/ URL,
+    intercepted by JS to open the modal inline), not a <button>. Matching
+    only button: here made every real run time out after 30s on every
+    single posting, since the locator matched nothing at all.
+    """
+    posting = JobPosting(
+        job_id="1",
+        title="Backend Engineer",
+        company="Acme",
+        url=f"file://{LINK_ENTRY_POINT_FIXTURE_PATH}",
+        description="",
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "5" if "Python" in label else "",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert submitted is False
+    assert playwright_page.locator("#years-python").input_value() == "5"
 
 
 def test_unanswered_label_gets_empty_string_not_a_crash(playwright_page):

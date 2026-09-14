@@ -28,7 +28,14 @@ from job_bot.browser.base_adapter import JobBoardAdapter, JobPosting
 logger = logging.getLogger(__name__)
 
 SELECTORS = {
-    "easy_apply_button": 'button:has-text("Easy Apply")',
+    # LinkedIn currently renders this control as an <a> (an
+    # href="…/apply/?openSDUIApplyFlow=true…" link intercepted by JS to open
+    # the modal inline, confirmed against a live job posting), not a
+    # <button> - matching only button: here made every real run time out
+    # after 30s on every single posting, since the locator matched nothing
+    # at all. Match both tags rather than assume which one LinkedIn uses for
+    # any given account/job/rollout.
+    "easy_apply_button": 'button:has-text("Easy Apply"), a:has-text("Easy Apply")',
     "dialog": 'div[role="dialog"]',
     "next_button": 'button[aria-label*="next step" i], button[aria-label*="Continue" i]',
     "review_button": 'button[aria-label*="Review" i]',
