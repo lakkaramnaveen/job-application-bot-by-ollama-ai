@@ -26,16 +26,21 @@ def browser_session(
 
     - cdp_url set: attaches to an already-running Chrome via the Chrome
       DevTools Protocol (started separately with
-      --remote-debugging-port=<port>) and reuses its first existing context
-      - the user's actual, already-logged-in profile - instead of a
-      separate one. The context is deliberately never closed here: it's the
-      user's real browser, and closing it (or the underlying connection's
-      browser handle) would close their actual Chrome windows, not just the
-      tab this opened. This trades the isolation above for not having to
-      log in a second time - a real security tradeoff (that Chrome's
-      debugging port gives any local process full control over it and read
-      access to every cookie in it, not just this app), not merely a
-      convenience toggle.
+      --remote-debugging-port=<port>) and reuses its first existing context,
+      instead of launching a separate browser of its own. Since Chrome 136,
+      Chrome itself refuses to open a debugging port on the *default*
+      profile, so whatever this attaches to is necessarily some other,
+      separately-maintained profile - not the user's regular, everyday
+      Chrome session. This exists for a user who already runs a permanent,
+      separate debug-enabled Chrome instance for other tooling, not as a
+      way to skip logging in by reusing one's main browser. The context is
+      deliberately never closed here: it's a browser this didn't launch,
+      and closing it (or the underlying connection's browser handle) would
+      close windows the user (or other tooling) still has open, not just
+      the tab this opened. Still a real security tradeoff regardless of
+      which profile is debugged: an open debugging port gives any local
+      process full control over that browser and read access to every
+      cookie in it.
     """
     if cdp_url:
         with sync_playwright() as p:

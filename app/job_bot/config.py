@@ -59,11 +59,13 @@ class Settings(BaseSettings):
     browser_profile_dir: Path = APP_DIR / "data" / "browser_profile"
     # Unset (default) means browser_session() launches its own isolated
     # Chromium profile - see that function's docstring and README.md's
-    # "Browser profile" section. Set to e.g. "http://localhost:9222" to
-    # instead attach to an already-running Chrome (started separately with
-    # --remote-debugging-port=9222) and reuse its logged-in profile - a
-    # real security tradeoff, not just a convenience toggle, since Chrome's
-    # debugging port gives any local process full control over that browser.
+    # "Browser profile" section. Setting this attaches to an already-running
+    # Chrome (e.g. "http://localhost:9222") instead - not the user's regular
+    # browser, since Chrome 136+ refuses to open a debugging port on the
+    # default profile, so this only makes sense against a separate,
+    # permanently-running debug Chrome the user already maintains. A real
+    # security tradeoff regardless, since an open debugging port gives any
+    # local process full control over whatever browser it's attached to.
     browser_cdp_url: str | None = None
     audit_log_path: Path = APP_DIR / "data" / "audit.log"
     applications_dir: Path = APP_DIR / "data" / "applications"

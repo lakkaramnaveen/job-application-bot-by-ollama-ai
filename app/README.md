@@ -138,26 +138,28 @@ another job board) sets, never your other logged-in sessions (email,
 banking, ...) - so if a selector ever misfires or something goes wrong, the
 blast radius is limited to LinkedIn. See `SECURITY.md`.
 
-If you'd rather have it drive your actual, already-logged-in Chrome instead
-of logging in a second time, set `BROWSER_CDP_URL` in `.env` and launch
-Chrome yourself with a debugging port open first:
+`BROWSER_CDP_URL` exists to attach to an already-running Chrome over the
+Chrome DevTools Protocol instead - **but as of Chrome 136 (2025), Chrome
+itself refuses to open a remote-debugging port on your default profile at
+all**, specifically to prevent another process from draining a real
+session's cookies through it. `--remote-debugging-port` only takes effect
+alongside a non-default `--user-data-dir`, which means whatever it attaches
+to is a fresh, empty profile - not your regular, already-logged-in Chrome.
+There's no way around this on current Chrome; it isn't a job-bot
+limitation. In practice this setting is only useful if you already keep a
+separate, permanently-running debug Chrome instance for other tooling and
+want job-bot to share its (already job-board-only) session - not as a way
+to reuse your everyday browser. For everyone else, the isolated profile
+above is the only real option, and it only costs you one extra login.
 
-```bash
-# Quit Chrome first, then relaunch it with remote debugging enabled:
-open -a "Google Chrome" --args --remote-debugging-port=9222
-```
-```bash
-# .env
-BROWSER_CDP_URL=http://localhost:9222
-```
-
-**Understand the tradeoff before enabling this**: Chrome's remote-debugging
-port gives *any* local process on your machine full control over that
-browser window and read access to every cookie in it - not just LinkedIn's,
-every site you're logged into in that profile. It's a real reduction in
-isolation, not just a convenience setting. `job-bot login`/`job-bot run`
-will reuse whatever context is already open rather than closing it when
-they finish, since it's your actual browser, not one they launched.
+If you do have such an instance, point `BROWSER_CDP_URL` at it in `.env`
+(e.g. `http://localhost:9222`). **Understand the tradeoff before enabling
+this**: an open debugging port gives *any* local process on your machine
+full control over that browser window and read access to every cookie in
+whatever profile it's debugging - a real reduction in isolation for that
+profile, not just a convenience setting. `job-bot login`/`job-bot run` will
+reuse whatever context is already open rather than closing it when they
+finish, since it's a browser they attached to, not one they launched.
 
 ## Tracking outcomes
 

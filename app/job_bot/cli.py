@@ -90,9 +90,9 @@ def cmd_login(settings: Settings) -> None:
     by default, job-bot's own isolated Chromium profile, whose session
     cookies persist under settings.browser_profile_dir and get reused by
     every future `job-bot run` - run this once. With browser_cdp_url set,
-    there's nothing to "save" here at all: it's attaching to the user's own
-    already-running Chrome, so if that's already logged into LinkedIn this
-    finishes immediately.
+    there's nothing to "save" here at all: it's attaching to whatever
+    already-running Chrome that URL points at, so if that's already logged
+    into LinkedIn this finishes immediately.
 
     Waits for the page to navigate away from the login/checkpoint flow on its
     own rather than blocking on input() for an Enter keypress - input()
