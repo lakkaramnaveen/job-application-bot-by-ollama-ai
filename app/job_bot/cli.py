@@ -20,6 +20,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
 from job_bot.browser.linkedin_adapter import LinkedInAdapter
 from job_bot.browser.session import browser_session
 from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError, get_settings
@@ -69,20 +72,53 @@ def _apply_provider_overrides(settings: Settings, args: argparse.Namespace) -> N
             settings.ollama_model = args.model
 
 
+LOGIN_WAIT_TIMEOUT_MS = 600_000  # 10 minutes - generous for 2FA/security checkpoints
+
+
+def _login_finished(url: str) -> bool:
+    """True once the browser has navigated away from both the login form and
+    a security checkpoint/challenge page - either one still means the user
+    hasn't finished authenticating yet.
+    """
+    return "linkedin.com/login" not in url and "/checkpoint/" not in url
+
+
 def cmd_login(settings: Settings) -> None:
     """Open a visible, persistent-profile browser window for the user to log
     into LinkedIn by hand - the bot never sees or stores the password itself,
     only the resulting session cookies Chromium's profile directory keeps
     (see browser/session.py). Run once; `job-bot run` reuses that profile.
+
+    Waits for the page to navigate away from the login/checkpoint flow on its
+    own rather than blocking on input() for an Enter keypress - input()
+    requires a terminal with live interactive stdin attached to *this*
+    process, which isn't true in every environment this can be launched from
+    (an agent's shell, a remote dev box, ...), and there raised an unhandled
+    EOFError instead of ever giving the user a chance to log in.
     """
     with browser_session(settings.browser_profile_dir, headless=False) as context:
         page = context.new_page()
         page.goto("https://www.linkedin.com/login")
         print(
-            "A browser window has opened. Log in to LinkedIn manually, then "
-            "press Enter here once you're logged in."
+            "A browser window has opened. Log in to LinkedIn manually - this "
+            "continues on its own once you're done, no need to come back here."
         )
-        input()
+        try:
+            page.wait_for_url(_login_finished, timeout=LOGIN_WAIT_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            print(
+                f"Still on the login page after {LOGIN_WAIT_TIMEOUT_MS // 60_000} "
+                "minutes - closing without saving. Run `job-bot login` again when ready."
+            )
+            return
+        except PlaywrightError as e:
+            # The browser/tab closed out from under the wait - the user
+            # closed the window, the browser crashed, or (in some sandboxed
+            # shells) the process itself got killed before login finished.
+            # Not the same as the timeout above, and not a bug to surface
+            # as a traceback: nothing was saved, so just say so plainly.
+            print(f"Browser closed before login finished ({e}). Run `job-bot login` again.")
+            return
     print("Session saved to", settings.browser_profile_dir)
 
 
