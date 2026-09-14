@@ -57,6 +57,14 @@ class Settings(BaseSettings):
 
     db_path: Path = APP_DIR / "data" / "job_bot.sqlite3"
     browser_profile_dir: Path = APP_DIR / "data" / "browser_profile"
+    # Unset (default) means browser_session() launches its own isolated
+    # Chromium profile - see that function's docstring and README.md's
+    # "Browser profile" section. Set to e.g. "http://localhost:9222" to
+    # instead attach to an already-running Chrome (started separately with
+    # --remote-debugging-port=9222) and reuse its logged-in profile - a
+    # real security tradeoff, not just a convenience toggle, since Chrome's
+    # debugging port gives any local process full control over that browser.
+    browser_cdp_url: str | None = None
     audit_log_path: Path = APP_DIR / "data" / "audit.log"
     applications_dir: Path = APP_DIR / "data" / "applications"
 

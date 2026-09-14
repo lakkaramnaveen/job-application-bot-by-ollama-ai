@@ -55,7 +55,7 @@ class FakeContext:
 
 def fake_browser_session_factory(page: FakePage):
     @contextlib.contextmanager
-    def _fake_browser_session(profile_dir, headless=False):
+    def _fake_browser_session(profile_dir, headless=False, cdp_url=None):
         yield FakeContext(page)
 
     return _fake_browser_session

@@ -177,7 +177,7 @@ def wired_run(browser_page, monkeypatch):
             return browser_page
 
     @contextlib.contextmanager
-    def fake_browser_session(profile_dir, headless=False):
+    def fake_browser_session(profile_dir, headless=False, cdp_url=None):
         yield FakeContext()
 
     monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)

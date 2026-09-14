@@ -127,6 +127,38 @@ filled with the generated text (a text field is per-application content
 you can always edit or clear before submitting, unlike a formal resume
 document) - see `_looks_like_cover_letter_field()` in `linkedin_adapter.py`.
 
+## Browser profile
+
+By default, `job-bot login`/`job-bot run` launch a Chromium instance with
+its own isolated profile (`BROWSER_PROFILE_DIR`, default
+`data/browser_profile`) - not your everyday Chrome. You log into LinkedIn
+there once and every future run reuses that saved session. This is
+deliberate: that profile only ever holds whatever cookies LinkedIn (or
+another job board) sets, never your other logged-in sessions (email,
+banking, ...) - so if a selector ever misfires or something goes wrong, the
+blast radius is limited to LinkedIn. See `SECURITY.md`.
+
+If you'd rather have it drive your actual, already-logged-in Chrome instead
+of logging in a second time, set `BROWSER_CDP_URL` in `.env` and launch
+Chrome yourself with a debugging port open first:
+
+```bash
+# Quit Chrome first, then relaunch it with remote debugging enabled:
+open -a "Google Chrome" --args --remote-debugging-port=9222
+```
+```bash
+# .env
+BROWSER_CDP_URL=http://localhost:9222
+```
+
+**Understand the tradeoff before enabling this**: Chrome's remote-debugging
+port gives *any* local process on your machine full control over that
+browser window and read access to every cookie in it - not just LinkedIn's,
+every site you're logged into in that profile. It's a real reduction in
+isolation, not just a convenience setting. `job-bot login`/`job-bot run`
+will reuse whatever context is already open rather than closing it when
+they finish, since it's your actual browser, not one they launched.
+
 ## Tracking outcomes
 
 `job-bot run` only ever writes `seen`, `applied`, or `skipped` - it has no way

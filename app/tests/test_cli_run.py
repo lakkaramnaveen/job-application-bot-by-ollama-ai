@@ -106,7 +106,7 @@ class FakeContext:
 
 
 @contextmanager
-def fake_browser_session(profile_dir, headless=False):
+def fake_browser_session(profile_dir, headless=False, cdp_url=None):
     yield FakeContext()
 
 

@@ -84,10 +84,15 @@ def _login_finished(url: str) -> bool:
 
 
 def cmd_login(settings: Settings) -> None:
-    """Open a visible, persistent-profile browser window for the user to log
-    into LinkedIn by hand - the bot never sees or stores the password itself,
-    only the resulting session cookies Chromium's profile directory keeps
-    (see browser/session.py). Run once; `job-bot run` reuses that profile.
+    """Open a browser window for the user to log into LinkedIn by hand - the
+    bot never sees or stores the password itself. What it's a window *into*
+    depends on settings.browser_cdp_url (see browser_session()'s docstring):
+    by default, job-bot's own isolated Chromium profile, whose session
+    cookies persist under settings.browser_profile_dir and get reused by
+    every future `job-bot run` - run this once. With browser_cdp_url set,
+    there's nothing to "save" here at all: it's attaching to the user's own
+    already-running Chrome, so if that's already logged into LinkedIn this
+    finishes immediately.
 
     Waits for the page to navigate away from the login/checkpoint flow on its
     own rather than blocking on input() for an Enter keypress - input()
@@ -96,7 +101,9 @@ def cmd_login(settings: Settings) -> None:
     (an agent's shell, a remote dev box, ...), and there raised an unhandled
     EOFError instead of ever giving the user a chance to log in.
     """
-    with browser_session(settings.browser_profile_dir, headless=False) as context:
+    with browser_session(
+        settings.browser_profile_dir, headless=False, cdp_url=settings.browser_cdp_url
+    ) as context:
         page = context.new_page()
         page.goto("https://www.linkedin.com/login")
         print(
@@ -119,7 +126,10 @@ def cmd_login(settings: Settings) -> None:
             # as a traceback: nothing was saved, so just say so plainly.
             print(f"Browser closed before login finished ({e}). Run `job-bot login` again.")
             return
-    print("Session saved to", settings.browser_profile_dir)
+    if settings.browser_cdp_url:
+        print("Logged in. `job-bot run` will reuse this same Chrome session.")
+    else:
+        print("Session saved to", settings.browser_profile_dir)
 
 
 def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
@@ -145,7 +155,9 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
 
     resume_text = resume_store.resume_text()
 
-    with browser_session(settings.browser_profile_dir, headless=args.headless) as context:
+    with browser_session(
+        settings.browser_profile_dir, headless=args.headless, cdp_url=settings.browser_cdp_url
+    ) as context:
         page = context.new_page()
         adapter = LinkedInAdapter(page)
         postings = adapter.search(args.keywords, args.location, max_results=args.search_pool)
