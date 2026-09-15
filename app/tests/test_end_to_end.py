@@ -18,6 +18,7 @@ run, and that an email arriving later moves that same row forward.
 import json
 import threading
 import urllib.request
+from datetime import date
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -203,6 +204,9 @@ def run_args(**overrides):
         provider=None,
         model=None,
         yes_i_understand_the_risk=True,
+        min_score=None,
+        exclude_title_keywords=None,
+        experience_level=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -247,11 +251,13 @@ def test_full_run_applies_scores_and_records_everything(settings, wired_run):
     # The scraped relative href resolved to a real, absolute LinkedIn URL.
     assert applied["url"] == "https://www.linkedin.com/jobs/view/901/?refId=e2e"
 
-    # Generated material landed on disk for the job actually applied to.
-    job_dir = settings.applications_dir / APPLICABLE_JOB_ID
+    # Generated material landed on disk for the job actually applied to,
+    # under today's date folder (see generation/artifacts.py's _job_dir()).
+    job_dir = settings.applications_dir / date.today().isoformat() / "901 - Acme Corp - Backend Engineer"
     assert (job_dir / "tailored_resume.txt").read_text(encoding="utf-8").startswith("SUMMARY")
     assert "Acme Corp" in (job_dir / "cover_letter.txt").read_text(encoding="utf-8")
-    assert not (settings.applications_dir / LOW_SCORE_JOB_ID).exists()
+    dated_dir = settings.applications_dir / date.today().isoformat()
+    assert list(dated_dir.glob(f"{LOW_SCORE_JOB_ID}*")) == []
 
     # Every form question the adapter couldn't fill from context went to the
     # LLM, and each answer was both recorded against the job and cached for

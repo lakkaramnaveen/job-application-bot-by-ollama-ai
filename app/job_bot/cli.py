@@ -23,7 +23,7 @@ from typing import TextIO
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from job_bot.browser.linkedin_adapter import LinkedInAdapter
+from job_bot.browser.linkedin_adapter import EXPERIENCE_LEVEL_CODES, LinkedInAdapter
 from job_bot.browser.session import browser_session
 from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError, get_settings
 from job_bot.dashboard.server import run_dashboard
@@ -56,6 +56,10 @@ EXPECTED_ERRORS = (
     GmailClientError,
     UnsafeJobId,
 )
+
+
+def _split_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def _apply_provider_overrides(settings: Settings, args: argparse.Namespace) -> None:
@@ -155,12 +159,33 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
 
     resume_text = resume_store.resume_text()
 
+    min_score = args.min_score if args.min_score is not None else settings.min_match_score
+    raw_exclude = (
+        args.exclude_title_keywords
+        if args.exclude_title_keywords is not None
+        else settings.exclude_title_keywords
+    )
+    exclude_keywords = [kw.casefold() for kw in _split_csv(raw_exclude)]
+    raw_levels = args.experience_level if args.experience_level is not None else settings.default_experience_levels
+    experience_levels = _split_csv(raw_levels) or None
+    if experience_levels:
+        invalid = [level for level in experience_levels if level not in EXPERIENCE_LEVEL_CODES]
+        if invalid:
+            print(
+                f"Error: unknown --experience-level value(s): {', '.join(invalid)}. "
+                f"Valid: {', '.join(sorted(EXPERIENCE_LEVEL_CODES))}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     with browser_session(
         settings.browser_profile_dir, headless=args.headless, cdp_url=settings.browser_cdp_url
     ) as context:
         page = context.new_page()
         adapter = LinkedInAdapter(page)
-        postings = adapter.search(args.keywords, args.location, max_results=args.search_pool)
+        postings = adapter.search(
+            args.keywords, args.location, max_results=args.search_pool, experience_levels=experience_levels
+        )
         audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
         applied = 0
@@ -174,6 +199,14 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 continue
             if blacklist.is_blocked(posting.company):
                 audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
+                continue
+            if exclude_keywords and any(kw in posting.title.casefold() for kw in exclude_keywords):
+                # Cheap, deterministic, and checked before any LLM call -
+                # not persisted to the tracker (unlike a real score/skip
+                # decision), since the exclude list is expected to change
+                # between runs and a posting excluded today should still be
+                # re-evaluated normally if it's removed later.
+                audit.log("skip_excluded_keyword", job_id=posting.job_id, title=posting.title)
                 continue
             existing = tracker.get_job(posting.job_id)
             if existing is not None and existing["status"] != "seen":
@@ -197,24 +230,41 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                     audit.log("reused_score", job_id=posting.job_id, score=existing["match_score"])
                 else:
                     match: JobMatchScore = score_job_match(provider, resume_text, description)
+                    # min_score is an extra floor on top of the model's own
+                    # should_apply verdict, not a replacement for it - the
+                    # scorer's eligibility gate (see matching/scorer.py) can
+                    # still force this to False regardless of score. The
+                    # combined decision is what gets persisted, so a later
+                    # run's reused-score path never needs to re-apply it.
+                    should_apply = match.should_apply and match.score >= min_score
                     tracker.record_score(
                         posting.job_id,
                         posting.title,
                         posting.company,
                         posting.url,
                         match.score,
-                        match.should_apply,
+                        should_apply,
                     )
-                    audit.log(
-                        "scored", job_id=posting.job_id, score=match.score, should_apply=match.should_apply
-                    )
-                    if not match.should_apply:
+                    audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
+                    if not should_apply:
                         continue
 
                 tailored = tailor_resume(provider, resume_text, description)
                 cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
-                write_tailored_resume(settings.applications_dir, posting.job_id, tailored)
-                write_cover_letter(settings.applications_dir, posting.job_id, cover_letter)
+                write_tailored_resume(
+                    settings.applications_dir,
+                    posting.job_id,
+                    tailored,
+                    company=posting.company,
+                    title=posting.title,
+                )
+                write_cover_letter(
+                    settings.applications_dir,
+                    posting.job_id,
+                    cover_letter,
+                    company=posting.company,
+                    title=posting.title,
+                )
                 audit.log("generated_materials", job_id=posting.job_id)
             except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
                 audit.log("prep_error", job_id=posting.job_id, error=str(e))
@@ -577,6 +627,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--yes-i-understand-the-risk",
         action="store_true",
         help="Skip the per-application confirmation prompt. The daily cap still applies.",
+    )
+    run_p.add_argument(
+        "--min-score",
+        type=int,
+        default=None,
+        help=(
+            "Extra floor on top of the model's own should_apply verdict - a posting is only "
+            "applied to if should_apply is True AND its score clears this too "
+            "(default: from .env, MIN_MATCH_SCORE)."
+        ),
+    )
+    run_p.add_argument(
+        "--exclude-title-keywords",
+        default=None,
+        help=(
+            "Comma-separated, case-insensitive substrings - a posting whose title contains any "
+            "of these is skipped before it's scored (default: from .env, EXCLUDE_TITLE_KEYWORDS)."
+        ),
+    )
+    run_p.add_argument(
+        "--experience-level",
+        default=None,
+        help=(
+            "Comma-separated LinkedIn seniority levels to restrict the search to: "
+            f"{', '.join(sorted(EXPERIENCE_LEVEL_CODES))} (default: from .env, DEFAULT_EXPERIENCE_LEVELS)."
+        ),
     )
 
     sub.add_parser("test-provider", help="Sanity-check the configured LLM provider with one call.")

@@ -307,6 +307,38 @@ def test_search_respects_max_results(playwright_page, monkeypatch):
     assert len(postings) == 1
 
 
+def test_search_adds_the_experience_level_filter_to_the_search_url(playwright_page, monkeypatch):
+    real_goto = playwright_page.goto
+    requested_urls = []
+
+    def fake_goto(url, **kw):
+        requested_urls.append(url)
+        return real_goto(f"file://{SEARCH_FIXTURE_PATH}")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    adapter = LinkedInAdapter(playwright_page)
+
+    adapter.search("python", "Remote", max_results=10, experience_levels=["mid-senior", "director"])
+
+    assert "f_E=4,5" in requested_urls[0]
+
+
+def test_search_omits_the_experience_level_filter_when_not_given(playwright_page, monkeypatch):
+    real_goto = playwright_page.goto
+    requested_urls = []
+
+    def fake_goto(url, **kw):
+        requested_urls.append(url)
+        return real_goto(f"file://{SEARCH_FIXTURE_PATH}")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    adapter = LinkedInAdapter(playwright_page)
+
+    adapter.search("python", "Remote", max_results=10)
+
+    assert "f_E=" not in requested_urls[0]
+
+
 # --- _best_match_index (no browser needed - pure string matching) ---
 
 

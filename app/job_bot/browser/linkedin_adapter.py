@@ -61,14 +61,40 @@ NAVIGATION_RETRIES = 2
 # would render it as a link to the dashboard's own localhost origin.
 LINKEDIN_BASE_URL = "https://www.linkedin.com"
 
+# LinkedIn's own `f_E` search filter (seniority level), as documented by its
+# search URL params. Filtering here - at the source - is cheaper and more
+# reliable than scoring every posting and relying on the LLM to reject
+# mismatched seniority after the fact: it costs zero LLM calls for postings
+# that never should have been in the pool, and it can't be fooled by a
+# posting whose body text doesn't clearly state its own level.
+EXPERIENCE_LEVEL_CODES = {
+    "internship": "1",
+    "entry": "2",
+    "associate": "3",
+    "mid-senior": "4",
+    "director": "5",
+    "executive": "6",
+}
+
 
 class LinkedInAdapter(JobBoardAdapter):
     def __init__(self, page: Page):
         self._page = page
 
-    def search(self, keywords: str, location: str, max_results: int = 25) -> list[JobPosting]:
+    def search(
+        self,
+        keywords: str,
+        location: str,
+        max_results: int = 25,
+        experience_levels: list[str] | None = None,
+    ) -> list[JobPosting]:
         postings: list[JobPosting] = []
         seen_ids: set[str] = set()
+
+        experience_filter = ""
+        if experience_levels:
+            codes = [EXPERIENCE_LEVEL_CODES[level] for level in experience_levels]
+            experience_filter = f"&f_E={quote(','.join(codes), safe=',')}"
 
         for page_num in range(MAX_SEARCH_PAGES):
             if len(postings) >= max_results:
@@ -81,6 +107,7 @@ class LinkedInAdapter(JobBoardAdapter):
                 f"&location={quote(location, safe='')}"
                 f"&start={start}"
                 "&f_AL=true"  # Easy Apply filter
+                f"{experience_filter}"
             )
             self._goto_with_retry(url)
             try:

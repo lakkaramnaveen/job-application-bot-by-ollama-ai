@@ -55,6 +55,24 @@ class Settings(BaseSettings):
     # future prompts as if it were a verified previous answer.
     faq_save_confidence: float = 0.7
 
+    # Extra floor `job-bot run` enforces on top of the LLM's own should_apply
+    # verdict - a posting only gets applied to if should_apply is True AND
+    # match_score >= this. The scorer's own prompt already tells the model
+    # to set should_apply=False below 60, but a model can be more generous
+    # than that in practice; this is a way to tighten the bar without
+    # touching the prompt. 0 means no additional floor beyond the model's
+    # own judgment (the prior behavior).
+    min_match_score: int = 0
+    # Comma-separated, case-insensitive substrings - a posting whose title
+    # contains any of these is skipped before it's ever scored (saving an
+    # LLM call, not just filtered after the fact). Empty means no filter.
+    exclude_title_keywords: str = ""
+    # Comma-separated LinkedIn seniority levels (internship/entry/associate/
+    # mid-senior/director/executive) to restrict search results to at the
+    # source - see linkedin_adapter.py's EXPERIENCE_LEVEL_CODES for the
+    # exact values. Empty means no restriction (every level).
+    default_experience_levels: str = ""
+
     db_path: Path = APP_DIR / "data" / "job_bot.sqlite3"
     browser_profile_dir: Path = APP_DIR / "data" / "browser_profile"
     # Unset (default) means browser_session() launches its own isolated

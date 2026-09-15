@@ -10,6 +10,9 @@ cmd_run never invoked it until this was fixed).
 import argparse
 import json
 from contextlib import contextmanager
+from datetime import date
+
+import pytest
 
 from job_bot.browser.base_adapter import JobPosting
 from job_bot.cli import cmd_run
@@ -28,6 +31,10 @@ JOB2 = JobPosting(
 JOB3 = JobPosting(
     job_id="job3", title="Infra Engineer", company="Acme Corp", url="https://x/3", description=""
 )
+
+# Materials for JOB land under <applications_dir>/<today>/<this folder name>/
+# - see generation/artifacts.py's _job_dir().
+JOB_MATERIALS_DIR_NAME = "job1 - Acme Corp - Backend Engineer"
 
 
 class FakeProvider(LLMProvider):
@@ -67,7 +74,7 @@ class FakeAdapter:
         self.page = page
         self.fill_and_submit_calls: list[dict] = []
 
-    def search(self, keywords, location, max_results=25):
+    def search(self, keywords, location, max_results=25, experience_levels=None):
         return [JOB]
 
     def load_description(self, posting):
@@ -92,7 +99,7 @@ class MultiJobAdapter(FakeAdapter):
     tests that need to exercise more than one loop iteration of cmd_run.
     """
 
-    def search(self, keywords, location, max_results=25):
+    def search(self, keywords, location, max_results=25, experience_levels=None):
         return [JOB, JOB2, JOB3]
 
 
@@ -146,6 +153,9 @@ def make_args(**overrides) -> argparse.Namespace:
         provider=None,
         model=None,
         yes_i_understand_the_risk=True,  # skip the interactive confirm() prompt in tests
+        min_score=None,
+        exclude_title_keywords=None,
+        experience_level=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -163,7 +173,7 @@ def test_run_generates_and_persists_tailored_resume_and_cover_letter(tmp_path, m
     assert TailoredResume in provider.schemas_requested
     assert CoverLetter in provider.schemas_requested
 
-    job_dir = settings.applications_dir / "job1"
+    job_dir = settings.applications_dir / date.today().isoformat() / JOB_MATERIALS_DIR_NAME
     assert (job_dir / "tailored_resume.txt").exists()
     assert "Tailored summary for Acme" in (job_dir / "tailored_resume.txt").read_text()
     assert (job_dir / "cover_letter.txt").read_text() == "Dear Acme, I would love to join your team."
@@ -194,7 +204,8 @@ def test_run_dry_run_does_not_mark_applied(tmp_path, monkeypatch):
     tracker = Tracker(settings.db_path)
     assert tracker.has_applied("job1") is False
     # Materials are still generated even in a dry run, so the user can review them.
-    assert (settings.applications_dir / "job1" / "cover_letter.txt").exists()
+    job_dir = settings.applications_dir / date.today().isoformat() / JOB_MATERIALS_DIR_NAME
+    assert (job_dir / "cover_letter.txt").exists()
 
 
 def test_run_uploads_the_original_resume_file_not_a_generated_one(tmp_path, monkeypatch):
@@ -251,6 +262,108 @@ def test_run_does_not_cache_low_confidence_answers_to_faq(tmp_path, monkeypatch)
     assert not settings.faq_path.exists()
 
 
+def test_run_min_score_skips_a_posting_the_model_said_yes_to(tmp_path, monkeypatch):
+    """FakeProvider's JobMatchScore always has should_apply=True, score=90 -
+    --min-score is an extra floor on top of that verdict, not a replacement
+    for it, so a floor above 90 must still skip the posting even though the
+    model itself said apply.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(min_score=95))
+
+    tracker = Tracker(settings.db_path)
+    job = tracker.get_job("job1")
+    assert job["status"] == "skipped"
+    assert job["match_score"] == 90  # the real score is still recorded, just not acted on
+    assert tracker.has_applied("job1") is False
+
+
+def test_run_min_score_setting_used_when_flag_not_given(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    settings.min_match_score = 95
+    cmd_run(settings, make_args())  # min_score not passed on the CLI
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.get_job("job1")["status"] == "skipped"
+
+
+def test_run_below_default_min_score_of_zero_still_applies(tmp_path, monkeypatch):
+    """The default (0) must not change existing behavior: should_apply alone
+    still decides, since any real score clears a floor of 0.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args())
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied("job1") is True
+
+
+def test_run_skips_a_posting_whose_title_matches_an_exclude_keyword(tmp_path, monkeypatch):
+    """JOB2's title is "Platform Engineer" - excluding "platform" must skip
+    it before it's ever scored (job2 never even gets tracked), while JOB and
+    JOB3 (unaffected titles) are processed normally.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10, exclude_title_keywords="platform"))
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.get_job("job2") is None
+    assert tracker.has_applied("job1") is True
+    assert tracker.has_applied("job3") is True
+
+
+def test_run_exclude_keyword_match_is_case_insensitive(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10, exclude_title_keywords="PLATFORM"))
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.get_job("job2") is None
+
+
+def test_run_rejects_an_unknown_experience_level_before_opening_a_browser(tmp_path, monkeypatch, capsys):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    browser_session_calls = []
+    monkeypatch.setattr(
+        "job_bot.cli.browser_session",
+        lambda *a, **k: browser_session_calls.append(1) or fake_browser_session(*a, **k),
+    )
+
+    settings = make_settings(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_run(settings, make_args(experience_level="mid-senior,not-a-real-level"))
+
+    assert exc_info.value.code == 1
+    assert "not-a-real-level" in capsys.readouterr().err
+    assert browser_session_calls == []  # never got as far as opening a browser
+
+
 class FakeRateLimiterHittingCapOnSecondCall:
     """Simulates the daily cap being reached mid-loop by something other
     than cmd_run's own top-of-loop check - e.g. a second concurrent
@@ -278,7 +391,7 @@ class LoadDescriptionFailsForFirstJobAdapter(FakeAdapter):
     aborting on one bad posting.
     """
 
-    def search(self, keywords, location, max_results=25):
+    def search(self, keywords, location, max_results=25, experience_levels=None):
         return [JOB, JOB2, JOB3]
 
     def load_description(self, posting):
@@ -313,7 +426,7 @@ class PrepClosesTheBrowserForFirstJobAdapter(FakeAdapter):
     must stop rather than churn through job2/job3 against a dead page.
     """
 
-    def search(self, keywords, location, max_results=25):
+    def search(self, keywords, location, max_results=25, experience_levels=None):
         return [JOB, JOB2, JOB3]
 
     def load_description(self, posting):
@@ -349,7 +462,7 @@ class ApplyClosesTheBrowserForFirstJobAdapter(FakeAdapter):
     is_closed() check.
     """
 
-    def search(self, keywords, location, max_results=25):
+    def search(self, keywords, location, max_results=25, experience_levels=None):
         return [JOB, JOB2, JOB3]
 
     def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):

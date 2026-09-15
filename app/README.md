@@ -107,6 +107,28 @@ Other useful flags on `run`:
 - `--headless` - run without a visible browser window, for unattended runs
   after you've verified the flow with `--dry-run`.
 
+**Getting better-quality matches** - three flags (each also settable as a
+persistent default in `.env` - see `.env.example`), applied in this order:
+1. `--experience-level mid-senior,director` - restricts the LinkedIn search
+   itself to these seniority levels (`internship`/`entry`/`associate`/
+   `mid-senior`/`director`/`executive`), so junior/entry postings never even
+   enter the pool - cheaper and more reliable than scoring everything and
+   hoping the model rejects the wrong level.
+2. `--exclude-title-keywords "forward deployed,sales engineer"` - skips a
+   posting whose title contains any of these (case-insensitive) before it's
+   scored at all, for titles that keyword search turns up but aren't
+   actually the role you do.
+3. `--min-score 75` - an extra floor on top of the model's own `should_apply`
+   verdict; a posting only gets applied to if the model said yes *and* its
+   score clears this. Use this if the model's own bar (it's told to say no
+   below 60) feels too generous in practice.
+
+```bash
+job-bot run --keywords "Full Stack Engineer" --location "United States" \
+  --experience-level mid-senior,director --min-score 75 \
+  --exclude-title-keywords "forward deployed,sales engineer" --dry-run
+```
+
 Switch providers per run without editing `.env`:
 ```bash
 job-bot run --provider ollama --model deepseek-r1:8b --dry-run
@@ -115,11 +137,15 @@ job-bot run --provider claude --model claude-opus-5 --dry-run
 
 For every job that passes the fit/eligibility gate (even on a `--dry-run`),
 `job-bot run` writes a tailored resume and cover letter to
-`data/applications/<job_id>/` for you to read, copy from, or reuse in
-interview prep. The file actually uploaded to the LinkedIn form is still
-always your own `RESUME_PATH` document, unedited - the generated tailored
-resume is a reference artifact, not something auto-substituted into a real
-submission without your review. See `job_bot/generation/artifacts.py`.
+`<APPLICATIONS_DIR>/<today's date>/<job id - company - title>/` - one dated
+folder per day's worth of applications, for you to read, copy from, or reuse
+in interview prep. `APPLICATIONS_DIR` defaults to `data/applications` inside
+the repo; point it at a folder outside the repo (e.g. on your Desktop) in
+`.env` if you want to browse it directly day by day. The file actually
+uploaded to the LinkedIn form is still always your own `RESUME_PATH`
+document, unedited - the generated tailored resume is a reference artifact,
+not something auto-substituted into a real submission without your review.
+See `job_bot/generation/artifacts.py`.
 
 Unlike the resume, the generated cover letter *is* used directly in the
 submission: if the Easy Apply form has a "Cover letter" text field, it's
@@ -266,8 +292,10 @@ Everything stays local, under `app/data/` (gitignored):
 - `data/faq_answers.json` - previously given answers, reused as context
 - `data/gmail_credentials.json` / `data/gmail_token.json` - your Gmail OAuth
   client and refresh token, if you've set up Gmail sync
-- `data/applications/<job_id>/` - the tailored resume and cover letter
-  generated for each job you passed the fit gate on
+- `data/applications/<today's date>/<job id - company - title>/` - the
+  tailored resume and cover letter generated for each job you passed the fit
+  gate on, one dated folder per day (path configurable via
+  `APPLICATIONS_DIR` - see "Getting better-quality matches" above)
 
 Your `.env` (API keys) and everything in `data/` never leave your machine
 except for the LLM API calls you configure.

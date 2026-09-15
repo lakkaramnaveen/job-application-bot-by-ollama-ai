@@ -19,9 +19,20 @@ class JobBoardAdapter(ABC):
     """
 
     @abstractmethod
-    def search(self, keywords: str, location: str, max_results: int = 25) -> list[JobPosting]:
+    def search(
+        self,
+        keywords: str,
+        location: str,
+        max_results: int = 25,
+        experience_levels: list[str] | None = None,
+    ) -> list[JobPosting]:
         """Return up to max_results Easy-Apply-eligible postings, paging
         through search results and skipping postings already marked Applied.
+
+        experience_levels, when given, restricts results to those seniority
+        levels at the search level (values are board-specific - see the
+        implementing adapter). None means no restriction: every level the
+        board returns for these keywords/location.
         """
         raise NotImplementedError
 
