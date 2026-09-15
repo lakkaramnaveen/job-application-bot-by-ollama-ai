@@ -40,6 +40,11 @@ class OllamaProvider(LLMProvider):
             "format": schema.model_json_schema(),
             "stream": False,
             "options": {"temperature": 0.2},
+            # We only ever want the structured answer, never a reasoning
+            # trace - on a thinking model (e.g. qwen3) this skips the hidden
+            # <think> pass entirely, which is most of the latency. Ollama
+            # silently ignores this on models that don't support thinking.
+            "think": False,
         }
 
         try:
