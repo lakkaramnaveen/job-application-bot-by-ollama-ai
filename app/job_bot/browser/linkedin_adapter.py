@@ -191,6 +191,36 @@ class LinkedInAdapter(JobBoardAdapter):
             self._upload_resume_if_requested(dialog, resume_path)
             self._fill_visible_fields(dialog, answer_question, cover_letter_text)
 
+            # A required text/number/textarea field _fill_visible_fields()
+            # couldn't fill (answer_question returned "" - the LLM couldn't
+            # produce a usable answer, e.g. a genuinely hard compound
+            # question) will never let LinkedIn's own client-side validation
+            # let a real submission actually go through - and this check
+            # has to happen before the submit-button check just below, not
+            # only the next/review ones: on a form with everything on one
+            # step (many real Easy Apply forms are exactly that), Submit is
+            # already reachable right now, and without this check the code
+            # would click it anyway - validation blocks the real submission
+            # employer-side, but fill_and_submit() has no way to know that;
+            # it only knows it clicked something, so it would report success
+            # and the caller would record a job as applied that never really
+            # went through. On a multi-step form, the same empty field would
+            # instead have every one of the max_steps iterations below
+            # re-call answer_question for it (its value never changes, so
+            # _fill_visible_fields's own "already has a value" skip never
+            # kicks in) before giving up with a generic "stuck" message -
+            # wasting up to 19 redundant LLM calls on a question already
+            # known to be unanswerable. Fail fast instead, naming the
+            # question, before either failure mode can happen.
+            unanswered = self._first_unanswered_required_text_field_label(dialog)
+            if unanswered is not None:
+                raise RuntimeError(
+                    f"Could not complete the Easy Apply form for job {posting.job_id}: "
+                    f"a required question has no answer ({unanswered!r}). The LLM couldn't "
+                    "produce a usable answer for it - consider adding it to your FAQ answers "
+                    "(job_bot.resume.store.ResumeStore) or trying a different provider/model."
+                )
+
             submit_btn = dialog.locator(SELECTORS["submit_button"])
             if submit_btn.count() > 0:
                 if dry_run:
@@ -331,6 +361,24 @@ class LinkedInAdapter(JobBoardAdapter):
             label = self._label_for(select)
             answer = answer_question(label) if label else ""
             self._select_best_option(select, options, answer)
+
+    def _first_unanswered_required_text_field_label(self, dialog: Locator) -> str | None:
+        """A required text/number/textarea field _fill_visible_fields()
+        left empty - either answer_question() returned "" for it, or it has
+        no id and so no _label_for() could resolve at all. Radio/select
+        fields are deliberately not checked here: leaving those unselected
+        on a non-match is already the intended, documented behavior (see
+        _select_best_radio()'s docstring) - this only targets the case
+        that's cheap and reliable to detect (a plain empty required value)
+        and where the caller can say something more specific than "stuck".
+        """
+        for text_input in dialog.locator('input[type="text"], input[type="number"], textarea').all():
+            if text_input.get_attribute("required") is None:
+                continue
+            if (text_input.input_value() or "").strip():
+                continue
+            return self._label_for(text_input) or "(unlabeled required field)"
+        return None
 
     @staticmethod
     def _looks_like_cover_letter_field(label: str) -> bool:

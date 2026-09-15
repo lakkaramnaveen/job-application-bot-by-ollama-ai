@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form with an unanswerable required field</title></head>
+<!--
+  Mirrors a real LinkedIn "Additional Questions" step: a required text
+  field (LinkedIn's own compound/multi-part questions render as
+  type="text" inputs, not type="number", confirmed against a live job
+  posting) that a test's answer_question() deliberately can't answer, next
+  to one it can. LinkedIn's own client-side validation would never let this
+  step advance while the required field is empty - this fixture has no
+  such validation, so what actually stops the adapter here is its own
+  first_unanswered_required_text_field_label() check, not a stuck DOM.
+-->
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="years-python">Years of Python experience</label>
+    <input id="years-python" type="text" required />
+
+    <label for="backend-combo">How many years with any two of Golang, Java, Node.js, or Python?</label>
+    <input id="backend-combo" type="text" required />
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

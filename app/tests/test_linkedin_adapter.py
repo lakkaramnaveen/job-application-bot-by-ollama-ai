@@ -25,6 +25,7 @@ AMBIGUOUS_FILE_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_f
 SELECT_NO_PLACEHOLDER_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_select_no_placeholder.html"
 )
+REQUIRED_FIELD_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_field.html"
 
 
 @pytest.fixture
@@ -117,6 +118,68 @@ def test_unanswered_label_gets_empty_string_not_a_crash(playwright_page):
     # _best_match_index()'s docstring.
     assert not playwright_page.locator("#auth-yes").is_checked()
     assert not playwright_page.locator("#auth-no").is_checked()
+
+
+def test_unanswered_required_field_fails_fast_with_a_specific_message(playwright_page):
+    """Real failure this guards against: a required text field (LinkedIn's
+    compound "Additional Questions" render as required type="text" inputs,
+    not type="number") that answer_question() can't answer stays empty
+    forever - LinkedIn's own client-side validation would then never let a
+    real submission actually go through no matter how many times Next or
+    Submit is clicked.
+
+    Verified this is worse than just a wasted-LLM-calls inefficiency: on a
+    fixture shaped like this one, where Submit is reachable on the same
+    step as the unanswered field (many real Easy Apply forms are exactly
+    one step), the pre-fix code found and clicked Submit anyway - `DID NOT
+    RAISE` when this test's fix was reverted - which on a real non-dry-run
+    form would submit incomplete and still get recorded as `applied`
+    (validation blocks the actual employer-side submission, but
+    fill_and_submit() has no way to know that; it only knows it clicked
+    something). The "stuck after 20 Next clicks" message only ever
+    surfaced on forms with more steps between the empty field and Submit.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{REQUIRED_FIELD_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+    questions_asked: list[str] = []
+
+    def answer_question(label: str) -> str:
+        questions_asked.append(label)
+        return "5" if "Python experience" in label else ""  # the compound question is unanswerable
+
+    with pytest.raises(RuntimeError, match="Golang"):
+        adapter.fill_and_submit(
+            posting,
+            answer_question=answer_question,
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
+
+    # Failed on the first pass through the loop - the unanswerable question
+    # was asked once, not up to max_steps (20) times.
+    assert questions_asked.count("How many years with any two of Golang, Java, Node.js, or Python?") == 1
+
+
+def test_answering_every_required_field_still_completes_normally(playwright_page):
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{REQUIRED_FIELD_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "5",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert submitted is False
+    assert playwright_page.locator("#years-python").input_value() == "5"
+    assert playwright_page.locator("#backend-combo").input_value() == "5"
 
 
 def test_non_matching_answer_never_guesses_a_radio_option(playwright_page):
