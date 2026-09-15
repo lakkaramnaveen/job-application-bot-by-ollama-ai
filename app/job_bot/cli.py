@@ -156,6 +156,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         required=settings.require_confirm_before_submit and not args.yes_i_understand_the_risk
     )
     audit = AuditLogger(settings.audit_log_path)
+    failure_log = AuditLogger(settings.failed_applications_log_path)
     tracker = Tracker(settings.db_path)
 
     resume_text = resume_store.resume_text()
@@ -190,6 +191,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
         applied = 0
+        failed = 0
         for posting in postings:
             if applied >= args.max_apps:
                 break
@@ -281,7 +283,16 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 audit.log("generated_materials", job_id=posting.job_id)
             except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
                 audit.log("prep_error", job_id=posting.job_id, error=str(e))
+                failure_log.log(
+                    "prep_error",
+                    job_id=posting.job_id,
+                    title=posting.title,
+                    company=posting.company,
+                    url=posting.url,
+                    error=str(e),
+                )
                 print(f"Error preparing application for {posting.title} at {posting.company}: {e}")
+                failed += 1
                 if page.is_closed():
                     # The browser itself is gone (closed, crashed, killed) -
                     # every remaining posting shares this one page and would
@@ -312,7 +323,16 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 )
             except Exception as e:  # noqa: BLE001 - surface and continue to the next job
                 audit.log("apply_error", job_id=posting.job_id, error=str(e))
+                failure_log.log(
+                    "apply_error",
+                    job_id=posting.job_id,
+                    title=posting.title,
+                    company=posting.company,
+                    url=posting.url,
+                    error=str(e),
+                )
                 print(f"Error applying to {posting.title} at {posting.company}: {e}")
+                failed += 1
                 if page.is_closed():
                     print("Browser window was closed - stopping the run.")
                     break
@@ -341,6 +361,11 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 print(f"[dry-run] Would apply to {posting.title} at {posting.company}")
 
         print(f"Done. Applied to {applied} job(s). {rate_limiter.remaining_today()} remaining today.")
+        if failed:
+            print(
+                f"{failed} posting(s) could not be completed - see "
+                f"{settings.failed_applications_log_path} for what happened and why."
+            )
 
 
 def cmd_status(settings: Settings, args: argparse.Namespace) -> None:

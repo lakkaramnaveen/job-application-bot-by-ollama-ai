@@ -300,6 +300,10 @@ Everything stays local, under `app/data/` (gitignored):
 - `data/job_bot.sqlite3` - job tracker, Q&A history, daily application counter
 - `data/browser_profile/` - your persisted Chrome login session
 - `data/audit.log` - a redacted, append-only log of every action taken
+- `data/failed_applications.log` - just the postings a run couldn't finish
+  (with the reason) - the same events are also in `data/audit.log`, but this
+  file skips the search/scored/applied noise so it's readable on its own
+  after a run to see what actually needs fixing
 - `data/company_blacklist.json` - companies to always skip
 - `data/faq_answers.json` - previously given answers, reused as context
 - `data/gmail_credentials.json` / `data/gmail_token.json` - your Gmail OAuth

@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     # local process full control over whatever browser it's attached to.
     browser_cdp_url: str | None = None
     audit_log_path: Path = APP_DIR / "data" / "audit.log"
+    # A focused, append-only log of just the postings a run couldn't finish
+    # (scoring/tailoring failed, or the Easy Apply form couldn't be
+    # completed) and why - the same events land in audit_log_path too,
+    # interleaved with every other action a run takes, but this file is
+    # meant to be grepped/read on its own to see what actually needs fixing
+    # after a run, without wading through search/scored/applied noise.
+    failed_applications_log_path: Path = APP_DIR / "data" / "failed_applications.log"
     applications_dir: Path = APP_DIR / "data" / "applications"
 
     # --- Gmail sync (optional) ---

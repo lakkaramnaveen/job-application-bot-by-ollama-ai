@@ -144,6 +144,7 @@ def settings(tmp_path) -> Settings:
         db_path=tmp_path / "job_bot.sqlite3",
         browser_profile_dir=tmp_path / "profile",
         audit_log_path=tmp_path / "audit.log",
+        failed_applications_log_path=tmp_path / "failed_applications.log",
         applications_dir=tmp_path / "applications",
         daily_application_cap=5,
         require_confirm_before_submit=False,

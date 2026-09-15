@@ -137,6 +137,7 @@ def make_settings(tmp_path) -> Settings:
         db_path=tmp_path / "db.sqlite3",
         browser_profile_dir=tmp_path / "profile",
         audit_log_path=tmp_path / "audit.log",
+        failed_applications_log_path=tmp_path / "failed_applications.log",
         applications_dir=tmp_path / "applications",
         require_confirm_before_submit=True,
     )
@@ -459,6 +460,44 @@ def test_run_continues_past_a_posting_that_fails_during_prep(tmp_path, monkeypat
     # job2 and job3 were still processed and applied to.
     assert tracker.has_applied("job2") is True
     assert tracker.has_applied("job3") is True
+
+    # A dedicated, focused log of just what needs fixing - not the full
+    # audit log's interleaved search/scored/applied noise - records the
+    # failure with enough context to act on it without re-running anything.
+    entries = [json.loads(line) for line in settings.failed_applications_log_path.read_text().splitlines()]
+    assert len(entries) == 1
+    assert entries[0]["action"] == "prep_error"
+    assert entries[0]["details"]["job_id"] == "job1"
+    assert entries[0]["details"]["title"] == JOB.title
+    assert entries[0]["details"]["company"] == JOB.company
+    assert "simulated failure loading job1's description" in entries[0]["details"]["error"]
+
+
+def test_run_prints_a_summary_line_pointing_at_the_failure_log(tmp_path, monkeypatch, capsys):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", LoadDescriptionFailsForFirstJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10))
+
+    out = capsys.readouterr().out
+    assert "1 posting(s) could not be completed" in out
+    assert str(settings.failed_applications_log_path) in out
+
+
+def test_run_with_no_failures_writes_nothing_to_the_failure_log(tmp_path, monkeypatch, capsys):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args())
+
+    assert not settings.failed_applications_log_path.exists()
+    assert "could not be completed" not in capsys.readouterr().out
 
 
 class PrepClosesTheBrowserForFirstJobAdapter(FakeAdapter):

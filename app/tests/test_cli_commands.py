@@ -28,6 +28,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         db_path=tmp_path / "db.sqlite3",
         browser_profile_dir=tmp_path / "profile",
         audit_log_path=tmp_path / "audit.log",
+        failed_applications_log_path=tmp_path / "failed_applications.log",
         applications_dir=tmp_path / "applications",
     )
     defaults.update(overrides)
