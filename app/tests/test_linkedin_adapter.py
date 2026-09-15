@@ -26,6 +26,8 @@ SELECT_NO_PLACEHOLDER_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_select_no_placeholder.html"
 )
 REQUIRED_FIELD_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_field.html"
+REQUIRED_RADIO_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_radio.html"
+REQUIRED_SELECT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_select.html"
 
 
 @pytest.fixture
@@ -180,6 +182,72 @@ def test_answering_every_required_field_still_completes_normally(playwright_page
     assert submitted is False
     assert playwright_page.locator("#years-python").input_value() == "5"
     assert playwright_page.locator("#backend-combo").input_value() == "5"
+
+
+def test_unanswered_required_radio_group_fails_fast_with_a_specific_message(playwright_page):
+    """Real-world failure this guards against: an eligibility/sponsorship-
+    style radio question the LLM's answer doesn't clearly match either
+    option for is deliberately left unanswered (see _select_best_radio()'s
+    "never guess" docstring) - which, before this check existed, fell all
+    the way through to the generic "stuck on a step" RuntimeError with no
+    indication of which question was the actual problem. Across weeks of
+    real runs this was the dominant failure mode: audit.log showed ~33
+    generic "stuck" errors against a single specific one, because
+    LinkedIn's own high-stakes questions are overwhelmingly radio groups,
+    not free text (the only case the older, text-only check could name).
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{REQUIRED_RADIO_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    with pytest.raises(RuntimeError, match="relocate"):
+        adapter.fill_and_submit(
+            posting,
+            answer_question=lambda label: "I am not sure how to answer that",
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
+
+
+def test_unanswered_required_select_fails_fast_with_a_specific_message(playwright_page):
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{REQUIRED_SELECT_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    with pytest.raises(RuntimeError, match="security clearance"):
+        adapter.fill_and_submit(
+            posting,
+            answer_question=lambda label: "I am not sure how to answer that",
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
+
+
+def test_answered_required_radio_group_does_not_fail(playwright_page):
+    """A required radio group the answer DOES clearly match must not be
+    mistaken for an unanswered one - _first_unanswered_required_choice_label()
+    checks is_checked(), so a real match from _select_best_radio() earlier
+    in the same pass must clear this check.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{REQUIRED_RADIO_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "Yes",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert submitted is False
+    assert playwright_page.locator("#relocate-yes").is_checked()
 
 
 def test_non_matching_answer_never_guesses_a_radio_option(playwright_page):

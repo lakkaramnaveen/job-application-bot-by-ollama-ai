@@ -221,6 +221,28 @@ class LinkedInAdapter(JobBoardAdapter):
                     "(job_bot.resume.store.ResumeStore) or trying a different provider/model."
                 )
 
+            # Same reasoning, for a required radio group or dropdown left
+            # unanswered - which _select_best_option()/_select_best_radio()
+            # leave deliberately unanswered rather than guess (see their own
+            # docstrings) whenever the LLM's answer doesn't clearly match an
+            # option. Before this check existed, that case fell all the way
+            # through to the generic "stuck on a step" RuntimeError below
+            # with no indication of which question was actually the
+            # problem - in practice this was the dominant real-world
+            # failure (audit.log showed ~33 generic "stuck" errors against
+            # a single specific one, across weeks of real runs), because
+            # LinkedIn's own eligibility/sponsorship-style questions are
+            # overwhelmingly radio groups, not free text.
+            unanswered_choice = self._first_unanswered_required_choice_label(dialog)
+            if unanswered_choice is not None:
+                raise RuntimeError(
+                    f"Could not complete the Easy Apply form for job {posting.job_id}: "
+                    f"a required question has no answer ({unanswered_choice!r}). The LLM's "
+                    "answer didn't clearly match any option, so this was deliberately left "
+                    "unanswered rather than guessed - consider adding it to your FAQ answers "
+                    "(job_bot.resume.store.ResumeStore) or trying a different provider/model."
+                )
+
             submit_btn = dialog.locator(SELECTORS["submit_button"])
             if submit_btn.count() > 0:
                 if dry_run:
@@ -379,6 +401,42 @@ class LinkedInAdapter(JobBoardAdapter):
                 continue
             return self._label_for(text_input) or "(unlabeled required field)"
         return None
+
+    def _first_unanswered_required_choice_label(self, dialog: Locator) -> str | None:
+        """Same purpose as _first_unanswered_required_text_field_label(),
+        for a required radio group or <select> left unanswered - detected
+        via `required`/`aria-required="true"` on the individual radio
+        inputs (fieldset itself has no `required` attribute in HTML) or on
+        the select element, confirmed against a real LinkedIn Easy Apply
+        form's DOM. Only ever reports a field this attribute actually marks
+        as required; a genuinely required field LinkedIn doesn't mark this
+        way still falls through to the generic "stuck" message unchanged,
+        exactly as before this check existed - this can only add
+        diagnostic detail, never new false positives on an optional field.
+        """
+        for group in dialog.locator("fieldset").all():
+            radios = group.locator('input[type="radio"]')
+            if radios.count() == 0:
+                continue
+            if any(radios.nth(i).is_checked() for i in range(radios.count())):
+                continue
+            if not self._is_marked_required(radios.first):
+                continue
+            return self._label_for(group) or "(unlabeled required choice)"
+
+        for select in dialog.locator("select").all():
+            if not self._is_marked_required(select):
+                continue
+            selected_index = select.evaluate("el => el.selectedIndex")
+            if selected_index > 0:
+                continue
+            return self._label_for(select) or "(unlabeled required dropdown)"
+
+        return None
+
+    @staticmethod
+    def _is_marked_required(el: Locator) -> bool:
+        return el.get_attribute("required") is not None or el.get_attribute("aria-required") == "true"
 
     @staticmethod
     def _looks_like_cover_letter_field(label: str) -> bool:

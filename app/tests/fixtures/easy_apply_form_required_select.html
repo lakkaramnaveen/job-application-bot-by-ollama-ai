@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form with an unanswerable required select</title></head>
+<!--
+  Same idea as easy_apply_form_required_radio.html, for a required
+  <select> instead of a radio group. The answer given in the test
+  deliberately doesn't match any option's text, so _select_best_option()
+  leaves it unanswered (selectedIndex stays 0) by design.
+-->
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="clearance">Do you hold an active security clearance?</label>
+    <select id="clearance" required>
+      <option value="">Select an option</option>
+      <option value="yes">Yes</option>
+      <option value="no">No</option>
+    </select>
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>
