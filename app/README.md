@@ -83,17 +83,25 @@ Edit `.env`:
    ```bash
    job-bot login
    ```
-2. **Sanity-check your LLM provider** without touching the browser:
+2. **Check your local setup for common problems** - resume file present, an
+   API key/Ollama URL configured, a LinkedIn session saved, the daily cap
+   sane. File/config checks only, no network call, so it's fast and safe to
+   run any time something seems off:
+   ```bash
+   job-bot doctor
+   ```
+3. **Sanity-check your LLM provider** with one real API call (what `doctor`
+   above deliberately doesn't do):
    ```bash
    job-bot test-provider
    ```
-3. **Dry run** - does everything (search, score, tailor, fill the form,
+4. **Dry run** - does everything (search, score, tailor, fill the form,
    attach your resume) except the actual submit click, so you can verify it's
    making sensible decisions:
    ```bash
    job-bot run --keywords "backend engineer" --location "Austin, TX" --max-apps 3 --dry-run
    ```
-4. **For real**, once you trust it:
+5. **For real**, once you trust it:
    ```bash
    job-bot run --keywords "backend engineer" --location "Austin, TX" --max-apps 5
    ```
@@ -121,7 +129,11 @@ persistent default in `.env` - see `.env.example`), applied in this order:
 3. `--min-score 75` - an extra floor on top of the model's own `should_apply`
    verdict; a posting only gets applied to if the model said yes *and* its
    score clears this. Use this if the model's own bar (it's told to say no
-   below 60) feels too generous in practice.
+   below 60) feels too generous in practice. Raising this takes effect
+   immediately even for postings a previous run already scored and marked
+   worth applying to - it doesn't just apply going forward - so tightening
+   it after the fact won't leave weak matches from before sitting in the
+   queue to be applied to on the next run.
 
 ```bash
 job-bot run --keywords "Full Stack Engineer" --location "United States" \
