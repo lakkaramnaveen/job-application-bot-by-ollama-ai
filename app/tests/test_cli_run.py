@@ -297,6 +297,49 @@ def test_run_min_score_setting_used_when_flag_not_given(tmp_path, monkeypatch):
     assert tracker.get_job("job1")["status"] == "skipped"
 
 
+def test_run_reapplies_a_raised_min_score_to_an_already_seen_job(tmp_path, monkeypatch):
+    """A job scored and marked "seen" under a looser (or absent) min_score
+    must not slip through forever once the floor is raised in a later run -
+    unlike the model's own should_apply verdict, min_score is user config
+    that can change between runs, so the reused-score path has to re-check
+    it against today's floor rather than trusting the old "seen" status.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    # Simulates an earlier run under a looser floor: scored 90 (matches
+    # FakeProvider's JobMatchScore) and marked seen/worth-applying.
+    tracker.record_score(JOB.job_id, JOB.title, JOB.company, JOB.url, score=90, should_apply=True)
+
+    cmd_run(settings, make_args(min_score=95))
+
+    assert JobMatchScore not in provider.schemas_requested  # reused the score, didn't re-score
+    job = tracker.get_job(JOB.job_id)
+    assert job["status"] == "skipped"
+    assert job["match_score"] == 90  # the real score is preserved, just no longer acted on
+    assert tracker.has_applied(JOB.job_id) is False
+
+
+def test_run_still_reuses_a_seen_job_that_clears_a_raised_min_score(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(JOB.job_id, JOB.title, JOB.company, JOB.url, score=90, should_apply=True)
+
+    cmd_run(settings, make_args(min_score=80))
+
+    assert JobMatchScore not in provider.schemas_requested
+    assert tracker.has_applied(JOB.job_id) is True
+
+
 def test_run_below_default_min_score_of_zero_still_applies(tmp_path, monkeypatch):
     """The default (0) must not change existing behavior: should_apply alone
     still decides, since any real score clears a floor of 0.

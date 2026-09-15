@@ -225,17 +225,29 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                     # posting worth applying to - via record_score()'s
                     # atomic score+status write, that judgement can't be
                     # stale, only unfinished (e.g. the run crashed before
-                    # reaching Submit). Reuse it instead of spending another
-                    # LLM call re-scoring a posting we've already decided on.
+                    # reaching Submit) - UNLESS min_score has since been
+                    # raised (e.g. a user tightening MIN_MATCH_SCORE in
+                    # .env after seeing too many weak matches go through):
+                    # the model's own should_apply verdict doesn't change
+                    # between runs, but min_score is user config that can,
+                    # so re-check the recorded score against *today's* floor
+                    # rather than trusting a "seen" written under a looser
+                    # one. If it still clears the bar, reuse it instead of
+                    # spending another LLM call re-scoring a posting we've
+                    # already decided on.
+                    if existing["match_score"] < min_score:
+                        tracker.update_status(posting.job_id, "skipped")
+                        audit.log(
+                            "skip_below_min_score", job_id=posting.job_id, score=existing["match_score"]
+                        )
+                        continue
                     audit.log("reused_score", job_id=posting.job_id, score=existing["match_score"])
                 else:
                     match: JobMatchScore = score_job_match(provider, resume_text, description)
                     # min_score is an extra floor on top of the model's own
                     # should_apply verdict, not a replacement for it - the
                     # scorer's eligibility gate (see matching/scorer.py) can
-                    # still force this to False regardless of score. The
-                    # combined decision is what gets persisted, so a later
-                    # run's reused-score path never needs to re-apply it.
+                    # still force this to False regardless of score.
                     should_apply = match.should_apply and match.score >= min_score
                     tracker.record_score(
                         posting.job_id,
