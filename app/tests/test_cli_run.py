@@ -40,12 +40,15 @@ JOB_MATERIALS_DIR_NAME = "job1 - Acme Corp - Backend Engineer"
 class FakeProvider(LLMProvider):
     def __init__(self, application_answer: ApplicationAnswer | None = None):
         self.schemas_requested: list[type] = []
+        self.tailor_resume_prompts: list[str] = []
         self._application_answer = application_answer or ApplicationAnswer(
             answer="5 years", confidence=0.9, based_on_resume=True
         )
 
     def generate_structured(self, *, system, prompt, schema):
         self.schemas_requested.append(schema)
+        if schema is TailoredResume:
+            self.tailor_resume_prompts.append(prompt)
         if schema is JobMatchScore:
             return JobMatchScore(
                 eligibility="pass",
@@ -178,6 +181,54 @@ def test_run_generates_and_persists_tailored_resume_and_cover_letter(tmp_path, m
     assert (job_dir / "tailored_resume.txt").exists()
     assert "Tailored summary for Acme" in (job_dir / "tailored_resume.txt").read_text()
     assert (job_dir / "cover_letter.txt").read_text() == "Dear Acme, I would love to join your team."
+
+
+def test_run_records_the_resume_generation_for_future_reuse(tmp_path, monkeypatch):
+    """cmd_run must log each tailor_resume() output to the tracker, or
+    best_resume_examples() (fed back as few-shot context on the next run -
+    see resume_tailor.py's tailor_resume() docstring) would silently never
+    see anything - the same wiring-gap risk this file's own module
+    docstring calls out for tailored-resume generation itself.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args())
+
+    tracker = Tracker(settings.db_path)
+    examples = tracker.best_resume_examples()
+    assert len(examples) == 1
+    assert examples[0]["job_id"] == "job1"
+    assert examples[0]["summary"] == "Tailored summary for Acme."
+
+
+def test_run_feeds_a_past_resume_example_into_the_next_tailor_call(tmp_path, monkeypatch):
+    """A resume generation recorded by an earlier run must actually reach
+    the model as a few-shot example on a later one - proving the loop
+    genuinely closes end-to-end, not just that the recording half works.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path).record_resume_generation(
+        "earlier-job",
+        "Backend Engineer",
+        "Other Co",
+        "A summary from a resume that landed an interview.",
+        ["Python"],
+        ["Shipped an earlier feature."],
+    )
+
+    cmd_run(settings, make_args())
+
+    assert len(provider.tailor_resume_prompts) == 1
+    assert "A summary from a resume that landed an interview." in provider.tailor_resume_prompts[0]
 
 
 def test_run_submits_and_records_application(tmp_path, monkeypatch):

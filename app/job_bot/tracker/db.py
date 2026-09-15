@@ -6,11 +6,16 @@ write. See Tracker below for the schema and every read/write method; the
 """
 
 import contextlib
+import json
 import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+# Outcome statuses that count as a genuine positive signal for a past
+# tailored resume - see best_resume_examples().
+_POSITIVE_OUTCOME_STATUSES = ("interviewing", "offer")
 
 # The single authoritative set of values the `jobs.status` column may hold.
 # `seen`/`applied`/`skipped` are written by `job_bot run` itself; the rest
@@ -100,6 +105,20 @@ class Tracker:
                     job_id TEXT NOT NULL,
                     question TEXT NOT NULL,
                     answer TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS resume_generations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    company TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    skills_json TEXT NOT NULL,
+                    bullets_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 )
                 """
@@ -298,3 +317,65 @@ class Tracker:
                 (job_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def record_resume_generation(
+        self, job_id: str, title: str, company: str, summary: str, skills: list[str], bullets: list[str]
+    ) -> None:
+        """Log one tailor_resume() output, so a later best_resume_examples()
+        call can feed it back as a few-shot example - the closest thing to
+        "learning from previous responses" a local model we never fine-tune
+        can actually do (see resume_tailor.py's tailor_resume() docstring).
+        """
+        now = datetime.now(UTC).isoformat()
+        with self._transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO resume_generations
+                    (job_id, title, company, summary, skills_json, bullets_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (job_id, title, company, summary, json.dumps(skills), json.dumps(bullets), now),
+            )
+
+    def best_resume_examples(self, limit: int = 3) -> list[dict[str, Any]]:
+        """Up to `limit` past tailored-resume generations to use as few-shot
+        style/quality reference for a new one, ranked with generations tied
+        to a job whose status has since become "interviewing" or "offer"
+        first (a real, human-confirmed positive outcome for that resume),
+        falling back to the most recent generations otherwise - e.g. on a
+        fresh install where nothing has an outcome yet. Each dict has keys
+        job_id, title, company, summary, skills (list[str]), bullets
+        (list[str]), created_at.
+
+        Statuses are recorded by hand via `job-bot status <job_id> <status>`
+        (see TRACKER_STATUSES) - there is nothing automatic connecting an
+        interview back to the resume that helped land it beyond that.
+        """
+        placeholders = ", ".join("?" for _ in _POSITIVE_OUTCOME_STATUSES)
+        with self._transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"""
+                SELECT rg.job_id, rg.title, rg.company, rg.summary, rg.skills_json, rg.bullets_json,
+                       rg.created_at
+                FROM resume_generations rg
+                LEFT JOIN jobs j ON j.job_id = rg.job_id
+                ORDER BY
+                    CASE WHEN j.status IN ({placeholders}) THEN 0 ELSE 1 END,
+                    rg.created_at DESC
+                LIMIT ?
+                """,
+                (*_POSITIVE_OUTCOME_STATUSES, limit),
+            ).fetchall()
+        return [
+            {
+                "job_id": row["job_id"],
+                "title": row["title"],
+                "company": row["company"],
+                "summary": row["summary"],
+                "skills": json.loads(row["skills_json"]),
+                "bullets": json.loads(row["bullets_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]

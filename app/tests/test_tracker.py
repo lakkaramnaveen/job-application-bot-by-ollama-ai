@@ -261,3 +261,51 @@ def test_count_jobs_reflects_filters(tmp_path):
     assert tracker.count_jobs() == 2
     assert tracker.count_jobs(status="applied") == 1
     assert tracker.count_jobs(search="designer") == 1
+
+
+def test_record_resume_generation_round_trips_through_best_resume_examples(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_resume_generation(
+        "1", "Engineer", "Acme", "A tailored summary.", ["Python", "AWS"], ["Did a thing."]
+    )
+
+    examples = tracker.best_resume_examples(limit=5)
+
+    assert len(examples) == 1
+    assert examples[0]["job_id"] == "1"
+    assert examples[0]["summary"] == "A tailored summary."
+    assert examples[0]["skills"] == ["Python", "AWS"]
+    assert examples[0]["bullets"] == ["Did a thing."]
+
+
+def test_best_resume_examples_prioritizes_jobs_with_a_positive_outcome(tmp_path):
+    """A generation tied to a job later marked "interviewing"/"offer" - a
+    real, human-confirmed sign that resume helped - should be preferred
+    over a more recent generation with no such signal, even though
+    best_resume_examples() otherwise orders by recency.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Designer", "Beta", "https://example.com/2")
+    tracker.record_resume_generation("1", "Engineer", "Acme", "Older, but landed an interview.", [], [])
+    tracker.record_resume_generation("2", "Designer", "Beta", "Newer, no outcome yet.", [], [])
+    tracker.update_status("1", "interviewing")
+
+    examples = tracker.best_resume_examples(limit=1)
+
+    assert examples[0]["job_id"] == "1"
+
+
+def test_best_resume_examples_falls_back_to_recency_with_no_outcomes(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_resume_generation("1", "Engineer", "Acme", "Older.", [], [])
+    tracker.record_resume_generation("2", "Designer", "Beta", "Newer.", [], [])
+
+    examples = tracker.best_resume_examples(limit=1)
+
+    assert examples[0]["job_id"] == "2"
+
+
+def test_best_resume_examples_empty_when_nothing_recorded(tmp_path):
+    tracker = make_tracker(tmp_path)
+    assert tracker.best_resume_examples() == []

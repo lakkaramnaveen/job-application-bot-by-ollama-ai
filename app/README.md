@@ -159,6 +159,25 @@ document, unedited - the generated tailored resume is a reference artifact,
 not something auto-substituted into a real submission without your review.
 See `job_bot/generation/artifacts.py`.
 
+Tailoring is written to be ATS-friendly: plain text with a single leading
+`-` per bullet (no tables, columns, icons, or special unicode a parser can
+choke on), every quantified metric from the original bullet preserved, and
+the job posting's own wording echoed where the candidate genuinely has that
+skill - see `resume_tailor.py`'s `SYSTEM_PROMPT`. It's also guarded against
+a failure mode local models are prone to: fabricating a skill straight from
+the job posting's wording that the resume never actually mentions.
+`_grounded_skills()` drops any highlighted skill that doesn't trace back to
+a real word in your resume, as a code-level backstop the prompt alone can't
+guarantee.
+
+There's no practical way to fine-tune Ollama's weights on every run, so
+"learning from previous responses" here means something more modest but
+genuinely useful: each tailored resume is logged to the tracker DB, and the
+next one is generated with up to 3 of your past ones as few-shot style
+reference - preferring ones for jobs you've since marked `interviewing` or
+`offer` (see "Tracking outcomes" below) over merely recent ones. See
+`Tracker.best_resume_examples()` and `tailor_resume()`'s `examples` param.
+
 Unlike the resume, the generated cover letter *is* used directly in the
 submission: if the Easy Apply form has a "Cover letter" text field, it's
 filled with the generated text (a text field is per-application content
@@ -214,6 +233,12 @@ job-bot export --status applied --out applied.csv
 `<job_id>` is the LinkedIn job id, printed by `job-bot run` and visible in
 `data/audit.log`. Valid statuses are listed in
 `job_bot.tracker.db.TRACKER_STATUSES`.
+
+Marking a job `interviewing` or `offer` here does more than record the
+outcome: it's also the signal `best_resume_examples()` looks for to prefer
+that job's tailored resume as a few-shot example for future ones (see
+"Running it" above) - so keeping this up to date is what makes the resume
+tailoring loop actually improve over time, not just log history.
 
 Answers `job-bot run` is confident in (grounded in your resume/FAQ, above
 `FAQ_SAVE_CONFIDENCE` in `.env`) are automatically cached to `FAQ_PATH` for

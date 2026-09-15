@@ -38,7 +38,7 @@ from job_bot.llm.factory import get_provider
 from job_bot.llm.ollama_provider import OllamaProviderError
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
-from job_bot.models.schemas import JobMatchScore
+from job_bot.models.schemas import JobMatchScore, TailoredResume
 from job_bot.resume.parser import ResumeParseError
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.audit_log import AuditLogger
@@ -264,7 +264,19 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                     if not should_apply:
                         continue
 
-                tailored = tailor_resume(provider, resume_text, description)
+                examples = [
+                    TailoredResume(summary=r["summary"], highlighted_skills=r["skills"], bullet_points=r["bullets"])
+                    for r in tracker.best_resume_examples(limit=3)
+                ]
+                tailored = tailor_resume(provider, resume_text, description, examples=examples)
+                tracker.record_resume_generation(
+                    posting.job_id,
+                    posting.title,
+                    posting.company,
+                    tailored.summary,
+                    tailored.highlighted_skills,
+                    tailored.bullet_points,
+                )
                 cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
                 write_tailored_resume(
                     settings.applications_dir,
