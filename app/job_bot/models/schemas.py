@@ -6,7 +6,27 @@ every call site gets a type-checked result instead of parsing free text.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _normalize_percent_as_fraction(value: object) -> object:
+    """Coerce an out-of-range confidence into a 0.0-1.0 fraction before
+    pydantic's ge/le validation runs, rather than hard-failing the entire
+    structured-output response over one field's scale.
+
+    Seen in practice: smaller local models (llama3.1:8b via Ollama)
+    sometimes answer a confidence field as a 0-100 percentage instead of the
+    requested 0.0-1.0 float, despite both the prompt and the JSON schema
+    sent as `format` (see llm/ollama_provider.py) stating the 0-1 range -
+    unlike Claude's structured-output validation, a local model isn't
+    guaranteed to honor schema constraints it wasn't trained to enforce
+    strictly. A raw value > 1 is assumed to be that percentage and rescaled;
+    anything above 100 is clamped rather than rescaled to something still
+    invalid (e.g. a wild 500 has no sensible interpretation as a fraction).
+    """
+    if isinstance(value, int | float) and not isinstance(value, bool) and value > 1:
+        return min(value, 100) / 100
+    return value
 
 # "fail" means the posting explicitly requires something the resume gives no
 # indication the candidate holds (citizenship, permanent residency, an
@@ -76,6 +96,8 @@ class ApplicationAnswer(BaseModel):
         description="Whether this answer is directly supported by resume/FAQ content"
     )
 
+    _normalize_confidence = field_validator("confidence", mode="before")(_normalize_percent_as_fraction)
+
 
 # What kind of job-application-related email this is, if any. "other" covers
 # both "not job related" and "job related but doesn't fit another bucket" -
@@ -97,3 +119,5 @@ class EmailClassification(BaseModel):
     company_guess: str = Field(default="", description="Company name this email appears to be from/about")
     role_guess: str = Field(default="", description="Job title this email appears to reference, if any")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence in is_job_related and category")
+
+    _normalize_confidence = field_validator("confidence", mode="before")(_normalize_percent_as_fraction)
