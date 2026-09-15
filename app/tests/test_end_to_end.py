@@ -208,6 +208,7 @@ def run_args(**overrides):
         min_score=None,
         exclude_title_keywords=None,
         experience_level=None,
+        include_external_apply=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)

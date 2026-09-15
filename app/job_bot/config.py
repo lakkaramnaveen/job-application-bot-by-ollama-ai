@@ -73,6 +73,19 @@ class Settings(BaseSettings):
     # exact values. Empty means no restriction (every level).
     default_experience_levels: str = ""
 
+    # EXPERIMENTAL, off by default - see README.md's "Applying on company
+    # websites (experimental)" section and browser/external_apply_adapter.py's
+    # module docstring before turning this on. When True, `job-bot run` also
+    # considers postings LinkedIn itself doesn't offer Easy Apply for,
+    # following their "Apply on company website" link and attempting a
+    # best-effort, heuristic fill on whatever form is actually there -
+    # unlike linkedin_adapter.py, there is no single site's DOM this has
+    # been tuned against, so it will get real forms wrong sometimes.
+    # Confirmation before submitting is always required on this path
+    # regardless of REQUIRE_CONFIRM_BEFORE_SUBMIT, since it's far less
+    # tested than the LinkedIn flow.
+    enable_external_apply: bool = False
+
     db_path: Path = APP_DIR / "data" / "job_bot.sqlite3"
     browser_profile_dir: Path = APP_DIR / "data" / "browser_profile"
     # Unset (default) means browser_session() launches its own isolated

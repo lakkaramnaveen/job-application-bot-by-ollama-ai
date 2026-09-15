@@ -74,7 +74,7 @@ class FakeAdapter:
         self.page = page
         self.fill_and_submit_calls: list[dict] = []
 
-    def search(self, keywords, location, max_results=25, experience_levels=None):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
         return [JOB]
 
     def load_description(self, posting):
@@ -99,7 +99,7 @@ class MultiJobAdapter(FakeAdapter):
     tests that need to exercise more than one loop iteration of cmd_run.
     """
 
-    def search(self, keywords, location, max_results=25, experience_levels=None):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
         return [JOB, JOB2, JOB3]
 
 
@@ -157,6 +157,7 @@ def make_args(**overrides) -> argparse.Namespace:
         min_score=None,
         exclude_title_keywords=None,
         experience_level=None,
+        include_external_apply=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -357,6 +358,201 @@ def test_run_below_default_min_score_of_zero_still_applies(tmp_path, monkeypatch
     assert tracker.has_applied("job1") is True
 
 
+EXTERNAL_JOB = JobPosting(
+    job_id="job1",
+    title="Backend Engineer",
+    company="Acme Corp",
+    url="https://x/1",
+    description="",
+    easy_apply=False,
+)
+
+
+class FakeExternalPage:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class ExternalApplyFakeAdapter(FakeAdapter):
+    """Same shape as FakeAdapter, but the one posting returned is
+    easy_apply=False - exercises cmd_run's external-apply routing
+    (open_external_application() instead of calling fill_and_submit()
+    directly) rather than the ordinary Easy Apply path.
+    """
+
+    def __init__(self, page):
+        super().__init__(page)
+        self.external_page = FakeExternalPage()
+        self.opened_for: list[str] = []
+
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+        return [EXTERNAL_JOB]
+
+    def open_external_application(self, posting):
+        self.opened_for.append(posting.job_id)
+        return self.external_page
+
+
+class ExternalApplyMissingButtonAdapter(ExternalApplyFakeAdapter):
+    """open_external_application() returns None - the posting turned out
+    not to have the external-apply button after all (see the real
+    LinkedInAdapter's docstring for when that happens).
+    """
+
+    def open_external_application(self, posting):
+        self.opened_for.append(posting.job_id)
+        return None
+
+
+class FakeExternalApplyAdapter:
+    """Stands in for job_bot.browser.external_apply_adapter.ExternalApplyAdapter."""
+
+    instances: list["FakeExternalApplyAdapter"] = []
+
+    def __init__(self, page):
+        self.page = page
+        self.fill_and_submit_calls: list[dict] = []
+        FakeExternalApplyAdapter.instances.append(self)
+
+    def fill_and_submit(self, *, answer_question, resume_path, cover_letter_text, dry_run):
+        answered = answer_question("Years of experience?")
+        self.fill_and_submit_calls.append(
+            {
+                "resume_path": resume_path,
+                "cover_letter_text": cover_letter_text,
+                "dry_run": dry_run,
+                "answered": answered,
+            }
+        )
+        return not dry_run
+
+
+class FailingFakeExternalApplyAdapter(FakeExternalApplyAdapter):
+    def fill_and_submit(self, *, answer_question, resume_path, cover_letter_text, dry_run):
+        raise RuntimeError("This application requires solving a CAPTCHA - job-bot never attempts this.")
+
+
+@pytest.fixture(autouse=True)
+def _reset_fake_external_apply_adapter_instances():
+    FakeExternalApplyAdapter.instances = []
+    yield
+    FakeExternalApplyAdapter.instances = []
+
+
+def test_run_applies_via_external_apply_adapter_for_a_non_easy_apply_posting(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", ExternalApplyFakeAdapter)
+    monkeypatch.setattr("job_bot.cli.ExternalApplyAdapter", FakeExternalApplyAdapter)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")  # confirm the external-apply prompt
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(yes_i_understand_the_risk=True, include_external_apply=True))
+
+    assert len(FakeExternalApplyAdapter.instances) == 1
+    adapter = FakeExternalApplyAdapter.instances[0]
+    assert adapter.fill_and_submit_calls[0]["dry_run"] is False
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied(EXTERNAL_JOB.job_id) is True
+
+
+def test_run_closes_the_external_page_once_handled(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    linkedin_adapter = ExternalApplyFakeAdapter
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", linkedin_adapter)
+    monkeypatch.setattr("job_bot.cli.ExternalApplyAdapter", FakeExternalApplyAdapter)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+    captured_adapter = {}
+    real_init = linkedin_adapter.__init__
+
+    def capturing_init(self, page):
+        real_init(self, page)
+        captured_adapter["adapter"] = self
+
+    monkeypatch.setattr(linkedin_adapter, "__init__", capturing_init)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(yes_i_understand_the_risk=True, include_external_apply=True))
+
+    assert captured_adapter["adapter"].external_page.closed is True
+
+
+def test_run_always_confirms_external_apply_even_with_yes_i_understand_the_risk(tmp_path, monkeypatch):
+    """external_confirmer ignores --yes-i-understand-the-risk entirely -
+    with no stdin attached (as in this test), the confirmation prompt's
+    input() call raises EOFError, which SubmitConfirmer treats as declined
+    (see safety/confirm.py) rather than assuming yes. That's exactly what
+    must happen here: the external posting is skipped, not silently
+    applied to without ever really confirming.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", ExternalApplyFakeAdapter)
+    monkeypatch.setattr("job_bot.cli.ExternalApplyAdapter", FakeExternalApplyAdapter)
+
+    def raise_eof(prompt=""):
+        raise EOFError  # no terminal attached to answer from, as in a real unattended run
+
+    monkeypatch.setattr("builtins.input", raise_eof)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(yes_i_understand_the_risk=True, include_external_apply=True))
+
+    assert FakeExternalApplyAdapter.instances == []  # never even reached fill_and_submit
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied(EXTERNAL_JOB.job_id) is False
+
+
+def test_run_reports_a_clean_error_when_the_external_apply_button_is_gone(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", ExternalApplyMissingButtonAdapter)
+    monkeypatch.setattr("job_bot.cli.ExternalApplyAdapter", FakeExternalApplyAdapter)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(yes_i_understand_the_risk=True, include_external_apply=True))
+
+    assert FakeExternalApplyAdapter.instances == []
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied(EXTERNAL_JOB.job_id) is False
+
+
+def test_run_closes_the_external_page_even_when_fill_and_submit_raises(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    linkedin_adapter = ExternalApplyFakeAdapter
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", linkedin_adapter)
+    monkeypatch.setattr("job_bot.cli.ExternalApplyAdapter", FailingFakeExternalApplyAdapter)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+    captured_adapter = {}
+    real_init = linkedin_adapter.__init__
+
+    def capturing_init(self, page):
+        real_init(self, page)
+        captured_adapter["adapter"] = self
+
+    monkeypatch.setattr(linkedin_adapter, "__init__", capturing_init)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(yes_i_understand_the_risk=True, include_external_apply=True))
+
+    assert captured_adapter["adapter"].external_page.closed is True
+    entries = [json.loads(line) for line in settings.failed_applications_log_path.read_text().splitlines()]
+    assert "CAPTCHA" in entries[0]["details"]["error"]
+
+
 def test_run_skips_a_posting_whose_title_matches_an_exclude_keyword(tmp_path, monkeypatch):
     """JOB2's title is "Platform Engineer" - excluding "platform" must skip
     it before it's ever scored (job2 never even gets tracked), while JOB and
@@ -435,7 +631,7 @@ class LoadDescriptionFailsForFirstJobAdapter(FakeAdapter):
     aborting on one bad posting.
     """
 
-    def search(self, keywords, location, max_results=25, experience_levels=None):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
         return [JOB, JOB2, JOB3]
 
     def load_description(self, posting):
@@ -508,7 +704,7 @@ class PrepClosesTheBrowserForFirstJobAdapter(FakeAdapter):
     must stop rather than churn through job2/job3 against a dead page.
     """
 
-    def search(self, keywords, location, max_results=25, experience_levels=None):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
         return [JOB, JOB2, JOB3]
 
     def load_description(self, posting):
@@ -544,7 +740,7 @@ class ApplyClosesTheBrowserForFirstJobAdapter(FakeAdapter):
     is_closed() check.
     """
 
-    def search(self, keywords, location, max_results=25, experience_levels=None):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
         return [JOB, JOB2, JOB3]
 
     def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):

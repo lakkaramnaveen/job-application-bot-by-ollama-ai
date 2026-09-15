@@ -43,6 +43,16 @@ SELECTORS = {
     "dismiss_safety_reminder": 'button[aria-label*="Dismiss" i]',
     "job_cards": "div[data-job-id]",
     "applied_badge": "text=/^\\s*Applied\\s*$/i",
+    # A job card shows this small text badge only when the posting supports
+    # Easy Apply; its absence is how an external-apply card looks instead.
+    "easy_apply_badge": "text=/Easy Apply/i",
+    # The external-apply control (confirmed against a live posting): a
+    # <button>, not a link - it has no href at all, unlike easy_apply_button
+    # above. Clicking it opens the employer's own site in a new tab/popup
+    # rather than navigating in place, which is why
+    # open_external_application() below has to handle it via
+    # page.expect_popup() instead of a plain click + wait.
+    "external_apply_button": 'button[aria-label*="on company website" i]',
 }
 
 # Small, human-scale pauses between UI actions - not an attempt to evade
@@ -87,6 +97,7 @@ class LinkedInAdapter(JobBoardAdapter):
         location: str,
         max_results: int = 25,
         experience_levels: list[str] | None = None,
+        include_external: bool = False,
     ) -> list[JobPosting]:
         postings: list[JobPosting] = []
         seen_ids: set[str] = set()
@@ -95,6 +106,12 @@ class LinkedInAdapter(JobBoardAdapter):
         if experience_levels:
             codes = [EXPERIENCE_LEVEL_CODES[level] for level in experience_levels]
             experience_filter = f"&f_E={quote(','.join(codes), safe=',')}"
+        # f_AL=true is LinkedIn's own Easy Apply filter - omitting it (only
+        # when the caller actually wants external-apply postings too) is
+        # what makes those postings show up in results at all; every result
+        # is still classified per-card below rather than assumed, since
+        # dropping the filter returns a mix, not just external ones.
+        easy_apply_filter = "" if include_external else "&f_AL=true"
 
         for page_num in range(MAX_SEARCH_PAGES):
             if len(postings) >= max_results:
@@ -106,7 +123,7 @@ class LinkedInAdapter(JobBoardAdapter):
                 f"?keywords={quote(keywords, safe='')}"
                 f"&location={quote(location, safe='')}"
                 f"&start={start}"
-                "&f_AL=true"  # Easy Apply filter
+                f"{easy_apply_filter}"
                 f"{experience_filter}"
             )
             self._goto_with_retry(url)
@@ -142,6 +159,15 @@ class LinkedInAdapter(JobBoardAdapter):
                 href = title_el.get_attribute("href") or ""
                 subtitle = card.locator("[class*=subtitle]").first
                 company = subtitle.inner_text().strip() if subtitle.count() else ""
+                # Without include_external, f_AL=true already guarantees
+                # every result is Easy Apply server-side - trust that
+                # instead of checking the card for a badge that may not be
+                # decorated identically everywhere. Only a mixed page
+                # (include_external=True dropped that filter) needs the
+                # per-card check to actually distinguish the two.
+                easy_apply = True
+                if include_external:
+                    easy_apply = card.locator(SELECTORS["easy_apply_badge"]).count() > 0
 
                 if job_id and title:
                     postings.append(
@@ -151,6 +177,7 @@ class LinkedInAdapter(JobBoardAdapter):
                             company=company,
                             url=urljoin(LINKEDIN_BASE_URL, href) if href else "",
                             description="",
+                            easy_apply=easy_apply,
                         )
                     )
                     if len(postings) >= max_results:
@@ -168,6 +195,33 @@ class LinkedInAdapter(JobBoardAdapter):
         self._page.wait_for_load_state("domcontentloaded")
         body = self._page.locator('div[class*="description"]').first
         return body.inner_text() if body.count() else ""
+
+    def open_external_application(self, posting: JobPosting) -> Page | None:
+        """For an easy_apply=False posting: open its external application
+        on the employer's own site and return the resulting Page, or None
+        if the external-apply control isn't there (the posting may have
+        turned out to be Easy Apply after all, or stopped accepting
+        applications since it was found).
+
+        The control is a <button> with no href (confirmed against a live
+        posting) that opens the destination in a new tab/popup rather than
+        navigating in place - page.expect_popup() is how Playwright catches
+        that, not a plain click + wait_for_load_state on self._page.
+        Callers own the returned page's lifecycle (close it when done);
+        this adapter has no further involvement once it's returned, since
+        everything past this point happens on a site this project doesn't
+        control the structure of - see external_apply_adapter.py.
+        """
+        self._goto_with_retry(posting.url)
+        self._page.wait_for_load_state("domcontentloaded")
+        button = self._page.locator(SELECTORS["external_apply_button"])
+        if button.count() == 0:
+            return None
+        with self._page.expect_popup(timeout=15000) as popup_info:
+            button.first.click()
+        external_page = popup_info.value
+        external_page.wait_for_load_state("domcontentloaded")
+        return external_page
 
     def fill_and_submit(
         self,

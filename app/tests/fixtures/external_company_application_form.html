@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: the popup destination of an external-apply click</title></head>
+<!--
+  Stands in for the employer's own career site, opened in a new tab by
+  job_posting_external_apply.html's Apply button - exists purely to give
+  open_external_application()'s page.expect_popup() something real to
+  navigate to and confirm the returned Page is that destination, not the
+  original LinkedIn tab.
+-->
+<body>
+  <h1>Apply to Senior Java Engineer at FusionAuth</h1>
+  <form>
+    <label for="full-name">Full name</label>
+    <input id="full-name" type="text" required />
+    <button type="submit">Submit Application</button>
+  </form>
+</body>
+</html>

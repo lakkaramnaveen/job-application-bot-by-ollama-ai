@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: mixed Easy Apply and external-apply search results</title></head>
+<!--
+  Mirrors a real LinkedIn search with no f_AL filter: some cards carry the
+  small "Easy Apply" text badge, some don't. search(include_external=True)
+  must classify each card by that badge, not assume every result is one or
+  the other.
+-->
+<body>
+  <div data-job-id="201">
+    <a href="https://example.com/jobs/201">Backend Engineer</a>
+    <span class="job-card-subtitle">Acme Corp</span>
+    <span>Viewed &middot; Promoted &middot; Easy Apply</span>
+  </div>
+  <div data-job-id="202">
+    <a href="https://example.com/jobs/202">Senior Java Engineer</a>
+    <span class="job-card-subtitle">FusionAuth</span>
+    <span>Viewed &middot; Promoted</span>
+  </div>
+  <div data-job-id="203">
+    <a href="https://example.com/jobs/203">Platform Engineer</a>
+    <span class="job-card-subtitle">Gizmo LLC</span>
+    <span>Promoted &middot; Easy Apply</span>
+  </div>
+</body>
+</html>

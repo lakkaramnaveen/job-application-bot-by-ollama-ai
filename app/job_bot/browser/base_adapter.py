@@ -10,6 +10,14 @@ class JobPosting:
     company: str
     url: str
     description: str
+    # True (the default) for a posting the board itself can submit in-page
+    # (LinkedIn Easy Apply). False marks a posting whose application is
+    # handled entirely off the board, on the employer's own site - see
+    # LinkedInAdapter.open_external_application() and
+    # browser/external_apply_adapter.py. Only ever False when search() was
+    # called with include_external=True; existing callers/tests that never
+    # pass that flag see every posting as easy_apply=True, unchanged.
+    easy_apply: bool = True
 
 
 class JobBoardAdapter(ABC):
@@ -25,9 +33,16 @@ class JobBoardAdapter(ABC):
         location: str,
         max_results: int = 25,
         experience_levels: list[str] | None = None,
+        include_external: bool = False,
     ) -> list[JobPosting]:
-        """Return up to max_results Easy-Apply-eligible postings, paging
-        through search results and skipping postings already marked Applied.
+        """Return up to max_results postings, paging through search results
+        and skipping postings already marked Applied. By default (
+        include_external=False, the long-standing behavior) every posting
+        returned is Easy-Apply-eligible (easy_apply=True). With
+        include_external=True, postings whose application is handled off
+        the board entirely (on the employer's own site) are included too,
+        marked easy_apply=False - callers that don't know how to handle
+        those (see JobPosting.easy_apply) should leave this at the default.
 
         experience_levels, when given, restricts results to those seniority
         levels at the search level (values are board-specific - see the
