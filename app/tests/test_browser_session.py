@@ -5,8 +5,11 @@ closes the context it's handed, since that context is the user's own,
 already-running Chrome rather than a browser job-bot launched itself.
 """
 
+import pytest
+from playwright.sync_api import Error as PlaywrightError
+
 import job_bot.browser.session as session_module
-from job_bot.browser.session import browser_session
+from job_bot.browser.session import BrowserSessionError, browser_session
 
 
 class FakeContext:
@@ -35,9 +38,12 @@ class FakeChromium:
         self.launch_persistent_context_calls: list[dict] = []
         self.cdp_browser: FakeBrowser | None = None
         self.persistent_context: FakeContext | None = None
+        self.connect_over_cdp_error: Exception | None = None
 
     def connect_over_cdp(self, endpoint_url, **kwargs):
         self.connect_over_cdp_calls.append(endpoint_url)
+        if self.connect_over_cdp_error is not None:
+            raise self.connect_over_cdp_error
         return self.cdp_browser
 
     def launch_persistent_context(self, **kwargs):
@@ -83,6 +89,23 @@ def test_cdp_mode_creates_a_context_when_the_browser_has_none_yet(monkeypatch, t
         assert context in chromium.cdp_browser.contexts
 
     assert context.closed is False
+
+
+def test_cdp_mode_raises_a_clear_error_when_nothing_is_listening(monkeypatch, tmp_path):
+    """A raw playwright.sync_api.Error (e.g. ECONNREFUSED - verified: this is
+    exactly what connect_over_cdp raises against a port nothing is
+    listening on) used to propagate straight out as a traceback instead of
+    a clean, actionable message.
+    """
+    chromium = FakeChromium()
+    chromium.connect_over_cdp_error = PlaywrightError("connect ECONNREFUSED ::1:9222")
+    monkeypatch.setattr(session_module, "sync_playwright", lambda: FakePlaywrightCM(chromium))
+
+    with (
+        pytest.raises(BrowserSessionError, match="http://localhost:9222"),
+        browser_session(tmp_path / "profile", cdp_url="http://localhost:9222"),
+    ):
+        pass
 
 
 def test_default_mode_launches_an_isolated_profile_and_closes_it_on_exit(monkeypatch, tmp_path):

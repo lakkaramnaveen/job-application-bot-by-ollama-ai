@@ -9,6 +9,14 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, sync_playwright
+from playwright.sync_api import Error as PlaywrightError
+
+
+class BrowserSessionError(RuntimeError):
+    """Raised when browser_session() can't establish the browser context it
+    needs - in practice, a configured BROWSER_CDP_URL with nothing actually
+    listening there.
+    """
 
 
 @contextmanager
@@ -44,7 +52,14 @@ def browser_session(
     """
     if cdp_url:
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(cdp_url)
+            try:
+                browser = p.chromium.connect_over_cdp(cdp_url)
+            except PlaywrightError as e:
+                raise BrowserSessionError(
+                    f"Could not connect to a Chrome instance at {cdp_url} (BROWSER_CDP_URL). "
+                    "Make sure Chrome is running with --remote-debugging-port and a "
+                    'non-default --user-data-dir - see README.md\'s "Browser profile" section.'
+                ) from e
             context = browser.contexts[0] if browser.contexts else browser.new_context()
             yield context
         return

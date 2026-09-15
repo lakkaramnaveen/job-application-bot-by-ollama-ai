@@ -24,7 +24,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from job_bot.browser.linkedin_adapter import EXPERIENCE_LEVEL_CODES, LinkedInAdapter
-from job_bot.browser.session import browser_session
+from job_bot.browser.session import BrowserSessionError, browser_session
 from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError, get_settings
 from job_bot.dashboard.server import run_dashboard
 from job_bot.generation.artifacts import UnsafeJobId, write_cover_letter, write_tailored_resume
@@ -55,6 +55,7 @@ EXPECTED_ERRORS = (
     InvalidStatus,
     GmailClientError,
     UnsafeJobId,
+    BrowserSessionError,
 )
 
 
