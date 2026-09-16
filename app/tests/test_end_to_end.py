@@ -145,6 +145,7 @@ def settings(tmp_path) -> Settings:
         browser_profile_dir=tmp_path / "profile",
         audit_log_path=tmp_path / "audit.log",
         failed_applications_log_path=tmp_path / "failed_applications.log",
+        answer_gaps_path=tmp_path / "answer_gaps.json",
         applications_dir=tmp_path / "applications",
         daily_application_cap=5,
         require_confirm_before_submit=False,

@@ -25,7 +25,11 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from job_bot.browser.linkedin_adapter import EXPERIENCE_LEVEL_CODES, LinkedInAdapter
+from job_bot.browser.linkedin_adapter import (
+    EXPERIENCE_LEVEL_CODES,
+    LinkedInAdapter,
+    UnansweredRequiredQuestion,
+)
 from job_bot.browser.session import BrowserSessionError, browser_session
 from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError, get_settings
 from job_bot.dashboard.server import run_dashboard
@@ -44,6 +48,7 @@ from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import JobMatchScore, TailoredResume
 from job_bot.resume.parser import ResumeParseError
 from job_bot.resume.store import ResumeStore
+from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.safety.confirm import SubmitConfirmer
@@ -160,6 +165,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     )
     audit = AuditLogger(settings.audit_log_path)
     failure_log = AuditLogger(settings.failed_applications_log_path)
+    answer_gaps = AnswerGapStore(settings.answer_gaps_path)
     tracker = Tracker(settings.db_path)
 
     resume_text = resume_store.resume_text()
@@ -202,6 +208,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 confirmer=confirmer,
                 audit=audit,
                 failure_log=failure_log,
+                answer_gaps=answer_gaps,
                 settings=settings,
                 args=args,
                 min_score=min_score,
@@ -256,6 +263,7 @@ def _run_apply_cycle(
     confirmer: SubmitConfirmer,
     audit: AuditLogger,
     failure_log: AuditLogger,
+    answer_gaps: AnswerGapStore,
     settings: Settings,
     args: argparse.Namespace,
     min_score: int,
@@ -418,6 +426,17 @@ def _run_apply_cycle(
                 dry_run=args.dry_run,
             )
         except Exception as e:  # noqa: BLE001 - surface and continue to the next job
+            if isinstance(e, UnansweredRequiredQuestion):
+                # Log this one specifically, not just as a generic
+                # apply_error - see safety/answer_gaps.py: this is what
+                # `job-bot review-answers` reads, and it's the whole point
+                # of the "the bot should learn from its mistakes" loop -
+                # answer this question once there and every future posting
+                # that asks it gets answered automatically instead of
+                # failing the same way again.
+                answer_gaps.record(
+                    e.question, job_id=posting.job_id, company=posting.company, title=posting.title
+                )
             audit.log("apply_error", job_id=posting.job_id, error=str(e))
             failure_log.log(
                 "apply_error",
@@ -472,6 +491,50 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     print(f"{args.job_id} -> {args.status}")
+
+
+def cmd_review_answers(settings: Settings) -> None:
+    """Interactively answer the required questions Easy Apply couldn't
+    confidently answer on its own (see safety/answer_gaps.py and
+    browser/linkedin_adapter.py's UnansweredRequiredQuestion) - this is
+    what "the bot should learn from its mistakes" looks like for a local
+    model whose weights this project never fine-tunes: an answer given
+    here is saved to FAQ_PATH and reused as context for every future
+    posting that asks the same or a near-identical question (see
+    generation/qa_answerer.py), so the same question doesn't keep failing
+    the same way. Sorted most-frequently-seen first, since those are the
+    ones worth the most to answer.
+    """
+    resume_store = ResumeStore(settings.resume_path, settings.faq_path)
+    answer_gaps = AnswerGapStore(settings.answer_gaps_path)
+    gaps = answer_gaps.list_unanswered()
+    if not gaps:
+        print("No unanswered required questions recorded - nothing to review.")
+        return
+
+    ordered = sorted(gaps.items(), key=lambda item: item[1].get("count", 0), reverse=True)
+    print(f"{len(ordered)} unanswered required question(s):\n")
+    answered = 0
+    for question, info in ordered:
+        count = info.get("count", 1)
+        times = "time" if count == 1 else "times"
+        print(f'"{question}"')
+        print(f"  seen {count} {times}, e.g. {info.get('example_title', '')} at {info.get('example_company', '')}")
+        try:
+            answer = input("  Answer (blank to skip, Ctrl+C to stop): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if answer:
+            resume_store.save_faq_answer(question, answer)
+            answer_gaps.resolve(question)
+            answered += 1
+            print("  Saved - every future posting that asks this will be answered automatically.\n")
+        else:
+            print("  Skipped - still there next time you run this.\n")
+
+    remaining = len(answer_gaps.list_unanswered())
+    print(f"Answered {answered} question(s). {remaining} still unanswered.")
 
 
 # Score buckets for `job-bot report --by-score`'s outcome breakdown, widest
@@ -814,6 +877,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status_p.add_argument("status", choices=sorted(TRACKER_STATUSES))
 
+    sub.add_parser(
+        "review-answers",
+        help=(
+            "Answer required questions Easy Apply couldn't confidently answer on its own - "
+            "saved answers are reused automatically on every future posting that asks the same question."
+        ),
+    )
+
     report_p = sub.add_parser("report", help="Print a count of tracked jobs by status.")
     report_p.add_argument(
         "--stale-days",
@@ -886,6 +957,8 @@ def main() -> None:
             cmd_doctor(settings)
         elif args.command == "status":
             cmd_status(settings, args)
+        elif args.command == "review-answers":
+            cmd_review_answers(settings)
         elif args.command == "report":
             cmd_report(settings, args)
         elif args.command == "export":

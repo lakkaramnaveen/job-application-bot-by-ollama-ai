@@ -12,8 +12,18 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from job_bot.cli import cmd_blacklist, cmd_doctor, cmd_export, cmd_report, cmd_status, main
+from job_bot.cli import (
+    cmd_blacklist,
+    cmd_doctor,
+    cmd_export,
+    cmd_report,
+    cmd_review_answers,
+    cmd_status,
+    main,
+)
 from job_bot.config import Settings
+from job_bot.resume.store import ResumeStore
+from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.tracker.db import Tracker
 
 
@@ -29,6 +39,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         browser_profile_dir=tmp_path / "profile",
         audit_log_path=tmp_path / "audit.log",
         failed_applications_log_path=tmp_path / "failed_applications.log",
+        answer_gaps_path=tmp_path / "answer_gaps.json",
         applications_dir=tmp_path / "applications",
     )
     defaults.update(overrides)
@@ -300,6 +311,83 @@ def test_doctor_flags_daily_cap_above_the_hard_ceiling(tmp_path, capsys):
     cmd_doctor(settings)
 
     assert "[!!] Daily application cap within hard ceiling" in capsys.readouterr().out
+
+
+# --- review-answers ---
+
+
+def test_review_answers_says_so_when_nothing_to_review(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_review_answers(settings)
+
+    assert "nothing to review" in capsys.readouterr().out
+
+
+def test_review_answers_saves_a_given_answer_to_faq_and_resolves_the_gap(tmp_path, monkeypatch, capsys):
+    """The whole point of the mechanism: an answer given here must (a) land
+    in FAQ_PATH, where qa_answerer.py's prompt picks it up as context for
+    every future posting that asks the same question, and (b) stop showing
+    up as a gap to review again.
+    """
+    settings = make_settings(tmp_path)
+    question = "Are you comfortable commuting to this job's location?"
+    AnswerGapStore(settings.answer_gaps_path).record(
+        question, job_id="1", company="Acme", title="Backend Engineer"
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "Yes")
+
+    cmd_review_answers(settings)
+
+    faq = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
+    assert faq[question] == "Yes"
+    assert AnswerGapStore(settings.answer_gaps_path).list_unanswered() == {}
+    assert "Answered 1 question(s). 0 still unanswered." in capsys.readouterr().out
+
+
+def test_review_answers_leaves_a_skipped_question_as_a_gap(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    question = "Are you comfortable commuting to this job's location?"
+    AnswerGapStore(settings.answer_gaps_path).record(
+        question, job_id="1", company="Acme", title="Backend Engineer"
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "")  # blank = skip
+
+    cmd_review_answers(settings)
+
+    faq = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
+    assert question not in faq
+    assert question in AnswerGapStore(settings.answer_gaps_path).list_unanswered()
+
+
+def test_review_answers_orders_most_frequently_seen_first(tmp_path, monkeypatch, capsys):
+    settings = make_settings(tmp_path)
+    store = AnswerGapStore(settings.answer_gaps_path)
+    store.record("Rare question", job_id="1", company="Acme", title="X")
+    for job_id in ("2", "3", "4"):
+        store.record("Common question", job_id=job_id, company="Acme", title="X")
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+
+    cmd_review_answers(settings)
+
+    out = capsys.readouterr().out
+    assert out.index("Common question") < out.index("Rare question")
+
+
+def test_review_answers_stops_cleanly_on_keyboard_interrupt_mid_review(tmp_path, monkeypatch, capsys):
+    settings = make_settings(tmp_path)
+    store = AnswerGapStore(settings.answer_gaps_path)
+    store.record("Question one", job_id="1", company="Acme", title="X")
+    store.record("Question two", job_id="2", company="Acme", title="X")
+
+    def raise_interrupt(prompt):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", raise_interrupt)
+
+    cmd_review_answers(settings)  # must not raise
+
+    assert len(AnswerGapStore(settings.answer_gaps_path).list_unanswered()) == 2
 
 
 # --- main() ---

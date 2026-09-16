@@ -77,6 +77,28 @@ EXPERIENCE_LEVEL_CODES = {
 }
 
 
+class UnansweredRequiredQuestion(RuntimeError):
+    """A required text/radio/select question fill_and_submit() couldn't
+    answer confidently and deliberately left unanswered rather than guess -
+    see _first_unanswered_required_text_field_label()/
+    _first_unanswered_required_choice_label(). Carries the question as a
+    structured `question` attribute (not just embedded in the message) so
+    a caller can offer to save an answer for it - see
+    safety/answer_gaps.py and cli.py's cmd_review_answers() - closing the
+    loop so the same question doesn't silently fail the same way on every
+    future posting that asks it.
+    """
+
+    def __init__(self, job_id: str, question: str, reason: str):
+        self.job_id = job_id
+        self.question = question
+        super().__init__(
+            f"Could not complete the Easy Apply form for job {job_id}: "
+            f"a required question has no answer ({question!r}). {reason} - consider adding it "
+            "to your FAQ answers (job-bot review-answers) or trying a different provider/model."
+        )
+
+
 class LinkedInAdapter(JobBoardAdapter):
     def __init__(self, page: Page):
         self._page = page
@@ -214,11 +236,8 @@ class LinkedInAdapter(JobBoardAdapter):
             # question, before either failure mode can happen.
             unanswered = self._first_unanswered_required_text_field_label(dialog)
             if unanswered is not None:
-                raise RuntimeError(
-                    f"Could not complete the Easy Apply form for job {posting.job_id}: "
-                    f"a required question has no answer ({unanswered!r}). The LLM couldn't "
-                    "produce a usable answer for it - consider adding it to your FAQ answers "
-                    "(job_bot.resume.store.ResumeStore) or trying a different provider/model."
+                raise UnansweredRequiredQuestion(
+                    posting.job_id, unanswered, "The LLM couldn't produce a usable answer for it"
                 )
 
             # Same reasoning, for a required radio group or dropdown left
@@ -235,12 +254,11 @@ class LinkedInAdapter(JobBoardAdapter):
             # overwhelmingly radio groups, not free text.
             unanswered_choice = self._first_unanswered_required_choice_label(dialog)
             if unanswered_choice is not None:
-                raise RuntimeError(
-                    f"Could not complete the Easy Apply form for job {posting.job_id}: "
-                    f"a required question has no answer ({unanswered_choice!r}). The LLM's "
-                    "answer didn't clearly match any option, so this was deliberately left "
-                    "unanswered rather than guessed - consider adding it to your FAQ answers "
-                    "(job_bot.resume.store.ResumeStore) or trying a different provider/model."
+                raise UnansweredRequiredQuestion(
+                    posting.job_id,
+                    unanswered_choice,
+                    "The LLM's answer didn't clearly match any option, so this was "
+                    "deliberately left unanswered rather than guessed",
                 )
 
             submit_btn = dialog.locator(SELECTORS["submit_button"])

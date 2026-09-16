@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     # meant to be grepped/read on its own to see what actually needs fixing
     # after a run, without wading through search/scored/applied noise.
     failed_applications_log_path: Path = APP_DIR / "data" / "failed_applications.log"
+    # Required questions Easy Apply couldn't answer confidently and left
+    # deliberately unanswered (see browser/linkedin_adapter.py's
+    # UnansweredRequiredQuestion) - reviewed and answered once via
+    # `job-bot review-answers`, which saves the answer to faq_path so every
+    # future posting that asks the same question gets it automatically.
+    answer_gaps_path: Path = APP_DIR / "data" / "answer_gaps.json"
     applications_dir: Path = APP_DIR / "data" / "applications"
 
     # --- Gmail sync (optional) ---

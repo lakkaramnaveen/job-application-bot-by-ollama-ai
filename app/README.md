@@ -258,6 +258,31 @@ Answers `job-bot run` is confident in (grounded in your resume/FAQ, above
 reuse on future applications - the bot gets faster and more consistent the
 more you use it, without ever caching a low-confidence guess.
 
+## Learning from questions it couldn't answer
+
+The flip side of the FAQ cache above: a required text/radio/select question
+the LLM genuinely can't answer confidently is deliberately left unanswered
+rather than guessed (see `linkedin_adapter.py`'s "never guess" reasoning),
+which fails that one application - but by itself, that's a dead end, since
+the exact same question (eligibility, sponsorship, on-site requirements,
+...) tends to be asked near-verbatim across many different postings, and
+would otherwise fail the same way every single time.
+
+Every one of these gets logged to `ANSWER_GAPS_PATH`
+(`data/answer_gaps.json`), deduplicated by question text with a count of
+how often it's come up. Review and answer them with:
+
+```bash
+job-bot review-answers
+```
+
+Each answer you give is saved straight to `FAQ_PATH`, so it's reused as
+context on every future posting that asks the same question - this is
+what closes the loop for "the bot learns from what it couldn't do" without
+literally retraining the model: it can't update its own weights, but it
+can remember precisely what it failed on, and an answer given once here
+teaches every future application, not just the one that failed.
+
 ## Company blacklist
 
 ```bash
@@ -344,6 +369,8 @@ Everything stays local, under `app/data/` (gitignored):
   after a run to see what actually needs fixing
 - `data/company_blacklist.json` - companies to always skip
 - `data/faq_answers.json` - previously given answers, reused as context
+- `data/answer_gaps.json` - required questions Easy Apply couldn't
+  confidently answer, waiting to be answered via `job-bot review-answers`
 - `data/gmail_credentials.json` / `data/gmail_token.json` - your Gmail OAuth
   client and refresh token, if you've set up Gmail sync
 - `data/applications/<today's date>/<job id - company - title>/` - the

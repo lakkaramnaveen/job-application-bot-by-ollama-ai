@@ -15,10 +15,12 @@ from datetime import date
 import pytest
 
 from job_bot.browser.base_adapter import JobPosting
+from job_bot.browser.linkedin_adapter import UnansweredRequiredQuestion
 from job_bot.cli import cmd_run
 from job_bot.config import Settings
 from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import ApplicationAnswer, CoverLetter, JobMatchScore, TailoredResume
+from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.rate_limiter import DailyCapReached
 from job_bot.tracker.db import Tracker
 
@@ -123,6 +125,19 @@ class LoopFakeAdapter(FakeAdapter):
         return [JobPosting(job_id=job_id, title="Backend Engineer", company="Acme Corp", url=f"https://x/{job_id}", description="")]
 
 
+class UnansweredQuestionFakeAdapter(FakeAdapter):
+    """fill_and_submit() raises UnansweredRequiredQuestion, as the real
+    LinkedInAdapter does for a required text/radio/select field it
+    deliberately left unanswered rather than guess.
+    """
+
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        answer_question("Years of experience?")
+        raise UnansweredRequiredQuestion(
+            posting.job_id, "Are you comfortable commuting to this job's location?", "reason"
+        )
+
+
 class FakePage:
     def __init__(self):
         self._closed = False
@@ -158,6 +173,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
         browser_profile_dir=tmp_path / "profile",
         audit_log_path=tmp_path / "audit.log",
         failed_applications_log_path=tmp_path / "failed_applications.log",
+        answer_gaps_path=tmp_path / "answer_gaps.json",
         applications_dir=tmp_path / "applications",
         require_confirm_before_submit=True,
     )
@@ -758,3 +774,25 @@ def test_loop_stops_cleanly_on_keyboard_interrupt(tmp_path, monkeypatch):
 
     tracker = Tracker(settings.db_path)
     assert tracker.has_applied("loop-job-1") is True
+
+
+def test_run_records_an_unanswered_required_question_as_an_answer_gap(tmp_path, monkeypatch):
+    """The whole point of the "learn from its mistakes" loop: a required
+    question the LLM couldn't confidently answer must be recorded to
+    answer_gaps_path (not just logged as a generic apply_error), or
+    `job-bot review-answers` would have nothing to show the user and the
+    same question would keep failing the same way on every future posting.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", UnansweredQuestionFakeAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args())
+
+    gaps = AnswerGapStore(settings.answer_gaps_path).list_unanswered()
+    question = "Are you comfortable commuting to this job's location?"
+    assert question in gaps
+    assert gaps[question]["example_job_id"] == JOB.job_id
+    assert gaps[question]["example_company"] == JOB.company
