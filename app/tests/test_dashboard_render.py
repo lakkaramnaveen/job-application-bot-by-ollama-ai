@@ -112,6 +112,19 @@ def test_render_rows_html_includes_current_status_even_if_not_a_known_value():
     assert "mystery status" in html
 
 
+def test_render_rows_html_status_badge_is_escaped_exactly_once():
+    """_badge() used to receive an already-html.escape()'d status string
+    from render_rows_html and escape it again, producing double-escaped
+    entities ("R&amp;amp;D" instead of "R&amp;D") - and since STATUS_COLORS
+    is keyed by the raw status text, the escaped key always missed the
+    lookup too, silently falling back to the default gray badge color for
+    any status containing an HTML metacharacter.
+    """
+    html = render_rows_html([make_job(status="R&D")])
+    assert "R&amp;D" in html
+    assert "R&amp;amp;D" not in html
+
+
 def test_render_qa_html_empty_state():
     html = render_qa_html([])
     assert "No answered questions" in html

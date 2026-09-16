@@ -106,7 +106,7 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
         company = html.escape(str(job.get("company", "")))
         score = job.get("match_score")
         score_text = str(score) if score is not None else "-"
-        status = html.escape(str(job.get("status", "")))
+        status = str(job.get("status", ""))
         applied_at = html.escape(str(job.get("applied_at") or "-"))
         safe_job_id = html.escape(job_id, quote=True)
         rows.append(
