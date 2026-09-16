@@ -25,6 +25,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from job_bot.browser.external_apply_adapter import ExternalApplyAdapter
 from job_bot.browser.linkedin_adapter import (
     EXPERIENCE_LEVEL_CODES,
     LinkedInAdapter,
@@ -163,6 +164,12 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     confirmer = SubmitConfirmer(
         required=settings.require_confirm_before_submit and not args.yes_i_understand_the_risk
     )
+    # EXPERIMENTAL external-apply path (see Settings.enable_external_apply)
+    # always confirms before submitting, with no override - it's far less
+    # tested than the LinkedIn flow, on a form structure this hasn't been
+    # tuned against at all, so --yes-i-understand-the-risk and
+    # REQUIRE_CONFIRM_BEFORE_SUBMIT=false intentionally don't reach it.
+    external_confirmer = SubmitConfirmer(required=True)
     audit = AuditLogger(settings.audit_log_path)
     failure_log = AuditLogger(settings.failed_applications_log_path)
     answer_gaps = AnswerGapStore(settings.answer_gaps_path)
@@ -189,6 +196,8 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             )
             sys.exit(1)
 
+    include_external = args.include_external_apply or settings.enable_external_apply
+
     with browser_session(
         settings.browser_profile_dir, headless=args.headless, cdp_url=settings.browser_cdp_url
     ) as context:
@@ -206,6 +215,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 rate_limiter=rate_limiter,
                 blacklist=blacklist,
                 confirmer=confirmer,
+                external_confirmer=external_confirmer,
                 audit=audit,
                 failure_log=failure_log,
                 answer_gaps=answer_gaps,
@@ -214,6 +224,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 min_score=min_score,
                 exclude_keywords=exclude_keywords,
                 experience_levels=experience_levels,
+                include_external=include_external,
             )
 
         if not args.loop:
@@ -261,6 +272,7 @@ def _run_apply_cycle(
     rate_limiter: RateLimiter,
     blacklist: CompanyBlacklist,
     confirmer: SubmitConfirmer,
+    external_confirmer: SubmitConfirmer,
     audit: AuditLogger,
     failure_log: AuditLogger,
     answer_gaps: AnswerGapStore,
@@ -269,6 +281,7 @@ def _run_apply_cycle(
     min_score: int,
     exclude_keywords: list[str],
     experience_levels: list[str] | None,
+    include_external: bool,
 ) -> tuple[int, int]:
     """One search -> score -> tailor -> apply pass over a fresh batch of
     postings. Called once for a plain `job-bot run`, or repeatedly (with a
@@ -278,7 +291,11 @@ def _run_apply_cycle(
     failed) for that cycle only, not a running total across cycles.
     """
     postings = adapter.search(
-        args.keywords, args.location, max_results=args.search_pool, experience_levels=experience_levels
+        args.keywords,
+        args.location,
+        max_results=args.search_pool,
+        experience_levels=experience_levels,
+        include_external=include_external,
     )
     audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
@@ -413,18 +430,38 @@ def _run_apply_cycle(
                 resume_store.save_faq_answer(question, result.answer)
             return result.answer
 
-        if not confirmer.confirm(f"Apply to {posting.title} at {posting.company}?"):
+        active_confirmer = confirmer if posting.easy_apply else external_confirmer
+        confirm_prompt = f"Apply to {posting.title} at {posting.company}?"
+        if not posting.easy_apply:
+            confirm_prompt += " (external site - EXPERIMENTAL)"
+        if not active_confirmer.confirm(confirm_prompt):
             audit.log("user_declined", job_id=posting.job_id)
             continue
 
+        external_page = None
         try:
-            submitted = adapter.fill_and_submit(
-                posting,
-                answer_question=answer,
-                resume_path=str(settings.resume_path),
-                cover_letter_text=cover_letter.body,
-                dry_run=args.dry_run,
-            )
+            if posting.easy_apply:
+                submitted = adapter.fill_and_submit(
+                    posting,
+                    answer_question=answer,
+                    resume_path=str(settings.resume_path),
+                    cover_letter_text=cover_letter.body,
+                    dry_run=args.dry_run,
+                )
+            else:
+                external_page = adapter.open_external_application(posting)
+                if external_page is None:
+                    raise RuntimeError(
+                        'Could not find the "Apply on company website" button - the posting '
+                        "may have turned out to be Easy Apply after all, or stopped accepting "
+                        "applications since it was found."
+                    )
+                submitted = ExternalApplyAdapter(external_page).fill_and_submit(
+                    answer_question=answer,
+                    resume_path=str(settings.resume_path),
+                    cover_letter_text=cover_letter.body,
+                    dry_run=args.dry_run,
+                )
         except Exception as e:  # noqa: BLE001 - surface and continue to the next job
             if isinstance(e, UnansweredRequiredQuestion):
                 # Log this one specifically, not just as a generic
@@ -452,6 +489,16 @@ def _run_apply_cycle(
                 print("Browser window was closed - stopping the run.")
                 break
             continue
+        finally:
+            # The popup opened for an external application is this loop's
+            # own responsibility to close - LinkedInAdapter just hands it
+            # back (see open_external_application()'s docstring) and has
+            # no further involvement once it has. Runs on every path
+            # (success, dry-run, or the except above), so a run never
+            # leaves a growing pile of tabs open across many external
+            # postings.
+            if external_page is not None:
+                external_page.close()
 
         if submitted:
             # The browser has already clicked Submit for real at this
@@ -860,6 +907,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Comma-separated LinkedIn seniority levels to restrict the search to: "
             f"{', '.join(sorted(EXPERIENCE_LEVEL_CODES))} (default: from .env, DEFAULT_EXPERIENCE_LEVELS)."
+        ),
+    )
+    run_p.add_argument(
+        "--include-external-apply",
+        action="store_true",
+        help=(
+            "EXPERIMENTAL: also apply to postings with no Easy Apply, on the employer's own site, "
+            "via a best-effort generic form filler. Always confirms before submitting, regardless "
+            "of --yes-i-understand-the-risk. See README.md's \"Applying on company websites "
+            '(experimental)" section first. (default: from .env, ENABLE_EXTERNAL_APPLY)'
         ),
     )
 

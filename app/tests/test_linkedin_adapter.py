@@ -34,6 +34,8 @@ RADIO_COVERED_BY_LABEL_FIXTURE_PATH = (
 )
 REQUIRED_RADIO_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_radio.html"
 REQUIRED_SELECT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_select.html"
+MIXED_APPLY_TYPES_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_mixed_apply_types.html"
+EXTERNAL_APPLY_POSTING_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "job_posting_external_apply.html"
 
 
 @pytest.fixture
@@ -668,3 +670,80 @@ def test_search_stops_when_a_page_repeats_only_already_seen_jobs(playwright_page
     assert {p.job_id for p in postings} == {"101", "103"}
     # Page 1 collects them, page 2 repeats them and ends the search.
     assert len(page_loads) == 2
+
+
+def test_search_default_marks_every_posting_easy_apply(playwright_page, monkeypatch):
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(playwright_page, "goto", lambda url, **kw: real_goto(f"file://{SEARCH_FIXTURE_PATH}"))
+    adapter = LinkedInAdapter(playwright_page)
+
+    postings = adapter.search("python", "Remote", max_results=10)
+
+    assert all(p.easy_apply for p in postings)
+
+
+def test_search_include_external_classifies_each_posting_by_its_own_badge(playwright_page, monkeypatch):
+    """f_AL=true (LinkedIn's own Easy Apply filter) is only omitted from the
+    search URL when include_external=True is actually passed - otherwise
+    every result is guaranteed Easy Apply server-side and trusted as such
+    without needing a per-card badge (see the other test above). Only a
+    mixed page needs classifying at all.
+    """
+    real_goto = playwright_page.goto
+    requested_urls = []
+
+    def fake_goto(url, **kw):
+        requested_urls.append(url)
+        return real_goto(f"file://{MIXED_APPLY_TYPES_FIXTURE_PATH}")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    adapter = LinkedInAdapter(playwright_page)
+
+    postings = adapter.search("python", "Remote", max_results=10, include_external=True)
+
+    by_id = {p.job_id: p for p in postings}
+    assert by_id["201"].easy_apply is True
+    assert by_id["202"].easy_apply is False
+    assert by_id["203"].easy_apply is True
+    assert "f_AL=true" not in requested_urls[0]
+
+
+def test_open_external_application_returns_the_popup_page(playwright_page, monkeypatch):
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(
+        playwright_page, "goto", lambda url, **kw: real_goto(f"file://{EXTERNAL_APPLY_POSTING_FIXTURE_PATH}")
+    )
+    adapter = LinkedInAdapter(playwright_page)
+    posting = JobPosting(
+        job_id="202",
+        title="Senior Java Engineer",
+        company="FusionAuth",
+        url=f"file://{EXTERNAL_APPLY_POSTING_FIXTURE_PATH}",
+        description="",
+        easy_apply=False,
+    )
+
+    external_page = adapter.open_external_application(posting)
+
+    try:
+        assert external_page is not None
+        assert "external_company_application_form.html" in external_page.url
+        assert external_page.locator("#full-name").count() == 1
+    finally:
+        if external_page is not None:
+            external_page.close()
+
+
+def test_open_external_application_returns_none_when_theres_no_external_button(playwright_page, monkeypatch):
+    """FIXTURE_PATH is the ordinary Easy Apply fixture - no
+    on-company-website button at all, the way a posting that turned out to
+    be Easy Apply (or stopped accepting applications) would look.
+    """
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(playwright_page, "goto", lambda url, **kw: real_goto(f"file://{FIXTURE_PATH}"))
+    adapter = LinkedInAdapter(playwright_page)
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{FIXTURE_PATH}", description="", easy_apply=False
+    )
+
+    assert adapter.open_external_application(posting) is None

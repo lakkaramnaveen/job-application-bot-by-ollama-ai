@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: external application form with a Next step</title></head>
+<!--
+  step2's field only becomes `required` once Next reveals it (rather than
+  being required-but-hidden from the start) - required-field detection
+  reads the live DOM attribute regardless of visibility, so a field that
+  were required from the start would fail the check before Next was ever
+  clicked, which wouldn't match how a real paginated form behaves (a step
+  you haven't reached yet isn't validated yet either).
+-->
+<body>
+  <form>
+    <div id="step1">
+      <label for="full-name">Full name</label>
+      <input id="full-name" type="text" required />
+      <button
+        type="button"
+        onclick="document.getElementById('step1').style.display='none';
+                 document.getElementById('step2').style.display='block';
+                 document.getElementById('years-exp').required=true;"
+      >Next</button>
+    </div>
+    <div id="step2" style="display:none">
+      <label for="years-exp">Years of experience</label>
+      <input id="years-exp" type="text" />
+      <button type="submit">Submit Application</button>
+    </div>
+  </form>
+</body>
+</html>

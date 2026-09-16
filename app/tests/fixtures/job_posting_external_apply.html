@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: job posting with an external-apply button</title></head>
+<!--
+  Mirrors a real LinkedIn posting with no Easy Apply: the "Apply" control is
+  a <button> with no href (confirmed against a live posting) that opens the
+  destination in a new tab via window.open() - clicking a plain <a href>
+  here would not exercise open_external_application()'s page.expect_popup()
+  handling the way a real one does.
+-->
+<body>
+  <h1>Senior Java Engineer</h1>
+  <div class="jobs-description__content">
+    We are hiring a senior backend engineer with strong Java experience.
+  </div>
+  <button
+    aria-label="Apply to Senior Java Engineer on company website"
+    onclick="window.open('external_company_application_form.html', '_blank')"
+  >Apply</button>
+</body>
+</html>

@@ -197,6 +197,53 @@ filled with the generated text (a text field is per-application content
 you can always edit or clear before submitting, unlike a formal resume
 document) - see `_looks_like_cover_letter_field()` in `linkedin_adapter.py`.
 
+## Applying on company websites (experimental)
+
+Not every LinkedIn posting offers Easy Apply - many show "Apply" instead,
+which hands you off to the employer's own career site (Greenhouse, Workday,
+Lever, a fully custom form, ...). `--include-external-apply` (or
+`ENABLE_EXTERNAL_APPLY=true` in `.env`) makes `job-bot run` also follow
+those and attempt a best-effort, heuristic fill there, instead of skipping
+them the way it does by default.
+
+**This is genuinely experimental, and "bug-free" isn't a realistic bar for
+it.** Easy Apply is one site with a knowable structure this project can
+inspect and adjust to (`linkedin_adapter.py`'s `SELECTORS`). A generic
+filler for arbitrary employer sites has no equivalent - every one is
+structured differently, so it will get real forms wrong. The design goal is
+to fail *safely* when that happens: leave a specific, readable reason in
+`data/failed_applications.log` rather than guess a field, submit something
+incomplete, or hang. See `job_bot/browser/external_apply_adapter.py`'s
+module docstring for exactly how (word-boundary matching, never-guess
+radio/select handling, the same philosophy as the LinkedIn adapter - just
+looser selectors, since there's no single DOM to have learned).
+
+**What it will never do, regardless of what a form asks for or what the LLM
+might be willing to answer:**
+- Solve or bypass a CAPTCHA (`recaptcha`/`hcaptcha`/Cloudflare Turnstile
+  markers are detected and stop the application, not worked around).
+- Create an account or enter a password (any `input[type="password"]`
+  anywhere on the page stops the application, even a password the user
+  would have chosen themselves).
+- Fill a field asking for a Social Security number, passport number,
+  driver's license number, or a bank/credit card/routing number - see
+  `SENSITIVE_FIELD_MARKERS`. A required field matching this list is treated
+  as unanswerable, the same as one the LLM genuinely couldn't answer.
+- Check a consent/agreement checkbox or select a radio option on the user's
+  behalf at all - both are left untouched; a *required* one left unanswered
+  stops the application rather than guessing or silently submitting without it.
+
+**Confirmation before submitting is always required on this path**,
+regardless of `--yes-i-understand-the-risk` or
+`REQUIRE_CONFIRM_BEFORE_SUBMIT=false` - it's far less tested than the
+LinkedIn flow, so every external submission pauses for your `[y/N]`
+regardless of how you've configured the rest of a run.
+
+```bash
+job-bot run --keywords "Full Stack Engineer" --location "United States" \
+  --include-external-apply --dry-run
+```
+
 ## Browser profile
 
 By default, `job-bot login`/`job-bot run` launch a Chromium instance with
