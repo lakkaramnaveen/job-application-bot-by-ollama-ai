@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fixture: Easy Apply form with a radio input covered by its own label</title>
+<style>
+  /* Mirrors LinkedIn's real pill/card-style radio buttons (confirmed live):
+     the native <input> is visually hidden behind its own <label>, which
+     sits on top and is the actual clickable surface. Checking the input
+     directly then fails Playwright's actionability check ("label
+     intercepts pointer events") - this is what a real application hit,
+     timing out after ~30s. _select_best_radio() must click the label
+     instead, exactly like a real user does. */
+  .radio-wrap { position: relative; display: inline-block; margin-right: 8px; }
+  .radio-wrap input[type="radio"] { position: absolute; inset: 0; opacity: 0; margin: 0; z-index: 0; }
+  .radio-wrap label {
+    display: inline-block; padding: 8px 16px; border: 1px solid #ccc; cursor: pointer;
+    position: relative; z-index: 1;
+  }
+</style>
+</head>
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <fieldset>
+      <legend>Are you willing to relocate?</legend>
+      <span class="radio-wrap">
+        <input id="relocate-yes" type="radio" name="relocate" />
+        <label for="relocate-yes">Yes</label>
+      </span>
+      <span class="radio-wrap">
+        <input id="relocate-no" type="radio" name="relocate" />
+        <label for="relocate-no">No</label>
+      </span>
+    </fieldset>
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

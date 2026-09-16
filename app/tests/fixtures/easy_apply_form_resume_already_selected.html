@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form with a resume already selected</title></head>
+<!--
+  Mirrors LinkedIn's real "Resume" step (confirmed against a live job
+  posting's DOM): a card list of previously uploaded resumes, one already
+  selected via a radio toggle whose id is prefixed "jobsDocumentCardToggle"
+  - plus a hidden input[type="file"] behind the "Upload resume" button,
+  present on the page regardless of whether a card is already selected.
+  Before the fix this fixture tests for, the adapter blindly filled that
+  hidden input on every application, silently adding a duplicate resume
+  document to the user's LinkedIn library each time even though nothing
+  needed to change.
+-->
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <div>
+      <input id="jobsDocumentCardToggle-ember1" type="radio" name="resume-card" checked />
+      <label for="jobsDocumentCardToggle-ember1">Naveen_Lakkaram_Resume.pdf</label>
+    </div>
+    <div>
+      <input id="jobsDocumentCardToggle-ember2" type="radio" name="resume-card" />
+      <label for="jobsDocumentCardToggle-ember2">Naveen_Lakkaram_Resume.pdf</label>
+    </div>
+
+    <button>Upload resume</button>
+    <input id="resume-upload" type="file" class="hidden" />
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

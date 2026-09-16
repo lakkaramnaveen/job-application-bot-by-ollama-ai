@@ -287,6 +287,19 @@ class LinkedInAdapter(JobBoardAdapter):
     def _upload_resume_if_requested(self, dialog: Locator, resume_path: str | None) -> None:
         if not resume_path:
             return
+        # LinkedIn's "Resume" step usually shows a card list of previously
+        # uploaded resumes (one radio-toggle per card, id prefixed
+        # "jobsDocumentCardToggle") with one already selected - confirmed
+        # against a live job posting's DOM. A hidden input[type="file"]
+        # still exists on this step regardless (behind the "Upload resume"
+        # button next to the cards), so without this check the code below
+        # would call set_input_files() on it every single application
+        # regardless of whether anything actually needed to change -
+        # silently piling up duplicate copies of the same document in the
+        # user's LinkedIn resume library (5 identical entries were found
+        # there from repeated runs before this fix).
+        if dialog.locator('input[id^="jobsDocumentCardToggle"]:checked').count() > 0:
+            return
         file_inputs = dialog.locator('input[type="file"]')
         # Skip file inputs that already have a resume selected (LinkedIn
         # often pre-fills with a previously uploaded resume).
@@ -465,13 +478,26 @@ class LinkedInAdapter(JobBoardAdapter):
         radios = group.locator('input[type="radio"]')
         labels = [LinkedInAdapter._label_for_id(group.page, radios.nth(i)) for i in range(radios.count())]
         idx = LinkedInAdapter._best_match_index(labels, answer)
-        if idx is not None:
-            radios.nth(idx).check()
-        # else: leave unselected rather than guess on a field that may be
-        # sponsorship/authorization/eligibility-shaped. If the field is
-        # required, LinkedIn's own validation blocks the Next/Review click
-        # and fill_and_submit's stuck-form detection surfaces that as a
-        # clear error instead of a silently wrong high-stakes answer.
+        if idx is None:
+            # Leave unselected rather than guess on a field that may be
+            # sponsorship/authorization/eligibility-shaped. If the field is
+            # required, LinkedIn's own validation blocks the Next/Review click
+            # and fill_and_submit's stuck-form detection surfaces that as a
+            # clear error instead of a silently wrong high-stakes answer.
+            return
+        radio = radios.nth(idx)
+        radio_id = radio.get_attribute("id")
+        label = group.page.locator(f'label[for="{radio_id}"]') if radio_id else None
+        if label is not None and label.count() > 0:
+            # LinkedIn commonly styles these as custom pill/card radios with
+            # the native <input> visually hidden behind its own <label> -
+            # checking the input directly then fails Playwright's
+            # actionability check ("label intercepts pointer events"),
+            # observed live timing out after ~30s on a real application.
+            # Click the label instead, exactly like a real user does.
+            label.first.click()
+        else:
+            radio.check()
 
     @staticmethod
     def _select_best_option(select: Locator, options: list[str], answer: str) -> None:

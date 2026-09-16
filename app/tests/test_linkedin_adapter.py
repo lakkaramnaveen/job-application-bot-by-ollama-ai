@@ -26,6 +26,12 @@ SELECT_NO_PLACEHOLDER_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_select_no_placeholder.html"
 )
 REQUIRED_FIELD_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_field.html"
+RESUME_ALREADY_SELECTED_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_resume_already_selected.html"
+)
+RADIO_COVERED_BY_LABEL_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_radio_covered_by_label.html"
+)
 REQUIRED_RADIO_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_radio.html"
 REQUIRED_SELECT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_select.html"
 
@@ -250,6 +256,33 @@ def test_answered_required_radio_group_does_not_fail(playwright_page):
     assert playwright_page.locator("#relocate-yes").is_checked()
 
 
+def test_radio_covered_by_its_own_label_is_still_selected(playwright_page):
+    """Real-world failure this guards against: LinkedIn commonly styles
+    radio buttons as pills/cards with the native <input> visually hidden
+    behind its own <label>, which is the actual clickable surface. Checking
+    the input directly (the old behavior) fails Playwright's actionability
+    check ("label intercepts pointer events") - observed live timing out
+    after ~30s on a real application - so _select_best_radio() must click
+    the label instead, exactly like a real user does.
+    """
+    posting = JobPosting(
+        job_id="4", title="X", company="Y", url=f"file://{RADIO_COVERED_BY_LABEL_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "Yes",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert submitted is False
+    assert playwright_page.locator("#relocate-yes").is_checked()
+    assert not playwright_page.locator("#relocate-no").is_checked()
+
+
 def test_non_matching_answer_never_guesses_a_radio_option(playwright_page):
     """An answer that doesn't correspond to either radio option's text
     (e.g. the LLM said something not literally "Yes"/"No") must not fall
@@ -331,6 +364,33 @@ def test_resume_is_not_uploaded_to_a_differently_labeled_file_field(playwright_p
     assert resume_field_count == 0
     uploaded = playwright_page.evaluate("document.getElementById('resume-upload').files[0]?.name")
     assert uploaded == RESUME_FIXTURE_PATH.name
+
+
+def test_resume_is_not_reuploaded_when_linkedin_already_has_one_selected(playwright_page):
+    """Real-world bug this guards against: LinkedIn's "Resume" step shows a
+    card list of previously uploaded resumes with one already selected, but
+    still keeps a hidden input[type="file"] on the page regardless (behind
+    the "Upload resume" button). Before this check existed, that hidden
+    input was blindly filled on every single application - confirmed live,
+    this silently added a duplicate copy of the same resume document to the
+    user's LinkedIn resume library each time (5 identical entries had
+    accumulated there from repeated runs).
+    """
+    posting = JobPosting(
+        job_id="3d", title="X", company="Y", url=f"file://{RESUME_ALREADY_SELECTED_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "",
+        resume_path=str(RESUME_FIXTURE_PATH),
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    file_count = playwright_page.evaluate("document.getElementById('resume-upload').files.length")
+    assert file_count == 0
 
 
 def test_resume_is_not_uploaded_when_a_second_file_field_is_ambiguous(playwright_page):
