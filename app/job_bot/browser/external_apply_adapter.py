@@ -240,12 +240,25 @@ class ExternalApplyAdapter:
         return None
 
     def _find_submit_button(self) -> Locator | None:
-        candidate = self._page.locator(
-            'button[type="submit"]:visible, input[type="submit"]:visible, '
-            'button:has-text("Submit"):visible, button:has-text("Apply Now"):visible, '
-            'button:has-text("Send Application"):visible'
-        )
-        return candidate.first if candidate.count() > 0 else None
+        # Checked as separate, priority-ordered locators, NOT one combined
+        # comma-selector + .first: a comma-separated CSS selector list
+        # matches the union of every alternative in DOCUMENT order, not in
+        # the order the alternatives are written - so a page with an
+        # unrelated "Apply Now" button earlier in the DOM (e.g. a "similar
+        # jobs" sidebar advertising a different posting) would have been
+        # clicked instead of the real button[type="submit"], despite
+        # type="submit" being listed first in the string. Only fall back to
+        # a looser text match when nothing more specific exists at all.
+        for selector in (
+            'button[type="submit"]:visible, input[type="submit"]:visible',
+            'button:has-text("Send Application"):visible',
+            'button:has-text("Submit"):visible',
+            'button:has-text("Apply Now"):visible',
+        ):
+            candidate = self._page.locator(selector)
+            if candidate.count() > 0:
+                return candidate.first
+        return None
 
     def _click_progress_button(self) -> bool:
         candidate = self._page.locator(

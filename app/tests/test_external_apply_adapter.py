@@ -22,6 +22,7 @@ CAPTCHA_FIXTURE = FIXTURES / "external_apply_form_captcha.html"
 PASSWORD_FIXTURE = FIXTURES / "external_apply_form_password.html"
 SENSITIVE_FIELD_FIXTURE = FIXTURES / "external_apply_form_sensitive_field.html"
 MULTI_STEP_FIXTURE = FIXTURES / "external_apply_form_multi_step.html"
+UNRELATED_APPLY_NOW_FIXTURE = FIXTURES / "external_apply_form_unrelated_apply_now_button.html"
 
 
 @pytest.fixture
@@ -166,3 +167,24 @@ def test_multi_step_form_advances_past_next_and_completes(playwright_page):
     assert submitted is False  # dry-run: reached Submit but stopped before clicking it
     assert playwright_page.locator("#full-name").input_value() == "Jane Doe"
     assert playwright_page.locator("#years-exp").input_value() == "5"
+
+
+def test_find_submit_button_prefers_type_submit_over_an_earlier_unrelated_button(playwright_page):
+    """Real bug this guards against: a comma-separated CSS selector list
+    (the old `'button[type="submit"], ..., button:has-text("Apply Now")'`
+    + `.first`) matches in DOCUMENT order across every alternative
+    combined, not in the order the alternatives are written - so a page
+    with an unrelated "Apply Now" button earlier in the DOM (a "similar
+    jobs" sidebar advertising a different posting is a realistic real-
+    world shape for this) would have .first pick that one instead of the
+    real button[type="submit"], despite type="submit" being listed first
+    in the selector string. Confirmed live before this fix: .first
+    resolved to the sidebar's "Apply Now" button, not the real submit.
+    """
+    playwright_page.goto(f"file://{UNRELATED_APPLY_NOW_FIXTURE}")
+    adapter = ExternalApplyAdapter(playwright_page)
+
+    button = adapter._find_submit_button()
+
+    assert button is not None
+    assert button.get_attribute("id") == "real-submit"

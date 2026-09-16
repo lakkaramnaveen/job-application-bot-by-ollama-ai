@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: external form with an unrelated "Apply Now" earlier in the DOM</title></head>
+<!--
+  Mirrors a real employer career site: a "similar jobs" sidebar with its
+  own unrelated "Apply Now" button for a DIFFERENT posting, positioned
+  earlier in the DOM than the actual form's real submit button. A comma-
+  separated CSS selector + .first matches in DOCUMENT order across all
+  alternatives combined, not in the order the alternatives are listed in
+  the selector string - so _find_submit_button() must check type="submit"
+  as a genuinely separate, higher-priority locator, not just list it first
+  in one combined selector, or it would click this unrelated button.
+-->
+<body>
+  <div id="sidebar">
+    <p>Similar jobs</p>
+    <button id="unrelated-apply-now">Apply Now</button>
+  </div>
+
+  <form id="application-form">
+    <label for="name">Full name</label>
+    <input id="name" type="text" value="Jane Doe" />
+    <button id="real-submit" type="submit">Submit application</button>
+  </form>
+</body>
+</html>
