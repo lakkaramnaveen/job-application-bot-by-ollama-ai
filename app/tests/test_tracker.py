@@ -183,6 +183,53 @@ def test_list_qa_empty_for_job_with_no_questions(tmp_path):
     assert tracker.list_qa("1") == []
 
 
+def test_recent_qa_pairs_returns_most_recent_first(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_qa("1", "Years of experience?", "5")
+    tracker.record_qa("2", "Willing to relocate?", "No")
+
+    pairs = tracker.recent_qa_pairs()
+
+    assert pairs[0] == {"question": "Willing to relocate?", "answer": "No"}
+    assert pairs[1] == {"question": "Years of experience?", "answer": "5"}
+
+
+def test_recent_qa_pairs_dedupes_by_question_keeping_the_latest_answer(tmp_path):
+    """The same question is commonly asked across many different postings -
+    without dedup, one frequently-recurring question would crowd out every
+    other question's answer from the (size-limited) reference list.
+    """
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_qa("1", "Years of experience?", "4")
+    tracker.record_qa("2", "Willing to relocate?", "No")
+    tracker.record_qa("3", "Years of experience?", "5")  # more recent, different answer
+
+    pairs = tracker.recent_qa_pairs()
+
+    assert len(pairs) == 2
+    years_answer = next(p["answer"] for p in pairs if p["question"] == "Years of experience?")
+    assert years_answer == "5"
+
+
+def test_recent_qa_pairs_respects_the_limit(tmp_path):
+    tracker = make_tracker(tmp_path)
+    for i in range(5):
+        tracker.record_qa(str(i), f"Question {i}?", f"Answer {i}")
+
+    pairs = tracker.recent_qa_pairs(limit=2)
+
+    assert len(pairs) == 2
+    assert pairs[0]["question"] == "Question 4?"
+    assert pairs[1]["question"] == "Question 3?"
+
+
+def test_recent_qa_pairs_empty_when_nothing_recorded(tmp_path):
+    tracker = make_tracker(tmp_path)
+    assert tracker.recent_qa_pairs() == []
+
+
 def test_list_jobs_filters_by_status(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")

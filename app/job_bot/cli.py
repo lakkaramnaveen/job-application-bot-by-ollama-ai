@@ -424,7 +424,13 @@ def _run_apply_cycle(
             continue
 
         def answer(question: str, job_id: str = posting.job_id) -> str:
-            result = answer_question(provider, resume_text, resume_store.faq_answers(), question)
+            result = answer_question(
+                provider,
+                resume_text,
+                resume_store.faq_answers(),
+                question,
+                recent_answers=tracker.recent_qa_pairs(),
+            )
             tracker.record_qa(job_id, question, result.answer)
             if result.based_on_resume and result.confidence >= settings.faq_save_confidence:
                 resume_store.save_faq_answer(question, result.answer)

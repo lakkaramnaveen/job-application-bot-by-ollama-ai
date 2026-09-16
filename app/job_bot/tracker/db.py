@@ -318,6 +318,38 @@ class Tracker:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def recent_qa_pairs(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Up to `limit` most-recently-answered *unique* questions across
+        every job, most recent first - fed into qa_answerer.py's prompt as
+        informal context so answering the same or a similarly-phrased
+        question on a different posting benefits from how it (or a
+        previous run) answered it before, not just the curated subset that
+        made it into FAQ_PATH (see resume/store.py's save_faq_answer(),
+        which only promotes high-confidence, resume-grounded answers).
+
+        Deliberately not filtered by confidence - a low-confidence or
+        since-superseded answer is still useful *reference* for how a
+        similar question was approached, the same way a human remembers
+        their own past attempts even the ones that didn't go well. The
+        caller (qa_answerer.py) is told this is informal history, not
+        verified fact like FAQ_PATH, and the LLM is instructed accordingly.
+        Deduplicated by question text (most recent answer per question
+        wins) so this can't be dominated by one question asked on many
+        postings crowding out everything else.
+        """
+        with self._transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT question, answer FROM qa_history
+                WHERE id IN (SELECT MAX(id) FROM qa_history GROUP BY question)
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def record_resume_generation(
         self, job_id: str, title: str, company: str, summary: str, skills: list[str], bullets: list[str]
     ) -> None:

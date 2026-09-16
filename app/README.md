@@ -405,6 +405,18 @@ literally retraining the model: it can't update its own weights, but it
 can remember precisely what it failed on, and an answer given once here
 teaches every future application, not just the one that failed.
 
+This happens automatically too, without any manual review step: every
+question `job-bot run` ever answers - not just the curated subset that
+made it into `FAQ_PATH` - is logged to the tracker DB
+(`Tracker.recent_qa_pairs()`), and the most recent ~20 unique ones are
+included as informal reference context on every future question it's
+asked (`qa_answerer.py`). A lower-confidence or since-corrected past
+answer is never treated as verified fact the way FAQ is - the model is
+told explicitly to use it only for consistency of phrasing/style, still
+checking the resume itself before answering - but it means the model's
+answers get steadily more consistent with its own history the more you
+use it, purely from normal usage, with no separate step required.
+
 ## Company blacklist
 
 ```bash

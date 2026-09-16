@@ -43,6 +43,7 @@ class FakeProvider(LLMProvider):
     def __init__(self, application_answer: ApplicationAnswer | None = None):
         self.schemas_requested: list[type] = []
         self.tailor_resume_prompts: list[str] = []
+        self.application_answer_prompts: list[str] = []
         self._application_answer = application_answer or ApplicationAnswer(
             answer="5 years", confidence=0.9, based_on_resume=True
         )
@@ -51,6 +52,8 @@ class FakeProvider(LLMProvider):
         self.schemas_requested.append(schema)
         if schema is TailoredResume:
             self.tailor_resume_prompts.append(prompt)
+        if schema is ApplicationAnswer:
+            self.application_answer_prompts.append(prompt)
         if schema is JobMatchScore:
             return JobMatchScore(
                 eligibility="pass",
@@ -992,3 +995,28 @@ def test_run_records_an_unanswered_required_question_as_an_answer_gap(tmp_path, 
     assert question in gaps
     assert gaps[question]["example_job_id"] == JOB.job_id
     assert gaps[question]["example_company"] == JOB.company
+
+
+def test_run_feeds_past_qa_answers_into_the_next_question(tmp_path, monkeypatch):
+    """Real wiring gap this guards against: recent_qa_pairs() existing in
+    isolation proves nothing if cmd_run never actually calls it - this is
+    exactly the kind of test that would have caught tailor_resume() being
+    generated but never invoked (see this file's own module docstring).
+    Every past answer, not just the curated FAQ subset, must reach the
+    prompt for the next question asked - that's the whole point of
+    recent_qa_pairs() over relying on FAQ_PATH alone.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path).record_qa("earlier-job", "Willing to relocate?", "No")
+
+    cmd_run(settings, make_args())
+
+    assert len(provider.application_answer_prompts) == 1
+    prompt = provider.application_answer_prompts[0]
+    assert "Willing to relocate?" in prompt
+    assert "No" in prompt
