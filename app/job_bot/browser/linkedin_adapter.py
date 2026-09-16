@@ -217,36 +217,9 @@ class LinkedInAdapter(JobBoardAdapter):
                 seen_ids.add(job_id)
                 new_ids_on_this_page += 1
 
-                if card.locator(SELECTORS["applied_badge"]).count() > 0:
-                    logger.info("Skipping job %s: already marked Applied on LinkedIn", job_id)
-                    continue
-
-                title_el = card.locator("a").first
-                title = (title_el.inner_text() or "").strip()
-                href = title_el.get_attribute("href") or ""
-                subtitle = card.locator("[class*=subtitle]").first
-                company = subtitle.inner_text().strip() if subtitle.count() else ""
-                # Without include_external, f_AL=true already guarantees
-                # every result is Easy Apply server-side - trust that
-                # instead of checking the card for a badge that may not be
-                # decorated identically everywhere. Only a mixed page
-                # (include_external=True dropped that filter) needs the
-                # per-card check to actually distinguish the two.
-                easy_apply = True
-                if include_external:
-                    easy_apply = card.locator(SELECTORS["easy_apply_badge"]).count() > 0
-
-                if job_id and title:
-                    postings.append(
-                        JobPosting(
-                            job_id=job_id,
-                            title=title,
-                            company=company,
-                            url=urljoin(LINKEDIN_BASE_URL, href) if href else "",
-                            description="",
-                            easy_apply=easy_apply,
-                        )
-                    )
+                posting = self._parse_job_card(card, job_id, include_external)
+                if posting is not None:
+                    postings.append(posting)
                     if len(postings) >= max_results:
                         break
 
@@ -256,6 +229,42 @@ class LinkedInAdapter(JobBoardAdapter):
                 break
 
         return postings
+
+    def _parse_job_card(self, card: Locator, job_id: str, include_external: bool) -> JobPosting | None:
+        """Builds a JobPosting from one search-result card, or returns None
+        if the card isn't usable (no title) or is already marked Applied on
+        LinkedIn itself - the caller has already deduped job_id against
+        seen_ids before calling this.
+        """
+        if card.locator(SELECTORS["applied_badge"]).count() > 0:
+            logger.info("Skipping job %s: already marked Applied on LinkedIn", job_id)
+            return None
+
+        title_el = card.locator("a").first
+        title = (title_el.inner_text() or "").strip()
+        if not title:
+            return None
+        href = title_el.get_attribute("href") or ""
+        subtitle = card.locator("[class*=subtitle]").first
+        company = subtitle.inner_text().strip() if subtitle.count() else ""
+
+        # Without include_external, f_AL=true already guarantees every
+        # result is Easy Apply server-side - trust that instead of checking
+        # the card for a badge that may not be decorated identically
+        # everywhere. Only a mixed page (include_external=True dropped that
+        # filter) needs the per-card check to actually distinguish the two.
+        easy_apply = True
+        if include_external:
+            easy_apply = card.locator(SELECTORS["easy_apply_badge"]).count() > 0
+
+        return JobPosting(
+            job_id=job_id,
+            title=title,
+            company=company,
+            url=urljoin(LINKEDIN_BASE_URL, href) if href else "",
+            description="",
+            easy_apply=easy_apply,
+        )
 
     def load_description(self, posting: JobPosting) -> str:
         self._goto_with_retry(posting.url)
@@ -311,54 +320,7 @@ class LinkedInAdapter(JobBoardAdapter):
         for _ in range(max_steps):
             self._upload_resume_if_requested(dialog, resume_path)
             self._fill_visible_fields(dialog, answer_question, cover_letter_text)
-
-            # A required text/number/textarea field _fill_visible_fields()
-            # couldn't fill (answer_question returned "" - the LLM couldn't
-            # produce a usable answer, e.g. a genuinely hard compound
-            # question) will never let LinkedIn's own client-side validation
-            # let a real submission actually go through - and this check
-            # has to happen before the submit-button check just below, not
-            # only the next/review ones: on a form with everything on one
-            # step (many real Easy Apply forms are exactly that), Submit is
-            # already reachable right now, and without this check the code
-            # would click it anyway - validation blocks the real submission
-            # employer-side, but fill_and_submit() has no way to know that;
-            # it only knows it clicked something, so it would report success
-            # and the caller would record a job as applied that never really
-            # went through. On a multi-step form, the same empty field would
-            # instead have every one of the max_steps iterations below
-            # re-call answer_question for it (its value never changes, so
-            # _fill_visible_fields's own "already has a value" skip never
-            # kicks in) before giving up with a generic "stuck" message -
-            # wasting up to 19 redundant LLM calls on a question already
-            # known to be unanswerable. Fail fast instead, naming the
-            # question, before either failure mode can happen.
-            unanswered = self._first_unanswered_required_text_field_label(dialog)
-            if unanswered is not None:
-                raise UnansweredRequiredQuestion(
-                    posting.job_id, unanswered, "The LLM couldn't produce a usable answer for it"
-                )
-
-            # Same reasoning, for a required radio group or dropdown left
-            # unanswered - which _select_best_option()/_select_best_radio()
-            # leave deliberately unanswered rather than guess (see their own
-            # docstrings) whenever the LLM's answer doesn't clearly match an
-            # option. Before this check existed, that case fell all the way
-            # through to the generic "stuck on a step" RuntimeError below
-            # with no indication of which question was actually the
-            # problem - in practice this was the dominant real-world
-            # failure (audit.log showed ~33 generic "stuck" errors against
-            # a single specific one, across weeks of real runs), because
-            # LinkedIn's own eligibility/sponsorship-style questions are
-            # overwhelmingly radio groups, not free text.
-            unanswered_choice = self._first_unanswered_required_choice_label(dialog)
-            if unanswered_choice is not None:
-                raise UnansweredRequiredQuestion(
-                    posting.job_id,
-                    unanswered_choice,
-                    "The LLM's answer didn't clearly match any option, so this was "
-                    "deliberately left unanswered rather than guessed",
-                )
+            self._raise_if_unanswered_required_field(dialog, posting)
 
             submit_btn = dialog.locator(SELECTORS["submit_button"])
             if submit_btn.count() > 0:
@@ -384,6 +346,52 @@ class LinkedInAdapter(JobBoardAdapter):
             f"Could not complete the Easy Apply form for job {posting.job_id} "
             "(stuck on a step with no Next/Review/Submit button found)."
         )
+
+    def _raise_if_unanswered_required_field(self, dialog: Locator, posting: JobPosting) -> None:
+        """Fails fast, naming the specific question, if a required field
+        was left empty rather than let fill_and_submit()'s loop either
+        submit an incomplete form or spin uselessly until it gives up.
+
+        Checked before the submit/progress-button checks in that loop, not
+        after, for two reasons: on a form with everything on one step
+        (many real Easy Apply forms are exactly that), Submit is already
+        reachable the moment this runs - without this check the code
+        would click it anyway, since LinkedIn's own client-side validation
+        blocks the submission employer-side but fill_and_submit() has no
+        way to know that; it would report success and the caller would
+        wrongly record the job as applied. On a multi-step form, the same
+        empty field would otherwise have every one of max_steps's
+        iterations re-ask answer_question() for it (its value never
+        changes, so _fill_visible_fields()'s "already has a value" skip
+        never kicks in) before eventually giving up with a generic
+        "stuck" message - wasting up to 19 redundant LLM calls on a
+        question already known to be unanswerable.
+
+        Covers both a plain text/number/textarea field
+        (_first_unanswered_required_text_field_label()) and a required
+        radio group/dropdown deliberately left unanswered rather than
+        guessed (_first_unanswered_required_choice_label() - see its own
+        and _select_best_radio()'s "never guess" docstrings). The
+        radio/select case is the dominant one in practice: audit.log
+        showed ~33 generic "stuck" errors against a single specific one
+        before this check existed, since LinkedIn's own eligibility/
+        sponsorship-style questions are overwhelmingly radio groups, not
+        free text.
+        """
+        unanswered = self._first_unanswered_required_text_field_label(dialog)
+        if unanswered is not None:
+            raise UnansweredRequiredQuestion(
+                posting.job_id, unanswered, "The LLM couldn't produce a usable answer for it"
+            )
+
+        unanswered_choice = self._first_unanswered_required_choice_label(dialog)
+        if unanswered_choice is not None:
+            raise UnansweredRequiredQuestion(
+                posting.job_id,
+                unanswered_choice,
+                "The LLM's answer didn't clearly match any option, so this was "
+                "deliberately left unanswered rather than guessed",
+            )
 
     def _goto_with_retry(self, url: str) -> None:
         """Navigate with a couple of retries - LinkedIn's client-side

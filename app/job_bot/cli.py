@@ -19,12 +19,13 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from job_bot.browser.base_adapter import JobPosting
 from job_bot.browser.external_apply_adapter import ExternalApplyAdapter
 from job_bot.browser.linkedin_adapter import (
     EXPERIENCE_LEVEL_CODES,
@@ -46,7 +47,7 @@ from job_bot.llm.factory import get_provider
 from job_bot.llm.ollama_provider import OllamaProviderError
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
-from job_bot.models.schemas import JobMatchScore, TailoredResume
+from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
 from job_bot.resume.parser import ResumeParseError
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
@@ -299,6 +300,151 @@ def _run_apply_cycle(
     )
     audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
+    def should_skip(posting: JobPosting) -> bool:
+        """Cheap, deterministic reasons to pass over this posting before
+        spending an LLM call on it. Doesn't cover the cap/--max-apps
+        checks - those stop the whole cycle, not just this one posting,
+        so the main loop below handles them directly.
+        """
+        if tracker.has_applied(posting.job_id):
+            return True
+        if blacklist.is_blocked(posting.company):
+            audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
+            return True
+        if exclude_keywords and any(kw in posting.title.casefold() for kw in exclude_keywords):
+            # Not persisted to the tracker (unlike a real score/skip
+            # decision), since the exclude list is expected to change
+            # between runs and a posting excluded today should still be
+            # re-evaluated normally if it's removed later.
+            audit.log("skip_excluded_keyword", job_id=posting.job_id, title=posting.title)
+            return True
+        return False
+
+    def clears_the_bar(posting: JobPosting, description: str, existing: dict[str, Any] | None) -> bool:
+        """Scores this posting fresh, or - if an earlier run already did -
+        re-checks that recorded score against *today's* min_score floor
+        rather than trusting it outright. That re-check matters because
+        the model's own should_apply verdict can't go stale between runs,
+        but min_score is user config that can (e.g. tightening
+        MIN_MATCH_SCORE in .env after seeing too many weak matches go
+        through) - a "seen" status recorded under a looser floor shouldn't
+        silently keep clearing a floor that's since been raised.
+        """
+        if existing is not None and existing["match_score"] is not None:
+            if existing["match_score"] < min_score:
+                tracker.update_status(posting.job_id, "skipped")
+                audit.log("skip_below_min_score", job_id=posting.job_id, score=existing["match_score"])
+                return False
+            audit.log("reused_score", job_id=posting.job_id, score=existing["match_score"])
+            return True
+
+        match: JobMatchScore = score_job_match(provider, resume_text, description)
+        # min_score is an extra floor on top of the model's own
+        # should_apply verdict, not a replacement for it - the scorer's
+        # eligibility gate (see matching/scorer.py) can still force this
+        # to False regardless of score.
+        should_apply = match.should_apply and match.score >= min_score
+        tracker.record_score(
+            posting.job_id, posting.title, posting.company, posting.url, match.score, should_apply
+        )
+        audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
+        return should_apply
+
+    def generate_materials(posting: JobPosting, description: str) -> CoverLetter:
+        """Tailors the resume (using past generations that led to a real
+        interview/offer as few-shot examples - see
+        Tracker.best_resume_examples()) and a cover letter, writes both to
+        disk as reference material, and records the generation. The
+        returned cover letter's body is also what gets filled into the
+        application form itself - the tailored resume never is (see
+        generation/artifacts.py's module docstring).
+        """
+        examples = [
+            TailoredResume(summary=r["summary"], highlighted_skills=r["skills"], bullet_points=r["bullets"])
+            for r in tracker.best_resume_examples(limit=3)
+        ]
+        tailored = tailor_resume(provider, resume_text, description, examples=examples)
+        tracker.record_resume_generation(
+            posting.job_id,
+            posting.title,
+            posting.company,
+            tailored.summary,
+            tailored.highlighted_skills,
+            tailored.bullet_points,
+        )
+        cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
+        write_tailored_resume(
+            settings.applications_dir, posting.job_id, tailored, company=posting.company, title=posting.title
+        )
+        write_cover_letter(
+            settings.applications_dir, posting.job_id, cover_letter, company=posting.company, title=posting.title
+        )
+        audit.log("generated_materials", job_id=posting.job_id)
+        return cover_letter
+
+    def answer(question: str, job_id: str) -> str:
+        result = answer_question(
+            provider,
+            resume_text,
+            resume_store.faq_answers(),
+            question,
+            recent_answers=tracker.recent_qa_pairs(),
+        )
+        tracker.record_qa(job_id, question, result.answer)
+        if result.based_on_resume and result.confidence >= settings.faq_save_confidence:
+            resume_store.save_faq_answer(question, result.answer)
+        return result.answer
+
+    def apply_to(posting: JobPosting, cover_letter: CoverLetter) -> bool | None:
+        """Confirms, then submits for real (or stops right before the
+        final click on --dry-run). Returns None if the user declined the
+        confirmation prompt - not an error, the caller just moves on to
+        the next posting silently. Raises on a real failure, including
+        UnansweredRequiredQuestion - the caller handles logging/counting
+        that exactly like a prep_error. Always closes an external-apply
+        popup on the way out, success or failure: LinkedInAdapter hands it
+        back (see open_external_application()'s docstring) and has no
+        further involvement once it has, so leaving it open here would
+        otherwise pile up one tab per external posting across a run.
+        """
+        active_confirmer = confirmer if posting.easy_apply else external_confirmer
+        confirm_prompt = f"Apply to {posting.title} at {posting.company}?"
+        if not posting.easy_apply:
+            confirm_prompt += " (external site - EXPERIMENTAL)"
+        if not active_confirmer.confirm(confirm_prompt):
+            audit.log("user_declined", job_id=posting.job_id)
+            return None
+
+        def answer_for_this_posting(question: str) -> str:
+            return answer(question, posting.job_id)
+
+        external_page = None
+        try:
+            if posting.easy_apply:
+                return adapter.fill_and_submit(
+                    posting,
+                    answer_question=answer_for_this_posting,
+                    resume_path=str(settings.resume_path),
+                    cover_letter_text=cover_letter.body,
+                    dry_run=args.dry_run,
+                )
+            external_page = adapter.open_external_application(posting)
+            if external_page is None:
+                raise RuntimeError(
+                    'Could not find the "Apply on company website" button - the posting '
+                    "may have turned out to be Easy Apply after all, or stopped accepting "
+                    "applications since it was found."
+                )
+            return ExternalApplyAdapter(external_page).fill_and_submit(
+                answer_question=answer_for_this_posting,
+                resume_path=str(settings.resume_path),
+                cover_letter_text=cover_letter.body,
+                dry_run=args.dry_run,
+            )
+        finally:
+            if external_page is not None:
+                external_page.close()
+
     applied = 0
     failed = 0
     for posting in postings:
@@ -307,18 +453,7 @@ def _run_apply_cycle(
         if rate_limiter.remaining_today() <= 0:
             print("Daily application cap reached.")
             break
-        if tracker.has_applied(posting.job_id):
-            continue
-        if blacklist.is_blocked(posting.company):
-            audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
-            continue
-        if exclude_keywords and any(kw in posting.title.casefold() for kw in exclude_keywords):
-            # Cheap, deterministic, and checked before any LLM call -
-            # not persisted to the tracker (unlike a real score/skip
-            # decision), since the exclude list is expected to change
-            # between runs and a posting excluded today should still be
-            # re-evaluated normally if it's removed later.
-            audit.log("skip_excluded_keyword", job_id=posting.job_id, title=posting.title)
+        if should_skip(posting):
             continue
         existing = tracker.get_job(posting.job_id)
         if existing is not None and existing["status"] != "seen":
@@ -330,78 +465,9 @@ def _run_apply_cycle(
 
         try:
             description = adapter.load_description(posting)
-
-            if existing is not None and existing["match_score"] is not None:
-                # status == "seen" (checked above) with a score already
-                # recorded means an earlier run already judged this
-                # posting worth applying to - via record_score()'s
-                # atomic score+status write, that judgement can't be
-                # stale, only unfinished (e.g. the run crashed before
-                # reaching Submit) - UNLESS min_score has since been
-                # raised (e.g. a user tightening MIN_MATCH_SCORE in
-                # .env after seeing too many weak matches go through):
-                # the model's own should_apply verdict doesn't change
-                # between runs, but min_score is user config that can,
-                # so re-check the recorded score against *today's* floor
-                # rather than trusting a "seen" written under a looser
-                # one. If it still clears the bar, reuse it instead of
-                # spending another LLM call re-scoring a posting we've
-                # already decided on.
-                if existing["match_score"] < min_score:
-                    tracker.update_status(posting.job_id, "skipped")
-                    audit.log(
-                        "skip_below_min_score", job_id=posting.job_id, score=existing["match_score"]
-                    )
-                    continue
-                audit.log("reused_score", job_id=posting.job_id, score=existing["match_score"])
-            else:
-                match: JobMatchScore = score_job_match(provider, resume_text, description)
-                # min_score is an extra floor on top of the model's own
-                # should_apply verdict, not a replacement for it - the
-                # scorer's eligibility gate (see matching/scorer.py) can
-                # still force this to False regardless of score.
-                should_apply = match.should_apply and match.score >= min_score
-                tracker.record_score(
-                    posting.job_id,
-                    posting.title,
-                    posting.company,
-                    posting.url,
-                    match.score,
-                    should_apply,
-                )
-                audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
-                if not should_apply:
-                    continue
-
-            examples = [
-                TailoredResume(summary=r["summary"], highlighted_skills=r["skills"], bullet_points=r["bullets"])
-                for r in tracker.best_resume_examples(limit=3)
-            ]
-            tailored = tailor_resume(provider, resume_text, description, examples=examples)
-            tracker.record_resume_generation(
-                posting.job_id,
-                posting.title,
-                posting.company,
-                tailored.summary,
-                tailored.highlighted_skills,
-                tailored.bullet_points,
-            )
-            cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
-            write_tailored_resume(
-                settings.applications_dir,
-                posting.job_id,
-                tailored,
-                company=posting.company,
-                title=posting.title,
-            )
-            write_cover_letter(
-                settings.applications_dir,
-                posting.job_id,
-                cover_letter,
-                company=posting.company,
-                title=posting.title,
-            )
-            audit.log("generated_materials", job_id=posting.job_id)
+            if not clears_the_bar(posting, description, existing):
+                continue
+            cover_letter = generate_materials(posting, description)
         except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
             audit.log("prep_error", job_id=posting.job_id, error=str(e))
             failure_log.log(
@@ -423,51 +489,8 @@ def _run_apply_cycle(
                 break
             continue
 
-        def answer(question: str, job_id: str = posting.job_id) -> str:
-            result = answer_question(
-                provider,
-                resume_text,
-                resume_store.faq_answers(),
-                question,
-                recent_answers=tracker.recent_qa_pairs(),
-            )
-            tracker.record_qa(job_id, question, result.answer)
-            if result.based_on_resume and result.confidence >= settings.faq_save_confidence:
-                resume_store.save_faq_answer(question, result.answer)
-            return result.answer
-
-        active_confirmer = confirmer if posting.easy_apply else external_confirmer
-        confirm_prompt = f"Apply to {posting.title} at {posting.company}?"
-        if not posting.easy_apply:
-            confirm_prompt += " (external site - EXPERIMENTAL)"
-        if not active_confirmer.confirm(confirm_prompt):
-            audit.log("user_declined", job_id=posting.job_id)
-            continue
-
-        external_page = None
         try:
-            if posting.easy_apply:
-                submitted = adapter.fill_and_submit(
-                    posting,
-                    answer_question=answer,
-                    resume_path=str(settings.resume_path),
-                    cover_letter_text=cover_letter.body,
-                    dry_run=args.dry_run,
-                )
-            else:
-                external_page = adapter.open_external_application(posting)
-                if external_page is None:
-                    raise RuntimeError(
-                        'Could not find the "Apply on company website" button - the posting '
-                        "may have turned out to be Easy Apply after all, or stopped accepting "
-                        "applications since it was found."
-                    )
-                submitted = ExternalApplyAdapter(external_page).fill_and_submit(
-                    answer_question=answer,
-                    resume_path=str(settings.resume_path),
-                    cover_letter_text=cover_letter.body,
-                    dry_run=args.dry_run,
-                )
+            submitted = apply_to(posting, cover_letter)
         except Exception as e:  # noqa: BLE001 - surface and continue to the next job
             if isinstance(e, UnansweredRequiredQuestion):
                 # Log this one specifically, not just as a generic
@@ -495,16 +518,9 @@ def _run_apply_cycle(
                 print("Browser window was closed - stopping the run.")
                 break
             continue
-        finally:
-            # The popup opened for an external application is this loop's
-            # own responsibility to close - LinkedInAdapter just hands it
-            # back (see open_external_application()'s docstring) and has
-            # no further involvement once it has. Runs on every path
-            # (success, dry-run, or the except above), so a run never
-            # leaves a growing pile of tabs open across many external
-            # postings.
-            if external_page is not None:
-                external_page.close()
+
+        if submitted is None:
+            continue  # user declined the confirmation prompt
 
         if submitted:
             # The browser has already clicked Submit for real at this
