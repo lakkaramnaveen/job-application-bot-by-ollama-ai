@@ -12,6 +12,35 @@ It can run on the Claude API or on a free local model through
 [Ollama](https://ollama.com) (DeepSeek, Llama, GLM, Qwen, or anything else you
 pull) - pick one per run with `--provider`.
 
+## Quickstart
+
+The fastest path from a fresh clone to a real (but safe) run - each step
+links to the section with the full detail:
+
+1. **Install** - Python venv, `pip install -e .`, `playwright install
+   chromium`. See "Setup on macOS" below.
+2. **Pick a model provider** - Claude (an API key, costs money per call) or
+   Ollama (free, runs on your machine). See "Local Ollama vs Claude
+   (cloud)" below if you're not sure which.
+3. **Configure** - `cp .env.example .env`, then set `LLM_PROVIDER` and
+   either `ANTHROPIC_API_KEY` or `OLLAMA_MODEL` to match.
+4. **Add your resume** - put the file at the path `RESUME_PATH` in `.env`
+   points to (default `./data/resume.pdf`, relative to `app/`) - PDF, DOCX,
+   or TXT. This is the file that's actually uploaded to every real
+   application; nothing here ever generates a fake one to submit in its
+   place.
+5. **Log in once** - `job-bot login` opens a real Chrome window for you to
+   sign into LinkedIn by hand; the session is saved for every future run.
+6. **Sanity-check your setup** - `job-bot doctor` (local file/config
+   checks) and `job-bot test-provider` (one real API/Ollama call).
+7. **Dry run** - `job-bot run --keywords "..." --location "..." --dry-run`
+   does everything except the final Submit click, so you can see what it
+   would have done.
+8. **For real** - drop `--dry-run`, add `--yes-i-understand-the-risk` to
+   skip the per-application confirmation prompt, add `--loop` to keep
+   applying all day instead of stopping after one batch. See "Running it"
+   below for the full flag reference.
+
 ## Before you use this
 
 - **This automates your own, already-authenticated browser session.** You log
@@ -27,8 +56,9 @@ pull) - pick one per run with `--provider`.
   attached to answer that prompt from (cron, a pipe, CI) is treated as "no" -
   it never silently assumes yes - so pass `--yes-i-understand-the-risk` for
   any unattended run. There's also a hard daily cap (`DAILY_APPLICATION_CAP`
-  in `.env`, capped in code at 50 no matter what you set) so a bug or a bad
-  match-score threshold can't spam applications.
+  in `.env`, capped in code at `HARD_DAILY_APPLICATION_CEILING` - currently
+  100 - no matter what you set) so a bug or a bad match-score threshold
+  can't spam applications.
 - **Selectors may need tuning.** LinkedIn's page structure isn't public and
   changes over time. If a run stops finding a button/field it used to find,
   check `job_bot/browser/linkedin_adapter.py`'s `SELECTORS` dict first, and use
@@ -62,6 +92,38 @@ ollama serve &                 # leave running in a terminal, or run as a backgr
 ollama pull deepseek-r1:8b     # or llama3.1:8b, glm4:9b, qwen2.5:7b, ...
 ```
 
+### Local Ollama vs Claude (cloud)
+
+Every LLM call in this project (scoring, tailoring, answering questions) goes
+through one interchangeable interface (`job_bot/llm/base.py`), so switching
+providers is just an `.env` value or a `--provider`/`--model` flag - nothing
+else about how the bot behaves changes.
+
+| | Ollama (local) | Claude (cloud) |
+|---|---|---|
+| Cost | Free - runs on your own machine | Pay per API call (small, but it adds up over hundreds of postings) |
+| Privacy | Your resume and every job posting text never leave your machine | Sent to Anthropic's API per their terms |
+| Setup | `brew install ollama` + `ollama pull <model>`, no account | An Anthropic API key (console.anthropic.com) |
+| Quality/reliability | Good models handle this fine, but a local model is more likely to return malformed output occasionally (retried automatically, see `ollama_provider.py`) or need `--min-score` tightened if it scores too generously | Generally more consistent structured-output and judgment quality out of the box |
+| Speed | Depends entirely on your hardware - a small model (`deepseek-r1:8b`, `llama3.1:8b`) is fast on any recent Mac; a larger model needs real RAM to stay fast | Consistent, not dependent on your machine |
+
+If you have the RAM for it (16GB+ unified memory), a mid-size model like
+`qwen3:30b` (an MoE model - only ~3B parameters active per token despite
+30B total, so it stays fast) is noticeably better at follow-through on
+multi-step reasoning (eligibility checks, matching a radio option to an
+answer) than the smaller defaults above, at zero cost. If it's a *thinking*
+model (qwen3, deepseek-r1, ...), `ollama_provider.py` already passes
+`think: false` on every call - only the final structured answer, not the
+model's internal reasoning trace, ever mattered here, and skipping it cuts
+latency roughly 10x on a thinking model with no quality loss to the answer
+itself.
+
+Switch per run without touching `.env`:
+```bash
+job-bot run --provider ollama --model qwen3:30b --dry-run
+job-bot run --provider claude --model claude-opus-5 --dry-run
+```
+
 Configure:
 
 ```bash
@@ -72,7 +134,13 @@ Edit `.env`:
 - Set `LLM_PROVIDER` to `claude` or `ollama`.
 - If using Claude, set `ANTHROPIC_API_KEY` (get one at console.anthropic.com).
 - If using Ollama, set `OLLAMA_MODEL` to whatever you pulled above.
-- Put your resume at the path in `RESUME_PATH` (PDF, DOCX, or TXT).
+- **Put your resume at the path `RESUME_PATH` points to** - default
+  `./data/resume.pdf` relative to `app/` (i.e. `app/data/resume.pdf`), or
+  point `RESUME_PATH` at a file anywhere else on disk. PDF, DOCX, or TXT.
+  This exact file is what's actually uploaded to every real Easy Apply
+  submission - the per-job tailored resume the bot generates is a
+  reference document only (see "Running it" below), never a substitute
+  for this one.
 
 ## Running it
 
@@ -112,6 +180,13 @@ Other useful flags on `run`:
 - `--search-pool N` - how many Easy-Apply postings to fetch/score before
   filtering down to `--max-apps` (default 25; pages through LinkedIn's search
   results and skips postings already marked "Applied").
+- Postings are always searched **freshest first**: `search()` looks at only
+  the last 24 hours to start, and only widens to the last 3 days if that
+  isn't enough to fill `--search-pool` - never further back than that, so
+  you're never spending an application on a posting that's already been up
+  (and collecting applicants) for a week or more. Not a flag - this is
+  always on, since there's no good reason to prefer a stale posting over a
+  fresh one when LinkedIn itself supports filtering for it.
 - `--headless` - run without a visible browser window, for unattended runs
   after you've verified the flow with `--dry-run`.
 - `--loop` - a plain run stops after one search batch (`--search-pool`

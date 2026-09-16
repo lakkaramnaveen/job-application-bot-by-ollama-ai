@@ -86,6 +86,13 @@ EXPERIENCE_LEVEL_CODES = {
     "executive": "6",
 }
 
+# LinkedIn's f_TPR ("posted date") search filter, as r<seconds-ago>. Its own
+# UI only exposes day/week/month buttons, but confirmed live that an
+# arbitrary value like 3 days is still honored server-side, not silently
+# rounded up to the nearest UI bucket - see search()'s docstring.
+DATE_POSTED_24H = "r86400"
+DATE_POSTED_3_DAYS = "r259200"
+
 
 class UnansweredRequiredQuestion(RuntimeError):
     """A required text/radio/select question fill_and_submit() couldn't
@@ -121,9 +128,15 @@ class LinkedInAdapter(JobBoardAdapter):
         experience_levels: list[str] | None = None,
         include_external: bool = False,
     ) -> list[JobPosting]:
-        postings: list[JobPosting] = []
-        seen_ids: set[str] = set()
-
+        """Searches postings from the last 24 hours first, and only widens
+        to the last 3 days if that isn't enough to fill max_results -
+        never further back than 3 days, so a run is always looking at
+        genuinely fresh postings rather than ones that have likely already
+        collected plenty of applicants. Confirmed live that LinkedIn's
+        f_TPR filter honors an arbitrary r<seconds> value (not just its own
+        UI's day/week/month buttons): r259200 (3 days) returns a real
+        subset of r604800 (week)'s results, not the same set relabeled.
+        """
         experience_filter = ""
         if experience_levels:
             codes = [EXPERIENCE_LEVEL_CODES[level] for level in experience_levels]
@@ -135,6 +148,37 @@ class LinkedInAdapter(JobBoardAdapter):
         # dropping the filter returns a mix, not just external ones.
         easy_apply_filter = "" if include_external else "&f_AL=true"
 
+        postings = self._search_one_window(
+            keywords, location, max_results, experience_filter, easy_apply_filter, include_external, DATE_POSTED_24H
+        )
+        if len(postings) >= max_results:
+            return postings
+        # The 3-day window is always a superset of the 24h one, so a fresh
+        # search under it supersedes rather than merges with the narrower
+        # results above - nothing from the first pass is lost.
+        return self._search_one_window(
+            keywords,
+            location,
+            max_results,
+            experience_filter,
+            easy_apply_filter,
+            include_external,
+            DATE_POSTED_3_DAYS,
+        )
+
+    def _search_one_window(
+        self,
+        keywords: str,
+        location: str,
+        max_results: int,
+        experience_filter: str,
+        easy_apply_filter: str,
+        include_external: bool,
+        date_filter: str,
+    ) -> list[JobPosting]:
+        postings: list[JobPosting] = []
+        seen_ids: set[str] = set()
+
         for page_num in range(MAX_SEARCH_PAGES):
             if len(postings) >= max_results:
                 break
@@ -145,6 +189,7 @@ class LinkedInAdapter(JobBoardAdapter):
                 f"?keywords={quote(keywords, safe='')}"
                 f"&location={quote(location, safe='')}"
                 f"&start={start}"
+                f"&f_TPR={date_filter}"
                 f"{easy_apply_filter}"
                 f"{experience_filter}"
             )

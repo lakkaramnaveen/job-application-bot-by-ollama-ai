@@ -12,7 +12,12 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from job_bot.browser.base_adapter import JobPosting
-from job_bot.browser.linkedin_adapter import RESULTS_PER_PAGE, LinkedInAdapter
+from job_bot.browser.linkedin_adapter import (
+    DATE_POSTED_3_DAYS,
+    DATE_POSTED_24H,
+    RESULTS_PER_PAGE,
+    LinkedInAdapter,
+)
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
 LINK_ENTRY_POINT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_link_entry_point.html"
@@ -653,7 +658,9 @@ def test_search_pages_past_a_page_whose_results_are_all_already_applied(playwrig
 def test_search_stops_when_a_page_repeats_only_already_seen_jobs(playwright_page, monkeypatch):
     """The stop condition that remains: LinkedIn re-serving results already
     collected from an earlier page is how paging past the last result looks,
-    and the search must end rather than loop to MAX_SEARCH_PAGES.
+    and the search must end rather than loop to MAX_SEARCH_PAGES - within
+    each date-posted window search() tries (see the 24h/3-day widening
+    test below), not just once overall.
     """
     real_goto = playwright_page.goto
     page_loads = []
@@ -668,8 +675,71 @@ def test_search_stops_when_a_page_repeats_only_already_seen_jobs(playwright_page
     postings = adapter.search("python", "Remote", max_results=50)
 
     assert {p.job_id for p in postings} == {"101", "103"}
-    # Page 1 collects them, page 2 repeats them and ends the search.
-    assert len(page_loads) == 2
+    # Only 2 unique jobs ever exist in this fixture regardless of URL, so
+    # max_results=50 is never reached in the 24h window either - search()
+    # widens to the 3-day window too, each stopping after 2 pages the same
+    # way (page 2 repeats page 1's ids) - 4 page loads total, not 2.
+    assert len(page_loads) == 4
+
+
+def test_search_uses_the_past_24_hours_filter_first(playwright_page, monkeypatch):
+    real_goto = playwright_page.goto
+    urls: list[str] = []
+
+    def fake_goto(url, **kw):
+        urls.append(url)
+        return real_goto(f"file://{SEARCH_FIXTURE_PATH}")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    adapter = LinkedInAdapter(playwright_page)
+
+    adapter.search("python", "Remote", max_results=2)
+
+    assert f"f_TPR={DATE_POSTED_24H}" in urls[0]
+
+
+def test_search_widens_to_3_days_when_24h_window_has_too_few_results(playwright_page, monkeypatch):
+    """Real-world behavior this is for: only searching the last 24 hours
+    can genuinely come up short (fewer postings than max_results), and the
+    fallback must never reach further back than 3 days - never a week or a
+    month - so results stay fresh even when widened.
+    """
+    real_goto = playwright_page.goto
+    urls: list[str] = []
+
+    def fake_goto(url, **kw):
+        urls.append(url)
+        return real_goto(f"file://{SEARCH_FIXTURE_PATH}")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    adapter = LinkedInAdapter(playwright_page)
+
+    # The fixture only ever has 2 unique jobs, so max_results=50 can't be
+    # satisfied by the 24h window alone.
+    postings = adapter.search("python", "Remote", max_results=50)
+
+    assert {p.job_id for p in postings} == {"101", "103"}
+    assert any(f"f_TPR={DATE_POSTED_3_DAYS}" in url for url in urls)
+    # Never widens past 3 days - no week/month-scale filter value used.
+    assert not any("r604800" in url or "r2592000" in url for url in urls)
+
+
+def test_search_does_not_widen_when_24h_window_already_has_enough(playwright_page, monkeypatch):
+    real_goto = playwright_page.goto
+    urls: list[str] = []
+
+    def fake_goto(url, **kw):
+        urls.append(url)
+        return real_goto(f"file://{SEARCH_FIXTURE_PATH}")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    adapter = LinkedInAdapter(playwright_page)
+
+    # The fixture's 2 unique jobs exactly satisfy max_results=2 - no need
+    # to ever ask for the wider, less-fresh window.
+    adapter.search("python", "Remote", max_results=2)
+
+    assert not any(f"f_TPR={DATE_POSTED_3_DAYS}" in url for url in urls)
 
 
 def test_search_default_marks_every_posting_easy_apply(playwright_page, monkeypatch):
