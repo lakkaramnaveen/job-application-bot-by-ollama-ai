@@ -14,8 +14,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 APP_DIR = Path(__file__).resolve().parent.parent
 
 # Hard ceiling on daily applications, enforced in code regardless of what a user
-# sets in .env. This is a safety backstop against a misconfigured or runaway run.
-HARD_DAILY_APPLICATION_CEILING = 50
+# sets in .env. This is a safety backstop against a misconfigured or runaway
+# run (e.g. a scoring bug marking every posting should_apply) - not a normal
+# day's operating limit, which DAILY_APPLICATION_CAP in .env controls instead.
+HARD_DAILY_APPLICATION_CEILING = 100
 
 
 class Settings(BaseSettings):

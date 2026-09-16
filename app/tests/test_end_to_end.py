@@ -208,6 +208,8 @@ def run_args(**overrides):
         min_score=None,
         exclude_title_keywords=None,
         experience_level=None,
+        loop=False,
+        loop_interval_minutes=20,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)

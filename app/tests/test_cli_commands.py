@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from job_bot.cli import cmd_blacklist, cmd_doctor, cmd_export, cmd_report, cmd_status
+from job_bot.cli import cmd_blacklist, cmd_doctor, cmd_export, cmd_report, cmd_status, main
 from job_bot.config import Settings
 from job_bot.tracker.db import Tracker
 
@@ -300,3 +300,33 @@ def test_doctor_flags_daily_cap_above_the_hard_ceiling(tmp_path, capsys):
     cmd_doctor(settings)
 
     assert "[!!] Daily application cap within hard ceiling" in capsys.readouterr().out
+
+
+# --- main() ---
+
+
+def test_main_stops_cleanly_on_keyboard_interrupt(tmp_path, monkeypatch, capsys):
+    """Real failure this guards against: Ctrl+C during a real browser action
+    (mid Easy Apply form fill, waiting on Ollama, ...) used to propagate a
+    raw traceback all the way out of main() - confusing on its own, and it
+    also correlated with the *next* run failing outright with "profile is
+    already in use by another instance of Chromium" (seen live), since the
+    interrupted browser_session() cleanup never finished cleanly. A plain
+    `job-bot run` had no KeyboardInterrupt handling at all before this fix -
+    only --loop mode's own inner loop did.
+    """
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("job_bot.cli.configure_logging", lambda: None)
+    monkeypatch.setattr("sys.argv", ["job-bot", "run"])
+
+    def raise_interrupt(settings, args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("job_bot.cli.cmd_run", raise_interrupt)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1
+    assert "Stopped." in capsys.readouterr().out

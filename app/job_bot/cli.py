@@ -16,11 +16,13 @@ propagating out of a command is a real bug.
 import argparse
 import csv
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TextIO
 
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from job_bot.browser.linkedin_adapter import EXPERIENCE_LEVEL_CODES, LinkedInAdapter
@@ -33,6 +35,7 @@ from job_bot.generation.qa_answerer import answer_question
 from job_bot.generation.resume_tailor import tailor_resume
 from job_bot.integrations.gmail_client import GmailClient, GmailClientError
 from job_bot.integrations.gmail_sync import sync_gmail
+from job_bot.llm.base import LLMProvider
 from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.factory import get_provider
 from job_bot.llm.ollama_provider import OllamaProviderError
@@ -185,199 +188,275 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     ) as context:
         page = context.new_page()
         adapter = LinkedInAdapter(page)
-        postings = adapter.search(
-            args.keywords, args.location, max_results=args.search_pool, experience_levels=experience_levels
+
+        def run_one_cycle() -> tuple[int, int]:
+            return _run_apply_cycle(
+                adapter=adapter,
+                page=page,
+                provider=provider,
+                resume_store=resume_store,
+                resume_text=resume_text,
+                tracker=tracker,
+                rate_limiter=rate_limiter,
+                blacklist=blacklist,
+                confirmer=confirmer,
+                audit=audit,
+                failure_log=failure_log,
+                settings=settings,
+                args=args,
+                min_score=min_score,
+                exclude_keywords=exclude_keywords,
+                experience_levels=experience_levels,
+            )
+
+        if not args.loop:
+            applied, failed = run_one_cycle()
+            _print_cycle_summary(applied, failed, rate_limiter, settings)
+            return
+
+        print(
+            f"Loop mode: searching and applying every {args.loop_interval_minutes} minute(s) "
+            "until today's application cap is reached or you stop it (Ctrl+C)."
         )
-        audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
+        try:
+            while True:
+                applied, failed = run_one_cycle()
+                _print_cycle_summary(applied, failed, rate_limiter, settings)
+                if rate_limiter.remaining_today() <= 0:
+                    print("Daily application cap reached for today - stopping.")
+                    break
+                if page.is_closed():
+                    print("Browser window was closed - stopping.")
+                    break
+                print(f"Sleeping {args.loop_interval_minutes} minute(s) before the next search...")
+                time.sleep(args.loop_interval_minutes * 60)
+        except KeyboardInterrupt:
+            print("\nStopped.")
 
-        applied = 0
-        failed = 0
-        for posting in postings:
-            if applied >= args.max_apps:
-                break
-            if rate_limiter.remaining_today() <= 0:
-                print("Daily application cap reached.")
-                break
-            if tracker.has_applied(posting.job_id):
-                continue
-            if blacklist.is_blocked(posting.company):
-                audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
-                continue
-            if exclude_keywords and any(kw in posting.title.casefold() for kw in exclude_keywords):
-                # Cheap, deterministic, and checked before any LLM call -
-                # not persisted to the tracker (unlike a real score/skip
-                # decision), since the exclude list is expected to change
-                # between runs and a posting excluded today should still be
-                # re-evaluated normally if it's removed later.
-                audit.log("skip_excluded_keyword", job_id=posting.job_id, title=posting.title)
-                continue
-            existing = tracker.get_job(posting.job_id)
-            if existing is not None and existing["status"] != "seen":
-                # Already decided against in an earlier run (skipped by the
-                # bot, or corrected to a terminal status by hand without
-                # ever being applied to) - leave it alone rather than
-                # re-scoring it every run.
-                continue
 
-            try:
-                description = adapter.load_description(posting)
+def _print_cycle_summary(applied: int, failed: int, rate_limiter: RateLimiter, settings: Settings) -> None:
+    print(f"Done. Applied to {applied} job(s). {rate_limiter.remaining_today()} remaining today.")
+    if failed:
+        print(
+            f"{failed} posting(s) could not be completed - see "
+            f"{settings.failed_applications_log_path} for what happened and why."
+        )
 
-                if existing is not None and existing["match_score"] is not None:
-                    # status == "seen" (checked above) with a score already
-                    # recorded means an earlier run already judged this
-                    # posting worth applying to - via record_score()'s
-                    # atomic score+status write, that judgement can't be
-                    # stale, only unfinished (e.g. the run crashed before
-                    # reaching Submit) - UNLESS min_score has since been
-                    # raised (e.g. a user tightening MIN_MATCH_SCORE in
-                    # .env after seeing too many weak matches go through):
-                    # the model's own should_apply verdict doesn't change
-                    # between runs, but min_score is user config that can,
-                    # so re-check the recorded score against *today's* floor
-                    # rather than trusting a "seen" written under a looser
-                    # one. If it still clears the bar, reuse it instead of
-                    # spending another LLM call re-scoring a posting we've
-                    # already decided on.
-                    if existing["match_score"] < min_score:
-                        tracker.update_status(posting.job_id, "skipped")
-                        audit.log(
-                            "skip_below_min_score", job_id=posting.job_id, score=existing["match_score"]
-                        )
-                        continue
-                    audit.log("reused_score", job_id=posting.job_id, score=existing["match_score"])
-                else:
-                    match: JobMatchScore = score_job_match(provider, resume_text, description)
-                    # min_score is an extra floor on top of the model's own
-                    # should_apply verdict, not a replacement for it - the
-                    # scorer's eligibility gate (see matching/scorer.py) can
-                    # still force this to False regardless of score.
-                    should_apply = match.should_apply and match.score >= min_score
-                    tracker.record_score(
-                        posting.job_id,
-                        posting.title,
-                        posting.company,
-                        posting.url,
-                        match.score,
-                        should_apply,
+
+def _run_apply_cycle(
+    *,
+    adapter: LinkedInAdapter,
+    page: Page,
+    provider: LLMProvider,
+    resume_store: ResumeStore,
+    resume_text: str,
+    tracker: Tracker,
+    rate_limiter: RateLimiter,
+    blacklist: CompanyBlacklist,
+    confirmer: SubmitConfirmer,
+    audit: AuditLogger,
+    failure_log: AuditLogger,
+    settings: Settings,
+    args: argparse.Namespace,
+    min_score: int,
+    exclude_keywords: list[str],
+    experience_levels: list[str] | None,
+) -> tuple[int, int]:
+    """One search -> score -> tailor -> apply pass over a fresh batch of
+    postings. Called once for a plain `job-bot run`, or repeatedly (with a
+    sleep between calls) for `--loop` - re-running search() each cycle is
+    what lets loop mode pick up postings that appeared after the previous
+    cycle, not just the ones visible at process start. Returns (applied,
+    failed) for that cycle only, not a running total across cycles.
+    """
+    postings = adapter.search(
+        args.keywords, args.location, max_results=args.search_pool, experience_levels=experience_levels
+    )
+    audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
+
+    applied = 0
+    failed = 0
+    for posting in postings:
+        if applied >= args.max_apps:
+            break
+        if rate_limiter.remaining_today() <= 0:
+            print("Daily application cap reached.")
+            break
+        if tracker.has_applied(posting.job_id):
+            continue
+        if blacklist.is_blocked(posting.company):
+            audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
+            continue
+        if exclude_keywords and any(kw in posting.title.casefold() for kw in exclude_keywords):
+            # Cheap, deterministic, and checked before any LLM call -
+            # not persisted to the tracker (unlike a real score/skip
+            # decision), since the exclude list is expected to change
+            # between runs and a posting excluded today should still be
+            # re-evaluated normally if it's removed later.
+            audit.log("skip_excluded_keyword", job_id=posting.job_id, title=posting.title)
+            continue
+        existing = tracker.get_job(posting.job_id)
+        if existing is not None and existing["status"] != "seen":
+            # Already decided against in an earlier run (skipped by the
+            # bot, or corrected to a terminal status by hand without
+            # ever being applied to) - leave it alone rather than
+            # re-scoring it every run.
+            continue
+
+        try:
+            description = adapter.load_description(posting)
+
+            if existing is not None and existing["match_score"] is not None:
+                # status == "seen" (checked above) with a score already
+                # recorded means an earlier run already judged this
+                # posting worth applying to - via record_score()'s
+                # atomic score+status write, that judgement can't be
+                # stale, only unfinished (e.g. the run crashed before
+                # reaching Submit) - UNLESS min_score has since been
+                # raised (e.g. a user tightening MIN_MATCH_SCORE in
+                # .env after seeing too many weak matches go through):
+                # the model's own should_apply verdict doesn't change
+                # between runs, but min_score is user config that can,
+                # so re-check the recorded score against *today's* floor
+                # rather than trusting a "seen" written under a looser
+                # one. If it still clears the bar, reuse it instead of
+                # spending another LLM call re-scoring a posting we've
+                # already decided on.
+                if existing["match_score"] < min_score:
+                    tracker.update_status(posting.job_id, "skipped")
+                    audit.log(
+                        "skip_below_min_score", job_id=posting.job_id, score=existing["match_score"]
                     )
-                    audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
-                    if not should_apply:
-                        continue
-
-                examples = [
-                    TailoredResume(summary=r["summary"], highlighted_skills=r["skills"], bullet_points=r["bullets"])
-                    for r in tracker.best_resume_examples(limit=3)
-                ]
-                tailored = tailor_resume(provider, resume_text, description, examples=examples)
-                tracker.record_resume_generation(
+                    continue
+                audit.log("reused_score", job_id=posting.job_id, score=existing["match_score"])
+            else:
+                match: JobMatchScore = score_job_match(provider, resume_text, description)
+                # min_score is an extra floor on top of the model's own
+                # should_apply verdict, not a replacement for it - the
+                # scorer's eligibility gate (see matching/scorer.py) can
+                # still force this to False regardless of score.
+                should_apply = match.should_apply and match.score >= min_score
+                tracker.record_score(
                     posting.job_id,
                     posting.title,
                     posting.company,
-                    tailored.summary,
-                    tailored.highlighted_skills,
-                    tailored.bullet_points,
+                    posting.url,
+                    match.score,
+                    should_apply,
                 )
-                cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
-                write_tailored_resume(
-                    settings.applications_dir,
-                    posting.job_id,
-                    tailored,
-                    company=posting.company,
-                    title=posting.title,
-                )
-                write_cover_letter(
-                    settings.applications_dir,
-                    posting.job_id,
-                    cover_letter,
-                    company=posting.company,
-                    title=posting.title,
-                )
-                audit.log("generated_materials", job_id=posting.job_id)
-            except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
-                audit.log("prep_error", job_id=posting.job_id, error=str(e))
-                failure_log.log(
-                    "prep_error",
-                    job_id=posting.job_id,
-                    title=posting.title,
-                    company=posting.company,
-                    url=posting.url,
-                    error=str(e),
-                )
-                print(f"Error preparing application for {posting.title} at {posting.company}: {e}")
-                failed += 1
-                if page.is_closed():
-                    # The browser itself is gone (closed, crashed, killed) -
-                    # every remaining posting shares this one page and would
-                    # fail identically on it, so stop here instead of
-                    # repeating the same failure once per remaining posting.
-                    print("Browser window was closed - stopping the run.")
-                    break
-                continue
+                audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
+                if not should_apply:
+                    continue
 
-            def answer(question: str, job_id: str = posting.job_id) -> str:
-                result = answer_question(provider, resume_text, resume_store.faq_answers(), question)
-                tracker.record_qa(job_id, question, result.answer)
-                if result.based_on_resume and result.confidence >= settings.faq_save_confidence:
-                    resume_store.save_faq_answer(question, result.answer)
-                return result.answer
-
-            if not confirmer.confirm(f"Apply to {posting.title} at {posting.company}?"):
-                audit.log("user_declined", job_id=posting.job_id)
-                continue
-
-            try:
-                submitted = adapter.fill_and_submit(
-                    posting,
-                    answer_question=answer,
-                    resume_path=str(settings.resume_path),
-                    cover_letter_text=cover_letter.body,
-                    dry_run=args.dry_run,
-                )
-            except Exception as e:  # noqa: BLE001 - surface and continue to the next job
-                audit.log("apply_error", job_id=posting.job_id, error=str(e))
-                failure_log.log(
-                    "apply_error",
-                    job_id=posting.job_id,
-                    title=posting.title,
-                    company=posting.company,
-                    url=posting.url,
-                    error=str(e),
-                )
-                print(f"Error applying to {posting.title} at {posting.company}: {e}")
-                failed += 1
-                if page.is_closed():
-                    print("Browser window was closed - stopping the run.")
-                    break
-                continue
-
-            if submitted:
-                # The browser has already clicked Submit for real at this
-                # point - mark_applied() must run before anything that could
-                # raise, so a real submission is never lost from the tracker
-                # (which would risk a duplicate real application on a future
-                # run). record_application()'s own cap check is defense in
-                # depth against a second concurrent `job-bot run` process
-                # racing this one; if it loses that race, stop cleanly
-                # rather than crash mid-loop.
-                tracker.mark_applied(posting.job_id)
-                audit.log("applied", job_id=posting.job_id, company=posting.company)
-                applied += 1
-                print(f"Applied: {posting.title} at {posting.company}")
-                try:
-                    rate_limiter.record_application()
-                except DailyCapReached:
-                    print("Daily application cap reached (possibly by a concurrent run). Stopping.")
-                    break
-            else:
-                audit.log("dry_run_stopped", job_id=posting.job_id)
-                print(f"[dry-run] Would apply to {posting.title} at {posting.company}")
-
-        print(f"Done. Applied to {applied} job(s). {rate_limiter.remaining_today()} remaining today.")
-        if failed:
-            print(
-                f"{failed} posting(s) could not be completed - see "
-                f"{settings.failed_applications_log_path} for what happened and why."
+            examples = [
+                TailoredResume(summary=r["summary"], highlighted_skills=r["skills"], bullet_points=r["bullets"])
+                for r in tracker.best_resume_examples(limit=3)
+            ]
+            tailored = tailor_resume(provider, resume_text, description, examples=examples)
+            tracker.record_resume_generation(
+                posting.job_id,
+                posting.title,
+                posting.company,
+                tailored.summary,
+                tailored.highlighted_skills,
+                tailored.bullet_points,
             )
+            cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
+            write_tailored_resume(
+                settings.applications_dir,
+                posting.job_id,
+                tailored,
+                company=posting.company,
+                title=posting.title,
+            )
+            write_cover_letter(
+                settings.applications_dir,
+                posting.job_id,
+                cover_letter,
+                company=posting.company,
+                title=posting.title,
+            )
+            audit.log("generated_materials", job_id=posting.job_id)
+        except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
+            audit.log("prep_error", job_id=posting.job_id, error=str(e))
+            failure_log.log(
+                "prep_error",
+                job_id=posting.job_id,
+                title=posting.title,
+                company=posting.company,
+                url=posting.url,
+                error=str(e),
+            )
+            print(f"Error preparing application for {posting.title} at {posting.company}: {e}")
+            failed += 1
+            if page.is_closed():
+                # The browser itself is gone (closed, crashed, killed) -
+                # every remaining posting shares this one page and would
+                # fail identically on it, so stop here instead of
+                # repeating the same failure once per remaining posting.
+                print("Browser window was closed - stopping the run.")
+                break
+            continue
+
+        def answer(question: str, job_id: str = posting.job_id) -> str:
+            result = answer_question(provider, resume_text, resume_store.faq_answers(), question)
+            tracker.record_qa(job_id, question, result.answer)
+            if result.based_on_resume and result.confidence >= settings.faq_save_confidence:
+                resume_store.save_faq_answer(question, result.answer)
+            return result.answer
+
+        if not confirmer.confirm(f"Apply to {posting.title} at {posting.company}?"):
+            audit.log("user_declined", job_id=posting.job_id)
+            continue
+
+        try:
+            submitted = adapter.fill_and_submit(
+                posting,
+                answer_question=answer,
+                resume_path=str(settings.resume_path),
+                cover_letter_text=cover_letter.body,
+                dry_run=args.dry_run,
+            )
+        except Exception as e:  # noqa: BLE001 - surface and continue to the next job
+            audit.log("apply_error", job_id=posting.job_id, error=str(e))
+            failure_log.log(
+                "apply_error",
+                job_id=posting.job_id,
+                title=posting.title,
+                company=posting.company,
+                url=posting.url,
+                error=str(e),
+            )
+            print(f"Error applying to {posting.title} at {posting.company}: {e}")
+            failed += 1
+            if page.is_closed():
+                print("Browser window was closed - stopping the run.")
+                break
+            continue
+
+        if submitted:
+            # The browser has already clicked Submit for real at this
+            # point - mark_applied() must run before anything that could
+            # raise, so a real submission is never lost from the tracker
+            # (which would risk a duplicate real application on a future
+            # run). record_application()'s own cap check is defense in
+            # depth against a second concurrent `job-bot run` process
+            # racing this one; if it loses that race, stop cleanly
+            # rather than crash mid-loop.
+            tracker.mark_applied(posting.job_id)
+            audit.log("applied", job_id=posting.job_id, company=posting.company)
+            applied += 1
+            print(f"Applied: {posting.title} at {posting.company}")
+            try:
+                rate_limiter.record_application()
+            except DailyCapReached:
+                print("Daily application cap reached (possibly by a concurrent run). Stopping.")
+                break
+        else:
+            audit.log("dry_run_stopped", job_id=posting.job_id)
+            print(f"[dry-run] Would apply to {posting.title} at {posting.company}")
+
+    return applied, failed
 
 
 def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
@@ -671,6 +750,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--dry-run", action="store_true", help="Stop right before the final Submit click.")
     run_p.add_argument("--headless", action="store_true", help="Run the browser without a visible window.")
+    run_p.add_argument(
+        "--loop",
+        action="store_true",
+        help=(
+            "Keep running all day instead of stopping after one search batch: re-searches and "
+            "applies in cycles (every --loop-interval-minutes) until today's application cap is "
+            "reached or you stop it with Ctrl+C. --max-apps then caps applications per cycle, not "
+            "for the whole day - the daily cap is what bounds the day as a whole."
+        ),
+    )
+    run_p.add_argument(
+        "--loop-interval-minutes",
+        type=int,
+        default=20,
+        help="Minutes to wait between search cycles in --loop mode (default: 20).",
+    )
     run_p.add_argument("--provider", choices=["claude", "ollama"], default=None)
     run_p.add_argument("--model", default=None)
     run_p.add_argument(
@@ -803,6 +898,18 @@ def main() -> None:
             cmd_blacklist(settings, args)
     except EXPECTED_ERRORS as e:
         print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        # Without this, Ctrl+C during a real browser action (mid Easy Apply
+        # form, waiting on Ollama, ...) propagated a raw traceback through
+        # browser_session()'s own cleanup - confusing on its own, and it
+        # also left the Chromium profile in a state where the *next* run
+        # failed outright with "profile is already in use by another
+        # instance of Chromium" (seen live) since the interrupted close()
+        # never finished. A clean stop here doesn't fix that underlying
+        # profile-lock risk, but it does stop dumping a scary traceback for
+        # what is a completely normal way to end a run.
+        print("\nStopped.")
         sys.exit(1)
 
 

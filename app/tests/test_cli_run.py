@@ -106,6 +106,23 @@ class MultiJobAdapter(FakeAdapter):
         return [JOB, JOB2, JOB3]
 
 
+class LoopFakeAdapter(FakeAdapter):
+    """Returns one brand-new, never-before-seen posting each search() call -
+    for --loop tests, since a repeated posting would just get skipped by
+    tracker.has_applied() on the second cycle and never exercise the "cap
+    reached mid-loop" path search() alone can't reach.
+    """
+
+    def __init__(self, page):
+        super().__init__(page)
+        self.search_calls = 0
+
+    def search(self, keywords, location, max_results=25, experience_levels=None):
+        self.search_calls += 1
+        job_id = f"loop-job-{self.search_calls}"
+        return [JobPosting(job_id=job_id, title="Backend Engineer", company="Acme Corp", url=f"https://x/{job_id}", description="")]
+
+
 class FakePage:
     def __init__(self):
         self._closed = False
@@ -127,10 +144,10 @@ def fake_browser_session(profile_dir, headless=False, cdp_url=None):
     yield FakeContext()
 
 
-def make_settings(tmp_path) -> Settings:
+def make_settings(tmp_path, **overrides) -> Settings:
     resume_path = tmp_path / "resume.txt"
     resume_path.write_text("Experienced backend engineer skilled in Python.", encoding="utf-8")
-    return Settings(
+    kwargs = dict(
         _env_file=None,
         llm_provider="claude",
         anthropic_api_key="sk-ant-fake",
@@ -144,6 +161,8 @@ def make_settings(tmp_path) -> Settings:
         applications_dir=tmp_path / "applications",
         require_confirm_before_submit=True,
     )
+    kwargs.update(overrides)
+    return Settings(**kwargs)
 
 
 def make_args(**overrides) -> argparse.Namespace:
@@ -160,6 +179,8 @@ def make_args(**overrides) -> argparse.Namespace:
         min_score=None,
         exclude_title_keywords=None,
         experience_level=None,
+        loop=False,
+        loop_interval_minutes=20,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -689,3 +710,51 @@ def test_run_still_marks_applied_when_rate_limiter_raises_after_a_real_submissio
     # The loop must have stopped cleanly after job2 rather than crashing -
     # job3 was never reached.
     assert tracker.get_job("job3") is None
+
+
+def test_loop_runs_multiple_cycles_and_stops_once_the_daily_cap_is_reached(tmp_path, monkeypatch):
+    """--loop must keep re-searching (picking up newly-posted jobs each
+    cycle, via search_calls growing) rather than stopping after the first
+    batch like a plain run does - but it's still bounded by the real daily
+    application cap, not truly infinite.
+    """
+    provider = FakeProvider()
+    adapter = LoopFakeAdapter(page=None)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    settings = make_settings(tmp_path, daily_application_cap=2)
+    cmd_run(settings, make_args(loop=True, loop_interval_minutes=7, max_apps=1))
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied("loop-job-1") is True
+    assert tracker.has_applied("loop-job-2") is True
+    # A third cycle never happened - the cap was reached after cycle 2.
+    assert adapter.search_calls == 2
+    assert tracker.get_job("loop-job-3") is None
+    # Slept once, between cycle 1 and cycle 2 - not before cycle 1, and not
+    # again after cycle 2 since the cap check stops the loop first.
+    assert sleep_calls == [7 * 60]
+
+
+def test_loop_stops_cleanly_on_keyboard_interrupt(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    adapter = LoopFakeAdapter(page=None)
+
+    def raise_interrupt(seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", raise_interrupt)
+
+    settings = make_settings(tmp_path, daily_application_cap=100)
+    # Must not raise - a Ctrl+C mid-loop is a normal, expected way to stop.
+    cmd_run(settings, make_args(loop=True, max_apps=1))
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied("loop-job-1") is True

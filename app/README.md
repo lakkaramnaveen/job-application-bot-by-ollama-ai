@@ -114,6 +114,19 @@ Other useful flags on `run`:
   results and skips postings already marked "Applied").
 - `--headless` - run without a visible browser window, for unattended runs
   after you've verified the flow with `--dry-run`.
+- `--loop` - a plain run stops after one search batch (`--search-pool`
+  postings) or `--max-apps` successful applications, whichever comes first -
+  fine for a quick check, but it means the run ends long before the day's
+  application cap does, and never sees a job posted later in the day.
+  `--loop` instead keeps re-searching and applying in cycles (every
+  `--loop-interval-minutes`, default 20) until today's `DAILY_APPLICATION_CAP`
+  is reached or you stop it with Ctrl+C - `--max-apps` then caps applications
+  *per cycle*, not for the whole day. Reuses the same browser session across
+  cycles rather than reopening Chromium each time.
+  ```bash
+  job-bot run --keywords "Full Stack Engineer" --location "United States" \
+    --loop --loop-interval-minutes 20 --max-apps 5 --yes-i-understand-the-risk
+  ```
 
 **Getting better-quality matches** - three flags (each also settable as a
 persistent default in `.env` - see `.env.example`), applied in this order:
