@@ -58,6 +58,42 @@ def test_invalid_json_raises_helpful_error():
 
 
 @respx.mock
+def test_retries_once_after_truncated_json_then_succeeds():
+    """Real failure this guards against: qwen3:30b cut a CoverLetter
+    response off mid-string with no structural cause (well under any
+    context/output limit) - seen live. A bare retry of the same request
+    resolved it, so generate_structured() must retry instead of failing the
+    whole application prep on one flaky generation.
+    """
+    provider = make_provider()
+    bad_payload = {"message": {"role": "assistant", "content": '{"body": "Dear hiring team, I am'}}
+    good_content = '{"body": "Dear hiring team, I am excited to apply."}'
+    good_payload = {"message": {"role": "assistant", "content": good_content}}
+    route = respx.post(f"{BASE_URL}/api/chat").mock(
+        side_effect=[httpx.Response(200, json=bad_payload), httpx.Response(200, json=good_payload)]
+    )
+
+    from job_bot.models.schemas import CoverLetter
+
+    result = provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
+
+    assert result.body == "Dear hiring team, I am excited to apply."
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_gives_up_after_max_attempts_of_truncated_json():
+    provider = make_provider()
+    payload = {"message": {"role": "assistant", "content": "not json at all"}}
+    route = respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(200, json=payload))
+
+    with pytest.raises(OllamaProviderError, match="after 3 attempts"):
+        provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+    assert route.call_count == 3
+
+
+@respx.mock
 def test_request_uses_json_schema_format():
     provider = make_provider()
     content = (
