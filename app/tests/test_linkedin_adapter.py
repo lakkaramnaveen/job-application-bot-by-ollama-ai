@@ -45,6 +45,9 @@ SUBMIT_BUTTON_TEXT_ONLY_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_submit_button_text_only.html"
 )
 NO_PROGRESS_BUTTON_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_no_progress_button.html"
+ARIA_REQUIRED_TEXT_FIELD_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_aria_required_text_field.html"
+)
 
 
 @pytest.fixture
@@ -180,6 +183,33 @@ def test_unanswered_required_field_fails_fast_with_a_specific_message(playwright
     # Failed on the first pass through the loop - the unanswerable question
     # was asked once, not up to max_steps (20) times.
     assert questions_asked.count("How many years with any two of Golang, Java, Node.js, or Python?") == 1
+
+
+def test_unanswered_aria_required_text_field_fails_fast_instead_of_submitting_incomplete(playwright_page):
+    """Real bug this guards against: _first_unanswered_required_text_field_
+    label() checked only the native `required` attribute, not
+    aria-required="true" - unlike its radio/select counterpart,
+    _first_unanswered_required_choice_label(), which already checked both
+    via _is_marked_required(). A text field required only via aria-required
+    was therefore invisible to this check entirely: on this fixture (Submit
+    reachable on the same step, no other required field to catch it first),
+    fill_and_submit() found and clicked Submit anyway with the field still
+    empty - confirmed live before this fix, `dry_run=True` still returned
+    False (reached Submit) instead of raising.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{ARIA_REQUIRED_TEXT_FIELD_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    with pytest.raises(RuntimeError, match="Desired salary"):
+        adapter.fill_and_submit(
+            posting,
+            answer_question=lambda label: "",  # can't answer - field stays empty
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
 
 
 def test_answering_every_required_field_still_completes_normally(playwright_page):

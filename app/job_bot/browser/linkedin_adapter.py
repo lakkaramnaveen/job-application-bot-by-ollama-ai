@@ -572,9 +572,20 @@ class LinkedInAdapter(JobBoardAdapter):
         _select_best_radio()'s docstring) - this only targets the case
         that's cheap and reliable to detect (a plain empty required value)
         and where the caller can say something more specific than "stuck".
+
+        Checks required via _is_marked_required() (both the `required`
+        attribute and `aria-required="true"`), not a bare `required`
+        attribute check - real bug this guards against: a text field
+        marked required only via aria-required="true" was invisible to
+        this check entirely, so it was never flagged as unanswered and
+        fill_and_submit()'s loop went on to find and click Submit anyway,
+        the exact "submit an incomplete form and wrongly record it as
+        applied" failure mode this whole check exists to prevent (see
+        _raise_if_unanswered_required_field()'s docstring) - confirmed
+        live before this fix.
         """
         for text_input in dialog.locator('input[type="text"], input[type="number"], textarea').all():
-            if text_input.get_attribute("required") is None:
+            if not self._is_marked_required(text_input):
                 continue
             if (text_input.input_value() or "").strip():
                 continue
