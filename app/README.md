@@ -443,7 +443,12 @@ build step, no separate frontend, nothing to deploy. Shows title, company, fit
 score, status (color-coded), and applied date for every job `job-bot run` has
 seen, and lets you:
 
-- **Search** by title or company, and **filter** by status.
+- **Click a status pill** (e.g. "Interviewing 3") above the table to filter to
+  it instantly - the pill counts update live as statuses change, and only
+  scope to whichever statuses currently have a match (plus whatever's
+  selected, so you can always click back off it).
+- **Search** by title or company, and **filter** by status (the pills and the
+  status dropdown stay in sync either way).
 - **Sort** by newest/oldest, recently applied, fit score, company, or title.
 - **Update a job's status inline** from the row - no need to drop to
   `job-bot status <job_id> <status>` for a quick correction.
@@ -452,7 +457,10 @@ seen, and lets you:
 
 The dashboard has no login (it's a local tool over your own data), so the one
 state-changing endpoint (the inline status update) only accepts same-origin
-requests - see `job_bot/dashboard/server.py`'s module docstring.
+requests - see `job_bot/dashboard/server.py`'s module docstring. It follows
+your OS/browser's light or dark theme automatically, and the table scrolls
+independently of the page on a narrow window so the status/Q&A controls on
+the right stay reachable.
 
 ## Gmail sync
 
