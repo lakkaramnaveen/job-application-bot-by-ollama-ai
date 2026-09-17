@@ -15,8 +15,8 @@ from job_bot.cli import LOGIN_WAIT_TIMEOUT_MS, _login_finished, cmd_login
 from job_bot.config import Settings
 
 
-def make_settings(tmp_path) -> Settings:
-    return Settings(
+def make_settings(tmp_path, **overrides) -> Settings:
+    defaults = dict(
         _env_file=None,
         llm_provider="claude",
         anthropic_api_key="sk-ant-fake",
@@ -29,6 +29,8 @@ def make_settings(tmp_path) -> Settings:
         failed_applications_log_path=tmp_path / "failed_applications.log",
         applications_dir=tmp_path / "applications",
     )
+    defaults.update(overrides)
+    return Settings(**defaults)
 
 
 class FakePage:
@@ -99,6 +101,22 @@ def test_login_reports_cleanly_when_the_browser_closes_mid_wait(tmp_path, monkey
 
     out = capsys.readouterr().out
     assert "Browser closed before login finished" in out
+    assert "Session saved to" not in out
+
+
+def test_login_with_cdp_url_reports_reusing_existing_session(tmp_path, monkeypatch, capsys):
+    """With browser_cdp_url set, job-bot attaches to an already-running
+    Chrome rather than its own isolated profile - there's nothing to "save"
+    in that case, so the final message must say so distinctly from the
+    normal profile-saved message.
+    """
+    page = FakePage()
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session_factory(page))
+
+    cmd_login(make_settings(tmp_path, browser_cdp_url="http://localhost:9222"))
+
+    out = capsys.readouterr().out
+    assert "will reuse this same Chrome session" in out
     assert "Session saved to" not in out
 
 

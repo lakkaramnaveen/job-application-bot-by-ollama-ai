@@ -76,6 +76,17 @@ def test_render_rows_html_handles_empty_or_malformed_url_gracefully():
     assert "<a " not in html
 
 
+def test_render_rows_html_handles_a_url_urlparse_itself_rejects():
+    """Most malformed strings just parse to an empty/unrecognized scheme
+    (see the test above), but a few (a malformed IPv6 host, e.g.) make
+    urlparse() itself raise ValueError rather than returning a harmless
+    empty scheme - still must render as plain text, not a broken page.
+    """
+    html = render_rows_html([make_job(title="Click me", url="http://[::1")])
+    assert "<a " not in html
+    assert "Click me" in html
+
+
 def test_render_rows_html_handles_missing_score_and_applied_at():
     job = make_job(match_score=None, applied_at=None)
     html = render_rows_html([job])

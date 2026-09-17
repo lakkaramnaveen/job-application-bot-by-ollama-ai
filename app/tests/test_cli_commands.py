@@ -13,18 +13,58 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from job_bot.cli import (
+    EXPECTED_ERRORS,
+    _apply_provider_overrides,
+    _score_bucket_label,
     cmd_blacklist,
+    cmd_dashboard,
     cmd_doctor,
     cmd_export,
+    cmd_gmail_sync,
     cmd_report,
     cmd_review_answers,
     cmd_status,
+    cmd_test_provider,
     main,
 )
 from job_bot.config import Settings
+from job_bot.llm.base import LLMProvider
+from job_bot.models.schemas import JobMatchScore
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.tracker.db import Tracker
+
+
+class FakeScoreProvider(LLMProvider):
+    """Returns a fixed passing JobMatchScore regardless of the prompt -
+    enough for cmd_test_provider, which only cares that a real call
+    round-trips and can be printed, not that the score itself is realistic.
+    """
+
+    def generate_structured(self, *, system, prompt, schema):
+        return JobMatchScore(
+            eligibility="pass",
+            technical_fit=90,
+            experience_fit=90,
+            culture_fit=90,
+            score=90,
+            reasoning="Strong match",
+            should_apply=True,
+            missing_qualifications=[],
+        )
+
+
+class FakeGmailClientForCli:
+    """Stands in for GmailClient in cmd_gmail_sync tests - cmd_gmail_sync
+    constructs GmailClient itself from settings paths, so the class (not an
+    instance) is what test_cli_commands.py's tests monkeypatch.
+    """
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def search_messages(self, query, max_results=50):
+        return []
 
 
 def make_settings(tmp_path, **overrides) -> Settings:
@@ -172,6 +212,67 @@ def test_report_by_score_breaks_down_outcomes_by_score_bucket(tmp_path, capsys):
     assert "0-59" in out
     # job3 has no match_score and must not appear in the breakdown at all.
     assert out.count("job3") == 0
+
+
+def test_report_by_score_prints_nothing_when_no_job_has_been_scored(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")  # no match_score yet
+
+    cmd_report(settings, report_args(by_score=True))
+
+    assert "Outcomes by match score:" not in capsys.readouterr().out
+
+
+def test_score_bucket_label_falls_back_for_an_out_of_range_score():
+    """SCORE_BUCKETS spans 0-100 inclusive, which every real LLM-produced
+    score should fall within - this is the fallback for a score outside
+    that range slipping through anyway, so a stray value still renders as
+    "?" instead of silently vanishing from every bucket.
+    """
+    assert _score_bucket_label(-5) == "?"
+    assert _score_bucket_label(150) == "?"
+
+
+# --- _apply_provider_overrides ---
+
+
+def test_apply_provider_overrides_switches_provider(tmp_path):
+    settings = make_settings(tmp_path)
+    args = argparse.Namespace(provider="ollama", model=None)
+
+    _apply_provider_overrides(settings, args)
+
+    assert settings.llm_provider == "ollama"
+
+
+def test_apply_provider_overrides_sets_claude_model_when_provider_stays_claude(tmp_path):
+    settings = make_settings(tmp_path)
+    args = argparse.Namespace(provider=None, model="claude-opus-5")
+
+    _apply_provider_overrides(settings, args)
+
+    assert settings.claude_model == "claude-opus-5"
+    assert settings.llm_provider == "claude"
+
+
+def test_apply_provider_overrides_sets_ollama_model_when_switching_to_ollama(tmp_path):
+    settings = make_settings(tmp_path)
+    args = argparse.Namespace(provider="ollama", model="deepseek-r1:8b")
+
+    _apply_provider_overrides(settings, args)
+
+    assert settings.ollama_model == "deepseek-r1:8b"
+
+
+def test_apply_provider_overrides_leaves_settings_unchanged_when_neither_is_given(tmp_path):
+    settings = make_settings(tmp_path, llm_provider="claude", claude_model="claude-opus-5")
+    args = argparse.Namespace(provider=None, model=None)
+
+    _apply_provider_overrides(settings, args)
+
+    assert settings.llm_provider == "claude"
+    assert settings.claude_model == "claude-opus-5"
 
 
 def test_report_by_score_omitted_without_the_flag(tmp_path, capsys):
@@ -418,3 +519,152 @@ def test_main_stops_cleanly_on_keyboard_interrupt(tmp_path, monkeypatch, capsys)
 
     assert exc_info.value.code == 1
     assert "Stopped." in capsys.readouterr().out
+
+
+def test_main_reports_an_expected_error_and_exits_1(tmp_path, monkeypatch, capsys):
+    """EXPECTED_ERRORS (ClaudeProviderError, ResumeParseError, ...) are
+    user-facing configuration/input problems, not bugs - main() must turn
+    them into a clean "Error: ..." line and exit(1), never a traceback.
+    """
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("job_bot.cli.configure_logging", lambda: None)
+    monkeypatch.setattr("sys.argv", ["job-bot", "doctor"])
+    monkeypatch.setattr(
+        "job_bot.cli.cmd_doctor", lambda settings: (_ for _ in ()).throw(EXPECTED_ERRORS[0]("bad config"))
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1
+    assert "Error: bad config" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv, cmd_name",
+    [
+        (["job-bot", "login"], "cmd_login"),
+        (["job-bot", "run"], "cmd_run"),
+        (["job-bot", "test-provider"], "cmd_test_provider"),
+        (["job-bot", "doctor"], "cmd_doctor"),
+        (["job-bot", "status", "job1", "applied"], "cmd_status"),
+        (["job-bot", "review-answers"], "cmd_review_answers"),
+        (["job-bot", "report"], "cmd_report"),
+        (["job-bot", "export"], "cmd_export"),
+        (["job-bot", "gmail-sync"], "cmd_gmail_sync"),
+        (["job-bot", "dashboard"], "cmd_dashboard"),
+        (["job-bot", "blacklist", "list"], "cmd_blacklist"),
+    ],
+)
+def test_main_dispatches_each_subcommand_to_its_own_handler(tmp_path, monkeypatch, argv, cmd_name):
+    """main()'s dispatch is a long if/elif chain matched on args.command -
+    every individual cmd_* function has its own tests that call it
+    directly, bypassing this chain entirely, so nothing else in this suite
+    would catch a copy-paste mistake here (matching the wrong branch, or a
+    command silently falling through to no handler at all).
+    """
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("job_bot.cli.configure_logging", lambda: None)
+    monkeypatch.setattr("sys.argv", argv)
+
+    calls = []
+    monkeypatch.setattr(f"job_bot.cli.{cmd_name}", lambda *a, **kw: calls.append((a, kw)))
+
+    main()
+
+    assert len(calls) == 1
+
+
+# --- test-provider, gmail-sync, dashboard ---
+
+
+def test_test_provider_prints_provider_and_result(tmp_path, monkeypatch, capsys):
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
+
+    cmd_test_provider(settings)
+
+    out = capsys.readouterr().out
+    assert "Provider OK: claude" in out
+    assert "score=90" in out
+
+
+def test_gmail_sync_prints_scanned_count_with_no_emails(tmp_path, monkeypatch, capsys):
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
+    monkeypatch.setattr("job_bot.cli.GmailClient", FakeGmailClientForCli)
+    args = argparse.Namespace(days=None, max_emails=50, dry_run=False)
+
+    cmd_gmail_sync(settings, args)
+
+    assert "Scanned 0 email(s)." in capsys.readouterr().out
+
+
+def test_gmail_sync_prints_updates_low_confidence_and_unmatched_sections(tmp_path, monkeypatch, capsys):
+    from job_bot.integrations.gmail_sync import GmailSyncResult
+
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
+    monkeypatch.setattr("job_bot.cli.GmailClient", FakeGmailClientForCli)
+    fake_result = GmailSyncResult(
+        total_emails=5,
+        updated=[("job1", "Acme", "interviewing")],
+        unmatched_subjects=["Re: your application"],
+        skipped_low_confidence=2,
+    )
+    monkeypatch.setattr("job_bot.cli.sync_gmail", lambda *a, **kw: fake_result)
+    args = argparse.Namespace(days=None, max_emails=50, dry_run=False)
+
+    cmd_gmail_sync(settings, args)
+
+    out = capsys.readouterr().out
+    assert "Scanned 5 email(s)." in out
+    assert "Updated: Acme (job1) -> interviewing" in out
+    assert "Skipped 2 low-confidence email(s)." in out
+    assert "couldn't confidently match" in out
+    assert "Re: your application" in out
+
+
+def test_gmail_sync_dry_run_prefixes_updates_as_would_update(tmp_path, monkeypatch, capsys):
+    from job_bot.integrations.gmail_sync import GmailSyncResult
+
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
+    monkeypatch.setattr("job_bot.cli.GmailClient", FakeGmailClientForCli)
+    fake_result = GmailSyncResult(total_emails=1, updated=[("job1", "Acme", "offer")])
+    monkeypatch.setattr("job_bot.cli.sync_gmail", lambda *a, **kw: fake_result)
+    args = argparse.Namespace(days=None, max_emails=50, dry_run=True)
+
+    cmd_gmail_sync(settings, args)
+
+    assert "[dry-run] Would update: Acme (job1) -> offer" in capsys.readouterr().out
+
+
+def test_dashboard_passes_port_and_open_browser_through(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        "job_bot.cli.run_dashboard",
+        lambda db_path, port, open_browser: calls.append((db_path, port, open_browser)),
+    )
+    args = argparse.Namespace(port=9999, no_open=True)
+
+    cmd_dashboard(settings, args)
+
+    assert calls == [(settings.db_path, 9999, False)]
+
+
+def test_dashboard_falls_back_to_settings_port_when_not_given(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, dashboard_port=8765)
+    calls = []
+    monkeypatch.setattr(
+        "job_bot.cli.run_dashboard",
+        lambda db_path, port, open_browser: calls.append((db_path, port, open_browser)),
+    )
+    args = argparse.Namespace(port=None, no_open=False)
+
+    cmd_dashboard(settings, args)
+
+    assert calls == [(settings.db_path, 8765, True)]
