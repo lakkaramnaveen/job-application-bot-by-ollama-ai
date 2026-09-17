@@ -55,3 +55,15 @@ def test_validate_ready_warns_when_cap_exceeds_ceiling(tmp_path):
 
     warnings = settings.validate_ready()
     assert any("exceeds the hard ceiling" in w for w in warnings)
+
+
+def test_max_years_experience_and_require_w2_default_to_off(tmp_path):
+    """Consistent with the rest of the "Role quality" section
+    (min_match_score, exclude_title_keywords, default_experience_levels all
+    default to "no filter") - a fresh clone with no .env customization
+    shouldn't unexpectedly reject postings on either of these.
+    """
+    settings = make_settings(tmp_path)
+
+    assert settings.max_years_experience is None
+    assert settings.require_w2 is False

@@ -337,7 +337,13 @@ def _run_apply_cycle(
             audit.log("reused_score", job_id=posting.job_id, score=existing["match_score"])
             return True
 
-        match: JobMatchScore = score_job_match(provider, resume_text, description)
+        match: JobMatchScore = score_job_match(
+            provider,
+            resume_text,
+            description,
+            max_years_experience=settings.max_years_experience,
+            require_w2=settings.require_w2,
+        )
         # min_score is an extra floor on top of the model's own
         # should_apply verdict, not a replacement for it - the scorer's
         # eligibility gate (see matching/scorer.py) can still force this

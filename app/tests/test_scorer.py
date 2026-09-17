@@ -66,3 +66,34 @@ def test_eligibility_pass_or_flag_does_not_override_should_apply():
     provider = FakeProvider(make_score(eligibility="flag", should_apply=True))
     result = score_job_match(provider, resume_text="resume", job_description="job")
     assert result.should_apply is True
+
+
+def test_max_years_experience_and_w2_rules_are_omitted_by_default():
+    """Both extra eligibility rules are opt-in via explicit kwargs - a
+    caller that doesn't pass them (or any future caller that forgets to)
+    gets the original citizenship-only prompt, not a silently-changed one.
+    """
+    provider = FakeProvider()
+    score_job_match(provider, resume_text="resume", job_description="job")
+
+    system = provider.calls[0]["system"]
+    assert "Seniority" not in system
+    assert "Corp-to-Corp" not in system
+
+
+def test_max_years_experience_adds_a_seniority_eligibility_rule():
+    provider = FakeProvider()
+    score_job_match(provider, resume_text="resume", job_description="job", max_years_experience=6)
+
+    system = provider.calls[0]["system"]
+    assert "more than 6 years" in system
+    assert "entry-to-mid-level roles only" in system
+
+
+def test_require_w2_adds_an_employment_type_eligibility_rule():
+    provider = FakeProvider()
+    score_job_match(provider, resume_text="resume", job_description="job", require_w2=True)
+
+    system = provider.calls[0]["system"]
+    assert "Corp-to-Corp" in system
+    assert "1099" in system

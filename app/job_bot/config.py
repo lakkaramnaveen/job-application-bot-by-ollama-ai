@@ -72,8 +72,24 @@ class Settings(BaseSettings):
     # Comma-separated LinkedIn seniority levels (internship/entry/associate/
     # mid-senior/director/executive) to restrict search results to at the
     # source - see linkedin_adapter.py's EXPERIENCE_LEVEL_CODES for the
-    # exact values. Empty means no restriction (every level).
+    # exact values. Empty means no restriction (every level). Note LinkedIn
+    # has no separate "mid" bucket - genuine mid-level postings are commonly
+    # tagged "mid-senior" alongside actual senior ones, so excluding that
+    # bucket entirely tends to filter out real mid-level roles too;
+    # max_years_experience below is the finer-grained backstop for that.
     default_experience_levels: str = ""
+    # A posting explicitly requiring more years of professional experience
+    # than this, or explicitly titled/described as Senior/Staff/Principal/
+    # Lead/Director-or-higher, is treated as ineligible regardless of match
+    # score - see matching/scorer.py's eligibility check. None (default)
+    # disables this check entirely, matching the rest of this section's
+    # off-by-default convention.
+    max_years_experience: int | None = None
+    # A posting explicitly stated as Corp-to-Corp (C2C), 1099, or otherwise
+    # not offered as direct W2 employment is treated as ineligible too - see
+    # matching/scorer.py's eligibility check. A posting silent on employment
+    # type is not excluded by this. False (default) disables the check.
+    require_w2: bool = False
 
     # EXPERIMENTAL, off by default - see README.md's "Applying on company
     # websites (experimental)" section and browser/external_apply_adapter.py's

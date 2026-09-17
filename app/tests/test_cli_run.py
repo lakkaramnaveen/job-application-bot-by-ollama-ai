@@ -44,6 +44,7 @@ class FakeProvider(LLMProvider):
         self.schemas_requested: list[type] = []
         self.tailor_resume_prompts: list[str] = []
         self.application_answer_prompts: list[str] = []
+        self.job_match_system_prompts: list[str] = []
         self._application_answer = application_answer or ApplicationAnswer(
             answer="5 years", confidence=0.9, based_on_resume=True
         )
@@ -55,6 +56,7 @@ class FakeProvider(LLMProvider):
         if schema is ApplicationAnswer:
             self.application_answer_prompts.append(prompt)
         if schema is JobMatchScore:
+            self.job_match_system_prompts.append(system)
             return JobMatchScore(
                 eligibility="pass",
                 technical_fit=90,
@@ -222,6 +224,26 @@ def test_run_generates_and_persists_tailored_resume_and_cover_letter(tmp_path, m
     assert (job_dir / "tailored_resume.txt").exists()
     assert "Tailored summary for Acme" in (job_dir / "tailored_resume.txt").read_text()
     assert (job_dir / "cover_letter.txt").read_text() == "Dear Acme, I would love to join your team."
+
+
+def test_run_passes_max_years_experience_and_require_w2_to_the_scorer(tmp_path, monkeypatch):
+    """cmd_run must wire Settings.max_years_experience/require_w2 through to
+    score_job_match() - the eligibility check itself is scorer.py's
+    responsibility (see test_scorer.py), this only guards the wiring gap
+    that would otherwise silently leave the setting inert.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, max_years_experience=6, require_w2=True)
+    cmd_run(settings, make_args())
+
+    assert len(provider.job_match_system_prompts) == 1
+    system = provider.job_match_system_prompts[0]
+    assert "more than 6 years" in system
+    assert "Corp-to-Corp" in system
 
 
 def test_run_records_the_resume_generation_for_future_reuse(tmp_path, monkeypatch):

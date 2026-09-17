@@ -229,6 +229,31 @@ job-bot run --keywords "Full Stack Engineer" --location "United States" \
   --exclude-title-keywords "forward deployed,sales engineer" --dry-run
 ```
 
+**Targeting entry-to-mid-level, W2-only roles** - two more `.env`-only
+settings (see `.env.example`), enforced as part of scoring rather than as a
+pre-filter, since LinkedIn's own search facets can't express either of
+these precisely:
+- `MAX_YEARS_EXPERIENCE=6` - the model reads each posting's actual text and
+  rejects it outright (regardless of score) if it's explicitly titled/
+  described as Senior/Staff/Principal/Lead/Director-or-higher, or explicitly
+  requires more years of experience than this. LinkedIn's own seniority
+  facet has no separate "mid" bucket - it bundles real mid-level postings in
+  with senior ones under "mid-senior" - so `DEFAULT_EXPERIENCE_LEVELS=
+  entry,associate,mid-senior` (rather than excluding mid-senior outright)
+  plus this setting is the combination that actually targets entry-to-mid
+  without also losing genuine mid-level roles LinkedIn happened to bucket
+  the same way as senior ones.
+- `REQUIRE_W2=true` - rejects a posting outright if it explicitly states
+  Corp-to-Corp (C2C), 1099, or otherwise not offered as direct W2
+  employment. A posting silent on employment type is not affected.
+
+Both are assessed by the model reading the actual posting text (the same
+way the always-on citizenship/clearance check already works), not by a
+keyword search on the description - the language here is too varied and
+context-dependent ("5+ years" in a "nice to have" bullet vs. a hard
+requirement, or "no C2C" being a *good* signal despite containing "C2C")
+for a substring match to get right without rejecting postings it shouldn't.
+
 Switch providers per run without editing `.env`:
 ```bash
 job-bot run --provider ollama --model deepseek-r1:8b --dry-run
