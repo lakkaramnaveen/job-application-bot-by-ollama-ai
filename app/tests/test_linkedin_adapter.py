@@ -41,6 +41,10 @@ REQUIRED_RADIO_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_f
 REQUIRED_SELECT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_select.html"
 MIXED_APPLY_TYPES_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_mixed_apply_types.html"
 EXTERNAL_APPLY_POSTING_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "job_posting_external_apply.html"
+SUBMIT_BUTTON_TEXT_ONLY_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_submit_button_text_only.html"
+)
+NO_PROGRESS_BUTTON_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_no_progress_button.html"
 
 
 @pytest.fixture
@@ -195,6 +199,55 @@ def test_answering_every_required_field_still_completes_normally(playwright_page
     assert submitted is False
     assert playwright_page.locator("#years-python").input_value() == "5"
     assert playwright_page.locator("#backend-combo").input_value() == "5"
+
+
+def test_submit_button_matched_by_text_when_aria_label_is_missing(playwright_page):
+    """"Stuck on a step with no Next/Review/Submit button found" was, by a
+    wide margin, this adapter's single most common real-world failure - a
+    real audit log showed ~124 occurrences of it against 80 successful
+    applications. A button whose aria-label doesn't exactly match "Submit
+    application" (an A/B-tested LinkedIn rollout, a differently-generated
+    form) is a plausible cause the old aria-label-only selector could never
+    catch - SUBMIT_BUTTON_SELECTORS' text-based fallback covers exactly
+    this: a submit button with no aria-label at all, just visible text.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{SUBMIT_BUTTON_TEXT_ONLY_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "5",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=False,
+    )
+
+    assert submitted is True
+
+
+def test_stuck_error_names_the_buttons_that_were_actually_on_screen(playwright_page):
+    """The generic "stuck" message used to give zero lead on why - every
+    occurrence looked identical in failed_applications.log regardless of
+    cause. This checks the diagnostic detail added alongside the fallback
+    selectors above actually surfaces whatever button text was visible
+    (here, an unrelated "Save and exit" button, no real progress control at
+    all), so a future occurrence isn't another unexplained black box.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{NO_PROGRESS_BUTTON_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    with pytest.raises(RuntimeError, match="Save and exit"):
+        adapter.fill_and_submit(
+            posting,
+            answer_question=lambda label: "5",
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
 
 
 def test_unanswered_required_radio_group_fails_fast_with_a_specific_message(playwright_page):

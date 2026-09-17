@@ -37,9 +37,6 @@ SELECTORS = {
     # any given account/job/rollout.
     "easy_apply_button": 'button:has-text("Easy Apply"), a:has-text("Easy Apply")',
     "dialog": 'div[role="dialog"]',
-    "next_button": 'button[aria-label*="next step" i], button[aria-label*="Continue" i]',
-    "review_button": 'button[aria-label*="Review" i]',
-    "submit_button": 'button[aria-label*="Submit application" i]',
     "dismiss_safety_reminder": 'button[aria-label*="Dismiss" i]',
     "job_cards": "div[data-job-id]",
     "applied_badge": "text=/^\\s*Applied\\s*$/i",
@@ -54,6 +51,35 @@ SELECTORS = {
     # page.expect_popup() instead of a plain click + wait.
     "external_apply_button": 'button[aria-label*="on company website" i]',
 }
+
+# Priority-ordered fallback chains for the three progress-button roles in
+# fill_and_submit()'s loop: LinkedIn's aria-label (confirmed against a live
+# posting) is tried first; a looser visible-text match is a fallback for a
+# button that turns out not to carry that exact aria-label (an A/B-tested
+# rollout, a differently-generated form, ...) - "stuck on a step with no
+# Next/Review/Submit button found" was, by a wide margin, this adapter's
+# single most common real-world failure, and a button simply not matching
+# by aria-label alone is the most plausible cause available without a
+# reproduction to confirm against. Checked as separate, ordered locators
+# rather than one combined comma-selector + .first: see
+# external_apply_adapter.py's _find_submit_button() docstring for why that
+# pattern can silently pick the wrong element when more than one candidate
+# is present, not necessarily in the order written.
+NEXT_BUTTON_SELECTORS = (
+    'button[aria-label*="next step" i]',
+    'button[aria-label*="Continue" i]',
+    'button:has-text("Next")',
+    'button:has-text("Continue")',
+)
+REVIEW_BUTTON_SELECTORS = (
+    'button[aria-label*="Review" i]',
+    'button:has-text("Review")',
+)
+SUBMIT_BUTTON_SELECTORS = (
+    'button[aria-label*="Submit application" i]',
+    'button:has-text("Submit application")',
+    'button:has-text("Submit")',
+)
 
 # Small, human-scale pauses between UI actions - not an attempt to evade
 # detection, just to let LinkedIn's client-side rendering keep up so we don't
@@ -322,18 +348,22 @@ class LinkedInAdapter(JobBoardAdapter):
             self._fill_visible_fields(dialog, answer_question, cover_letter_text)
             self._raise_if_unanswered_required_field(dialog, posting)
 
-            submit_btn = dialog.locator(SELECTORS["submit_button"])
-            if submit_btn.count() > 0:
+            submit_btn = self._find_button(dialog, SUBMIT_BUTTON_SELECTORS)
+            if submit_btn is not None:
                 if dry_run:
                     return False
-                submit_btn.first.click()
+                submit_btn.click()
                 self._dismiss_safety_reminder_if_present()
                 return True
 
-            if self._click_if_present(dialog, SELECTORS["review_button"]):
+            review_btn = self._find_button(dialog, REVIEW_BUTTON_SELECTORS)
+            if review_btn is not None:
+                review_btn.click()
                 time.sleep(ACTION_DELAY_SECONDS)
                 continue
-            if self._click_if_present(dialog, SELECTORS["next_button"]):
+            next_btn = self._find_button(dialog, NEXT_BUTTON_SELECTORS)
+            if next_btn is not None:
+                next_btn.click()
                 time.sleep(ACTION_DELAY_SECONDS)
                 continue
 
@@ -342,9 +372,20 @@ class LinkedInAdapter(JobBoardAdapter):
             # than guess.
             break
 
+        # Diagnostic, not just "stuck": lists whatever button text actually
+        # was on screen at the point of giving up. This ends up in
+        # failed_applications.log via cli.py's apply_error handling
+        # (audit.log(..., error=str(e))) - without it, every occurrence of
+        # this error looked identical regardless of cause, giving no lead on
+        # whether NEXT_BUTTON_SELECTORS/REVIEW_BUTTON_SELECTORS/
+        # SUBMIT_BUTTON_SELECTORS above are missing a real button label or
+        # the form is stuck for some other reason (e.g. a field type this
+        # adapter doesn't fill at all).
+        visible_button_texts = [t.strip() for t in dialog.locator("button:visible").all_inner_texts()]
+        buttons_seen = ", ".join(repr(t) for t in visible_button_texts if t) or "none"
         raise RuntimeError(
-            f"Could not complete the Easy Apply form for job {posting.job_id} "
-            "(stuck on a step with no Next/Review/Submit button found)."
+            f"Could not complete the Easy Apply form for job {posting.job_id} (stuck on a step with "
+            f"no Next/Review/Submit button found - buttons visible on this step: {buttons_seen})."
         )
 
     def _raise_if_unanswered_required_field(self, dialog: Locator, posting: JobPosting) -> None:
@@ -673,12 +714,19 @@ class LinkedInAdapter(JobBoardAdapter):
                 return i
         return None
 
-    def _click_if_present(self, dialog: Locator, selector: str) -> bool:
-        loc = dialog.locator(selector)
-        if loc.count() > 0:
-            loc.first.click()
-            return True
-        return False
+    @staticmethod
+    def _find_button(dialog: Locator, selectors: tuple[str, ...]) -> Locator | None:
+        """Tries each selector in order, returning the first that matches
+        anything - never a combined comma-selector + .first, which matches
+        in DOCUMENT order across every alternative rather than the order
+        written (see NEXT_BUTTON_SELECTORS/REVIEW_BUTTON_SELECTORS/
+        SUBMIT_BUTTON_SELECTORS' module-level comment).
+        """
+        for selector in selectors:
+            candidate = dialog.locator(selector)
+            if candidate.count() > 0:
+                return candidate.first
+        return None
 
     def _dismiss_safety_reminder_if_present(self) -> None:
         try:
