@@ -175,8 +175,6 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     answer_gaps = AnswerGapStore(settings.answer_gaps_path)
     tracker = Tracker(settings.db_path)
 
-    resume_text = resume_store.resume_text()
-
     min_score = args.min_score if args.min_score is not None else settings.min_match_score
     raw_exclude = (
         args.exclude_title_keywords
@@ -205,12 +203,17 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         adapter = LinkedInAdapter(page)
 
         def run_one_cycle() -> tuple[int, int]:
+            # Re-fetched every cycle, not captured once before the loop:
+            # --loop can run for many hours, and ResumeStore.resume_text()
+            # re-parses only if the file's mtime actually changed since the
+            # last cycle, so this stays cheap while still picking up a
+            # resume edited/re-exported mid-loop on the very next cycle.
             return _run_apply_cycle(
                 adapter=adapter,
                 page=page,
                 provider=provider,
                 resume_store=resume_store,
-                resume_text=resume_text,
+                resume_text=resume_store.resume_text(),
                 tracker=tracker,
                 rate_limiter=rate_limiter,
                 blacklist=blacklist,
