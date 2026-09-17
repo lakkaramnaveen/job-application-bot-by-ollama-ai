@@ -94,6 +94,75 @@ def test_gives_up_after_max_attempts_of_truncated_json():
 
 
 @respx.mock
+def test_timeout_retries_then_succeeds():
+    """A slow/stuck generation (httpx.TimeoutException, distinct from
+    ConnectError - the server is reachable but didn't respond in time)
+    should be retried like any other transient failure, not raised
+    immediately - Ollama under local GPU contention can legitimately be
+    slow on one attempt and fine on the next.
+    """
+    provider = make_provider()
+    content = (
+        '{"eligibility": "pass", "technical_fit": 75, "experience_fit": 75, "culture_fit": 75, '
+        '"score": 75, "reasoning": "decent", "should_apply": true, "missing_qualifications": []}'
+    )
+    good_payload = {"message": {"role": "assistant", "content": content}}
+    route = respx.post(f"{BASE_URL}/api/chat").mock(
+        side_effect=[httpx.TimeoutException("timed out"), httpx.Response(200, json=good_payload)]
+    )
+
+    result = provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+    assert result.score == 75
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_non_404_error_status_retries_then_succeeds():
+    """A 5xx (or any non-200, non-404) response is a transient server-side
+    failure, not "model isn't pulled" (404, raised immediately) or bad
+    output (retried after a 200) - it gets the same retry treatment.
+    """
+    provider = make_provider()
+    content = (
+        '{"eligibility": "pass", "technical_fit": 75, "experience_fit": 75, "culture_fit": 75, '
+        '"score": 75, "reasoning": "decent", "should_apply": true, "missing_qualifications": []}'
+    )
+    good_payload = {"message": {"role": "assistant", "content": content}}
+    route = respx.post(f"{BASE_URL}/api/chat").mock(
+        side_effect=[httpx.Response(500, text="internal error"), httpx.Response(200, json=good_payload)]
+    )
+
+    result = provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+    assert result.score == 75
+    assert route.call_count == 2
+
+
+@respx.mock
+def test_response_body_missing_message_content_retries_then_succeeds():
+    """A 200 whose body doesn't even have the expected {"message":
+    {"content": ...}} shape (an Ollama API change, or a malformed
+    streaming remnant) must be retried like a bad completion, not crash
+    with an unhandled KeyError.
+    """
+    provider = make_provider()
+    content = (
+        '{"eligibility": "pass", "technical_fit": 75, "experience_fit": 75, "culture_fit": 75, '
+        '"score": 75, "reasoning": "decent", "should_apply": true, "missing_qualifications": []}'
+    )
+    good_payload = {"message": {"role": "assistant", "content": content}}
+    route = respx.post(f"{BASE_URL}/api/chat").mock(
+        side_effect=[httpx.Response(200, json={"unexpected": "shape"}), httpx.Response(200, json=good_payload)]
+    )
+
+    result = provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+    assert result.score == 75
+    assert route.call_count == 2
+
+
+@respx.mock
 def test_request_uses_json_schema_format():
     provider = make_provider()
     content = (
