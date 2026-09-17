@@ -211,3 +211,43 @@ def test_sync_gmail_query_includes_days_window(tmp_path):
     sync_gmail(provider, gmail, tracker, days=30)
 
     assert "newer_than:30d" in gmail.last_query
+
+
+def test_sync_gmail_is_a_no_op_when_the_status_would_not_actually_change(tmp_path):
+    """A job already "interviewing" getting another interview_invite email
+    (e.g. scheduling a second round) must not re-record the same status as
+    a fresh "update" - _should_update()'s same-status branch.
+    """
+    tracker = make_tracker_with_job(tmp_path, status="interviewing")
+    gmail = FakeGmailClient([make_email()])
+    provider = QueueProvider([make_classification(category="interview_invite")])
+
+    result = sync_gmail(provider, gmail, tracker)
+
+    assert result.updated == []
+    assert tracker.get_job("job1")["status"] == "interviewing"
+
+
+def test_sync_gmail_skips_a_category_with_no_mapped_status(tmp_path):
+    """Defense in depth: CATEGORY_TO_STATUS covers every non-"other"
+    EmailCategory value today, so this path isn't reachable through a real,
+    schema-validated classification - but if EmailCategory ever grows a new
+    category without a matching CATEGORY_TO_STATUS entry, sync_gmail must
+    skip it rather than crash. model_construct() bypasses Pydantic's Literal
+    validation to simulate exactly that future-mismatch scenario.
+    """
+    tracker = make_tracker_with_job(tmp_path, status="applied")
+    gmail = FakeGmailClient([make_email()])
+    unmapped = EmailClassification.model_construct(
+        is_job_related=True,
+        category="some_future_category",
+        company_guess="Acme",
+        role_guess="Engineer",
+        confidence=0.9,
+    )
+    provider = QueueProvider([unmapped])
+
+    result = sync_gmail(provider, gmail, tracker)
+
+    assert result.updated == []
+    assert tracker.get_job("job1")["status"] == "applied"
