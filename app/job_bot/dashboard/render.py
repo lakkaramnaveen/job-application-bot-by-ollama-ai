@@ -268,6 +268,10 @@ def render_page_html(
               border: 1px solid var(--border); background: var(--surface); color: var(--fg);
               cursor: pointer; }}
   .qa-button:hover {{ background: var(--header-bg); }}
+  .export-link {{ font-size: 0.85rem; padding: 0.4rem 0.75rem; border-radius: 6px;
+              border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+              text-decoration: none; margin-left: auto; }}
+  .export-link:hover {{ background: var(--header-bg); }}
   a {{ color: var(--link); text-decoration: none; }}
   a:hover {{ text-decoration: underline; }}
   .pager {{ display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem;
@@ -303,6 +307,7 @@ def render_page_html(
   <select id="sort" name="sort">
     {_options_html(SORT_OPTIONS, sort_value)}
   </select>
+  <a id="exportCsv" class="export-link" href="/api/export.csv">Export CSV</a>
 </form>
 
 <div class="table-wrap">
@@ -354,6 +359,7 @@ function buildQuery() {{
 
 async function refresh() {{
   const query = buildQuery();
+  document.getElementById('exportCsv').href = '/api/export.csv?' + query;
   try {{
     const res = await fetch('/api/rows?' + query);
     if (!res.ok) return;

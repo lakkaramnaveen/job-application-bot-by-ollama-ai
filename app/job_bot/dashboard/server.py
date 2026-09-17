@@ -10,6 +10,7 @@ Content-Type) are what stand in for auth here. See _is_same_origin and
 cmd_status_update below.
 """
 
+import io
 import json
 import webbrowser
 from http import HTTPStatus
@@ -25,7 +26,7 @@ from job_bot.dashboard.render import (
     render_rows_html,
     render_stats_html,
 )
-from job_bot.tracker.db import InvalidSort, InvalidStatus, Tracker
+from job_bot.tracker.db import InvalidSort, InvalidStatus, Tracker, write_export_csv
 
 DASHBOARD_HOST = "127.0.0.1"
 
@@ -114,6 +115,8 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
                 self._handle_rows(tracker, parse_qs(parsed.query))
             elif parsed.path == "/api/stats":
                 self._handle_stats(tracker, parse_qs(parsed.query))
+            elif parsed.path == "/api/export.csv":
+                self._handle_export_csv(tracker, parse_qs(parsed.query))
             elif parsed.path == "/api/jobs":
                 jobs = tracker.list_jobs()
                 self._send(200, "application/json", json.dumps(jobs, default=str).encode("utf-8"))
@@ -165,6 +168,26 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
             counts = tracker.status_counts(search=params["search"])
             body = render_stats_html(counts, params["status"] or "").encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_export_csv(self, tracker: Tracker, query: dict[str, list[str]]) -> None:
+            """Same CSV shape as `job-bot export` (see tracker/db.py's
+            write_export_csv, shared by both) - respects the dashboard's
+            current status filter and search box, but always exports every
+            matching job, not just the currently-visible page.
+            """
+            params = _parse_list_params(query)
+            jobs = tracker.list_jobs(
+                status=params["status"], search=params["search"], sort="first_seen_at", direction="asc"
+            )
+            buffer = io.StringIO()
+            write_export_csv(buffer, jobs)
+            body = buffer.getvalue().encode("utf-8")
+            self._send(
+                200,
+                "text/csv; charset=utf-8",
+                body,
+                headers={"Content-Disposition": 'attachment; filename="job_bot_export.csv"'},
+            )
 
         def _handle_rows(self, tracker: Tracker, query: dict[str, list[str]]) -> None:
             params = _parse_list_params(query)

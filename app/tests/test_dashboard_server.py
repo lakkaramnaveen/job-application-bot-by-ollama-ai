@@ -49,6 +49,31 @@ def test_api_rows_returns_table_rows_only(live_server):
     assert "<!doctype html>" not in body.lower()
 
 
+def test_export_csv_downloads_every_matching_job(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/export.csv") as resp:
+        assert resp.headers["Content-Type"].startswith("text/csv")
+        assert "attachment" in resp.headers["Content-Disposition"]
+        body = resp.read().decode("utf-8")
+    lines = body.strip().splitlines()
+    assert lines[0].split(",")[0] == "job_id"
+    assert any(line.startswith("job1,") for line in lines[1:])
+    assert any(line.startswith("job 2,") for line in lines[1:])
+
+
+def test_export_csv_respects_the_status_filter(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/export.csv?status=applied") as resp:
+        body = resp.read().decode("utf-8")
+    assert "job1," in body
+    assert "job 2," not in body
+
+
+def test_export_csv_respects_the_search_box(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/export.csv?q=Frontend") as resp:
+        body = resp.read().decode("utf-8")
+    assert "job 2," in body
+    assert "job1," not in body
+
+
 def test_api_jobs_returns_json(live_server):
     with urllib.request.urlopen(f"{live_server}/api/jobs") as resp:
         assert resp.headers["Content-Type"] == "application/json"

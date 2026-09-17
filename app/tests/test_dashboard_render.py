@@ -186,6 +186,13 @@ def test_render_page_html_includes_pager():
     assert "page: 2," in html
 
 
+def test_render_page_html_includes_export_csv_link():
+    html = render_page_html([make_job()])
+    assert 'id="exportCsv"' in html
+    assert 'href="/api/export.csv"' in html
+    assert "exportCsv').href" in html  # kept in sync with filters by refresh()
+
+
 def test_render_stats_html_shows_all_pill_with_summed_total():
     html = render_stats_html({"applied": 2, "seen": 3}, selected_status="")
     assert "All <span class=\"count\">5</span>" in html

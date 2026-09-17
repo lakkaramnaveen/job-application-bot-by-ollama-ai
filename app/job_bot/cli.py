@@ -14,12 +14,11 @@ propagating out of a command is a real bug.
 """
 
 import argparse
-import csv
 import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -55,7 +54,7 @@ from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.safety.confirm import SubmitConfirmer
 from job_bot.safety.rate_limiter import DailyCapReached, RateLimiter
-from job_bot.tracker.db import TRACKER_STATUSES, InvalidStatus, Tracker
+from job_bot.tracker.db import TRACKER_STATUSES, InvalidStatus, Tracker, write_export_csv
 
 EXPECTED_ERRORS = (
     ClaudeProviderError,
@@ -677,24 +676,6 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
         _print_score_breakdown(tracker)
 
 
-EXPORT_FIELDS = (
-    "job_id",
-    "title",
-    "company",
-    "status",
-    "match_score",
-    "first_seen_at",
-    "applied_at",
-    "url",
-)
-
-
-def _write_export_csv(stream: TextIO, jobs: list[dict]) -> None:
-    writer = csv.DictWriter(stream, fieldnames=EXPORT_FIELDS, extrasaction="ignore")
-    writer.writeheader()
-    writer.writerows(jobs)
-
-
 def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
     """Dump tracked jobs as CSV - to a file with `--out`, or stdout so it
     pipes straight into another tool.
@@ -706,10 +687,10 @@ def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
         # newline="" so csv's own \r\n line terminator isn't doubled up by
         # universal-newline text-mode translation on write.
         with args.out.open("w", newline="", encoding="utf-8") as f:
-            _write_export_csv(f, jobs)
+            write_export_csv(f, jobs)
         print(f"Exported {len(jobs)} job(s) to {args.out}")
     else:
-        _write_export_csv(sys.stdout, jobs)
+        write_export_csv(sys.stdout, jobs)
 
 
 def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:

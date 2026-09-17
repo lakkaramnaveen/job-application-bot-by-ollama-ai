@@ -6,12 +6,13 @@ write. See Tracker below for the schema and every read/write method; the
 """
 
 import contextlib
+import csv
 import json
 import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 # Outcome statuses that count as a genuine positive signal for a past
 # tailored resume - see best_resume_examples().
@@ -50,6 +51,26 @@ class InvalidSort(ValueError):
 SORTABLE_COLUMNS = frozenset(
     {"first_seen_at", "applied_at", "title", "company", "match_score", "status"}
 )
+
+# Column order for CSV export - shared by cli.py's `job-bot export` and the
+# dashboard's /api/export.csv, so the two never drift into exporting
+# different shapes of the same underlying job record.
+EXPORT_FIELDS = (
+    "job_id",
+    "title",
+    "company",
+    "status",
+    "match_score",
+    "first_seen_at",
+    "applied_at",
+    "url",
+)
+
+
+def write_export_csv(stream: TextIO, jobs: list[dict[str, Any]]) -> None:
+    writer = csv.DictWriter(stream, fieldnames=EXPORT_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(jobs)
 
 
 class Tracker:
