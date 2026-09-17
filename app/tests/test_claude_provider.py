@@ -80,3 +80,77 @@ def test_authentication_error_wrapped(monkeypatch):
 
     with pytest.raises(ClaudeProviderError, match="Invalid ANTHROPIC_API_KEY"):
         provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+
+def _fake_response(status_code: int) -> httpx.Response:
+    return httpx.Response(
+        status_code,
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        json={"error": {"message": "details"}},
+    )
+
+
+def test_permission_denied_error_wrapped(monkeypatch):
+    provider = make_provider()
+
+    def fake_parse(**kwargs):
+        raise anthropic.PermissionDeniedError("nope", response=_fake_response(403), body=None)
+
+    monkeypatch.setattr(provider._client.messages, "parse", fake_parse)
+
+    with pytest.raises(ClaudeProviderError, match="lacks permission"):
+        provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+
+def test_not_found_error_wrapped(monkeypatch):
+    provider = make_provider()
+
+    def fake_parse(**kwargs):
+        raise anthropic.NotFoundError("no such model", response=_fake_response(404), body=None)
+
+    monkeypatch.setattr(provider._client.messages, "parse", fake_parse)
+
+    with pytest.raises(ClaudeProviderError, match="claude-opus-5.*not found"):
+        provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+
+def test_rate_limit_error_wrapped(monkeypatch):
+    provider = make_provider()
+
+    def fake_parse(**kwargs):
+        raise anthropic.RateLimitError("slow down", response=_fake_response(429), body=None)
+
+    monkeypatch.setattr(provider._client.messages, "parse", fake_parse)
+
+    with pytest.raises(ClaudeProviderError, match="Rate limited"):
+        provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+
+def test_connection_error_wrapped(monkeypatch):
+    provider = make_provider()
+
+    def fake_parse(**kwargs):
+        request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        raise anthropic.APIConnectionError(request=request)
+
+    monkeypatch.setattr(provider._client.messages, "parse", fake_parse)
+
+    with pytest.raises(ClaudeProviderError, match="Network error"):
+        provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+
+def test_generic_status_error_wrapped_with_status_code(monkeypatch):
+    """Anything not covered by the specific subclasses above (a 5xx, say)
+    still surfaces the actual status code and message rather than a blank
+    "something went wrong" - useful when a brand-new Claude API error type
+    shows up that this module doesn't special-case yet.
+    """
+    provider = make_provider()
+
+    def fake_parse(**kwargs):
+        raise anthropic.APIStatusError("server exploded", response=_fake_response(500), body=None)
+
+    monkeypatch.setattr(provider._client.messages, "parse", fake_parse)
+
+    with pytest.raises(ClaudeProviderError, match=r"Claude API error \(500\): server exploded"):
+        provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
