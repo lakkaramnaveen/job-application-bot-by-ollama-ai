@@ -229,7 +229,27 @@ class ExternalApplyAdapter:
             if tag == "SELECT":
                 if field.evaluate("el => el.selectedIndex") > 0:
                     continue
-            elif field_type in ("checkbox", "radio"):
+            elif field_type == "radio":
+                # A real bug this guards against: some sites mark every
+                # radio in a group `required` (redundant but common - e.g.
+                # framework-generated accessibility markup), not just one.
+                # Checking only *this* input's .checked would then report
+                # every unchecked sibling as its own unanswered required
+                # field, even when the group is genuinely answered by
+                # another option already checked (a page-supplied default,
+                # e.g. "Willing to relocate? Yes / No" defaulting to "No") -
+                # confirmed live before this fix. getElementsByName (a
+                # native DOM lookup, not a CSS-attribute-value selector) is
+                # used instead of querying by [name="..."] so a name
+                # containing a quote or other CSS-special character can
+                # never break the lookup.
+                if field.evaluate(
+                    "el => el.name ? "
+                    "Array.from(document.getElementsByName(el.name)).some(r => r.checked) : "
+                    "el.checked"
+                ):
+                    continue
+            elif field_type == "checkbox":
                 if field.is_checked():
                     continue
             elif field_type == "file":

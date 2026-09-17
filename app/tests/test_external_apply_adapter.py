@@ -23,6 +23,8 @@ PASSWORD_FIXTURE = FIXTURES / "external_apply_form_password.html"
 SENSITIVE_FIELD_FIXTURE = FIXTURES / "external_apply_form_sensitive_field.html"
 MULTI_STEP_FIXTURE = FIXTURES / "external_apply_form_multi_step.html"
 UNRELATED_APPLY_NOW_FIXTURE = FIXTURES / "external_apply_form_unrelated_apply_now_button.html"
+RADIO_DEFAULT_CHECKED_FIXTURE = FIXTURES / "external_apply_form_radio_group_default_checked.html"
+RADIO_UNANSWERED_FIXTURE = FIXTURES / "external_apply_form_radio_group_unanswered.html"
 
 
 @pytest.fixture
@@ -167,6 +169,51 @@ def test_multi_step_form_advances_past_next_and_completes(playwright_page):
     assert submitted is False  # dry-run: reached Submit but stopped before clicking it
     assert playwright_page.locator("#full-name").input_value() == "Jane Doe"
     assert playwright_page.locator("#years-exp").input_value() == "5"
+
+
+def test_does_not_block_on_a_required_sibling_when_the_radio_group_has_a_checked_default(
+    playwright_page,
+):
+    """Real bug this guards against: _first_unanswered_required_field_label()
+    used to check only the individual radio input's own .checked state, not
+    whether any radio sharing its `name` (i.e. its actual group) was
+    checked. A form that marks every radio in a group `required` (common -
+    e.g. framework-generated accessibility markup) and defaults one option
+    to checked (e.g. "Willing to relocate? Yes / No" defaulting to "No")
+    then had every *other*, unchecked sibling misreported as its own
+    unanswered required field, blocking an application that was actually
+    complete. Confirmed live before this fix: this fixture raised
+    RuntimeError("...('Yes')...") even though "No" was already checked.
+    """
+    playwright_page.goto(f"file://{RADIO_DEFAULT_CHECKED_FIXTURE}")
+    adapter = ExternalApplyAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        answer_question=lambda label: "Jane Doe" if "name" in label.casefold() else "",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert submitted is False  # dry-run: reached Submit but stopped before clicking it
+
+
+def test_still_stops_on_a_genuinely_unanswered_required_radio_group(playwright_page):
+    """Non-regression for the fix above: when no option in the group is
+    checked at all, it must still block - the fix only changes how an
+    *already-answered* group's other required siblings are treated, not
+    whether an unanswered group is still caught.
+    """
+    playwright_page.goto(f"file://{RADIO_UNANSWERED_FIXTURE}")
+    adapter = ExternalApplyAdapter(playwright_page)
+
+    with pytest.raises(RuntimeError, match="required question has no answer"):
+        adapter.fill_and_submit(
+            answer_question=lambda label: "Jane Doe" if "name" in label.casefold() else "",
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
 
 
 def test_find_submit_button_prefers_type_submit_over_an_earlier_unrelated_button(playwright_page):
