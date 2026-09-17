@@ -33,6 +33,18 @@ def test_audit_log_redacts_nested_secrets(tmp_path):
     assert "sk-leaked-token-value" not in content
 
 
+def test_audit_log_redacts_secrets_inside_a_list(tmp_path):
+    log_path = tmp_path / "audit.log"
+    logger = AuditLogger(log_path)
+
+    logger.log("nested_list", errors=["ok", "leaked key sk-ant-api03-leaked-in-a-list"])
+
+    content = log_path.read_text()
+    assert "sk-ant-api03-leaked-in-a-list" not in content
+    assert "[REDACTED]" in content
+    assert '"ok"' in content
+
+
 def test_audit_log_only_records_metadata_not_full_resume_text(tmp_path):
     """The generation/matching modules never pass resume text to the audit
     log - this asserts the logger doesn't get any help hiding it either way,

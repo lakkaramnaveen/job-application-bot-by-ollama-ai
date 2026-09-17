@@ -19,6 +19,31 @@ def test_loads_existing_blacklist_case_insensitively(tmp_path):
     assert blacklist.is_blocked("Unrelated Co") is False
 
 
+def test_malformed_json_file_means_nothing_blocked(tmp_path):
+    """A hand-edited or corrupted blacklist.json must not crash startup -
+    degrade to an empty blacklist rather than raising.
+    """
+    path = tmp_path / "blacklist.json"
+    path.write_text("{not valid json", encoding="utf-8")
+
+    blacklist = CompanyBlacklist(path)
+
+    assert blacklist.is_blocked("Anything") is False
+
+
+def test_non_list_json_file_means_nothing_blocked(tmp_path):
+    """Valid JSON but the wrong shape (e.g. a dict, from an old or
+    hand-edited format) is treated the same as no blacklist at all, not a
+    crash.
+    """
+    path = tmp_path / "blacklist.json"
+    path.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
+
+    blacklist = CompanyBlacklist(path)
+
+    assert blacklist.is_blocked("Anything") is False
+
+
 def test_add_persists_to_disk(tmp_path):
     path = tmp_path / "blacklist.json"
     blacklist = CompanyBlacklist(path)
