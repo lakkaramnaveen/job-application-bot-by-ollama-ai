@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from job_bot.dashboard.server import make_handler
+from job_bot.dashboard.server import make_handler, run_dashboard
 from job_bot.tracker.db import Tracker
 
 
@@ -125,6 +125,54 @@ def test_index_page_includes_stats_bar_reflecting_data(live_server):
 def test_api_rows_rejects_invalid_sort_column(live_server):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(f"{live_server}/api/rows?sort=job_id%3B+DROP+TABLE+jobs")
+    assert exc_info.value.code == 400
+
+
+def test_api_rows_falls_back_to_page_1_for_a_non_numeric_page(live_server):
+    """A hand-edited or stale ?page= query param shouldn't 500 - it's not
+    dangerous input like the sort column (which reaches raw SQL), just a
+    display parameter, so it degrades to page 1 rather than erroring.
+    """
+    with urllib.request.urlopen(f"{live_server}/api/rows?page=not-a-number") as resp:
+        assert resp.status == 200
+        body = resp.read().decode("utf-8")
+    assert "Backend Engineer" in body
+
+
+def test_index_page_falls_back_to_default_sort_for_an_invalid_sort_column(live_server):
+    """Unlike /api/rows (used by the frontend's own JS, which always sends
+    a valid sort value from its own <select>), the index page can be
+    reached with an arbitrary/stale query string typed or bookmarked by
+    hand - it should render normally on the default sort rather than
+    surfacing a raw 400 to someone who just mistyped a URL.
+    """
+    with urllib.request.urlopen(f"{live_server}/?sort=job_id%3B+DROP+TABLE+jobs") as resp:
+        assert resp.status == 200
+        body = resp.read().decode("utf-8")
+    assert "Backend Engineer" in body
+
+
+def test_post_to_unknown_path_returns_404(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/not-a-real-endpoint", {"status": "offer"})
+    assert exc_info.value.code == 404
+
+
+def test_post_status_rejects_a_non_string_status_value(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/jobs/job1/status", {"status": 123})
+    assert exc_info.value.code == 400
+
+
+def test_post_status_rejects_malformed_json_body(live_server):
+    req = urllib.request.Request(
+        f"{live_server}/api/jobs/job1/status",
+        data=b"{not valid json",
+        method="POST",
+        headers={"Content-Type": "application/json", "Origin": live_server},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
     assert exc_info.value.code == 400
 
 
@@ -257,6 +305,30 @@ def test_post_status_decodes_percent_encoded_job_id(live_server):
     assert resp.status == 200
     data = json.loads(resp.read().decode("utf-8"))
     assert data == {"ok": True, "job_id": "job 2", "status": "applied"}
+
+
+def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatch):
+    """run_dashboard() is the CLI's actual entry point (`job-bot dashboard`)
+    - the rest of this file exercises the request handlers directly via
+    make_handler(), bypassing it entirely. Ctrl+C (KeyboardInterrupt out of
+    serve_forever()) is the normal way this function returns, so
+    ThreadingHTTPServer.serve_forever is patched to raise it immediately
+    instead of actually blocking, letting this run synchronously.
+    """
+    opened_urls = []
+    monkeypatch.setattr(
+        "job_bot.dashboard.server.webbrowser.open", lambda url: opened_urls.append(url)
+    )
+
+    def fake_serve_forever(self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(ThreadingHTTPServer, "serve_forever", fake_serve_forever)
+
+    run_dashboard(tmp_path / "db.sqlite3", port=0, open_browser=True)
+
+    assert len(opened_urls) == 1
+    assert opened_urls[0].startswith("http://127.0.0.1:")
 
 
 def test_qa_endpoint_decodes_percent_encoded_job_id(live_server):
