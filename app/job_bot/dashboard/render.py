@@ -93,12 +93,19 @@ def _status_select(job_id: str, current_status: str) -> str:
 
 
 def _stat_pill(status: str, label: str, count: int, active: bool) -> str:
-    color = STATUS_COLORS.get(status, "#374151") if status else "#374151"
+    """No inline --pill-color at all for "All" or an unrecognized status
+    (rather than hardcoding a light-mode gray) so the CSS's own
+    var(--pill-color, var(--pill-default)) fallback picks the right neutral
+    for whichever color scheme is active - a literal inline color would
+    always win over that fallback and never adapt to dark mode.
+    """
     cls = "stat-pill active" if active else "stat-pill"
     safe_status = html.escape(status, quote=True)
+    color = STATUS_COLORS.get(status)
+    style_attr = f' style="--pill-color:{color}"' if color else ""
     return (
-        f'<button type="button" class="{cls}" data-status="{safe_status}" '
-        f'style="--pill-color:{color}">{html.escape(label)} <span class="count">{count}</span></button>'
+        f'<button type="button" class="{cls}" data-status="{safe_status}"{style_attr}>'
+        f"{html.escape(label)} <span class=\"count\">{count}</span></button>"
     )
 
 
@@ -213,48 +220,69 @@ def render_page_html(
 <title>{html.escape(PAGE_TITLE)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
+  :root {{
+    --bg: #f9fafb; --fg: #111827; --muted: #6b7280; --border: #d1d5db;
+    --border-light: #e5e7eb; --surface: #fff; --header-bg: #f3f4f6;
+    --link: #2563eb; --shadow: rgba(0,0,0,0.06); --backdrop: rgba(0,0,0,0.35);
+    --dialog-shadow: rgba(0,0,0,0.15); --pill-default: #374151;
+  }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{
+      --bg: #0f172a; --fg: #e5e7eb; --muted: #9ca3af; --border: #374151;
+      --border-light: #1f2937; --surface: #1e293b; --header-bg: #172033;
+      --link: #60a5fa; --shadow: rgba(0,0,0,0.4); --backdrop: rgba(0,0,0,0.6);
+      --dialog-shadow: rgba(0,0,0,0.5); --pill-default: #9ca3af;
+    }}
+  }}
   body {{ font-family: -apple-system, system-ui, sans-serif; margin: 2rem;
-          background: #f9fafb; color: #111827; }}
+          background: var(--bg); color: var(--fg); }}
   h1 {{ font-size: 1.25rem; margin-bottom: 0.25rem; }}
-  .subtitle {{ color: #6b7280; font-size: 0.85rem; margin-bottom: 1.25rem; }}
+  .subtitle {{ color: var(--muted); font-size: 0.85rem; margin-bottom: 1.25rem; }}
   .stats {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }}
   .stat-pill {{ display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem;
               padding: 0.3rem 0.75rem; border-radius: 999px; cursor: pointer;
-              background: #fff; color: #374151; border: 1px solid var(--pill-color, #d1d5db); }}
-  .stat-pill:hover {{ border-color: var(--pill-color, #9ca3af); }}
-  .stat-pill.active {{ background: var(--pill-color, #374151); color: #fff; border-color: var(--pill-color, #374151); }}
+              background: var(--surface); color: var(--fg);
+              border: 1px solid var(--pill-color, var(--border)); }}
+  .stat-pill:hover {{ border-color: var(--pill-color, var(--muted)); }}
+  .stat-pill.active {{ background: var(--pill-color, var(--pill-default)); color: #fff;
+              border-color: var(--pill-color, var(--pill-default)); }}
   .stat-pill .count {{ font-weight: 600; }}
   .toolbar {{ display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
               margin-bottom: 1rem; }}
   .toolbar input, .toolbar select {{ font-size: 0.85rem; padding: 0.4rem 0.6rem;
-              border: 1px solid #d1d5db; border-radius: 6px; background: #fff; }}
+              border: 1px solid var(--border); border-radius: 6px;
+              background: var(--surface); color: var(--fg); }}
   .toolbar input[type="search"] {{ min-width: 220px; }}
-  table {{ border-collapse: collapse; width: 100%; background: #fff;
-           box-shadow: 0 1px 2px rgba(0,0,0,0.06); }}
-  th, td {{ text-align: left; padding: 0.6rem 0.9rem; border-bottom: 1px solid #e5e7eb;
+  .table-wrap {{ overflow-x: auto; }}
+  table {{ border-collapse: collapse; width: 100%; min-width: 640px; background: var(--surface);
+           box-shadow: 0 1px 2px var(--shadow); }}
+  th, td {{ text-align: left; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border-light);
             font-size: 0.9rem; vertical-align: middle; }}
-  th {{ background: #f3f4f6; font-weight: 600; }}
-  td.jobid {{ color: #9ca3af; font-size: 0.75rem; }}
-  td.empty {{ color: #6b7280; text-align: center; padding: 2rem; }}
+  th {{ background: var(--header-bg); font-weight: 600; }}
+  td.jobid {{ color: var(--muted); font-size: 0.75rem; }}
+  td.empty {{ color: var(--muted); text-align: center; padding: 2rem; }}
   td.actions {{ display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }}
   .status-select {{ font-size: 0.8rem; padding: 0.25rem 0.4rem; border-radius: 4px;
-              border: 1px solid #d1d5db; }}
+              border: 1px solid var(--border); background: var(--surface); color: var(--fg); }}
   .qa-button {{ font-size: 0.8rem; padding: 0.25rem 0.6rem; border-radius: 4px;
-              border: 1px solid #d1d5db; background: #fff; cursor: pointer; }}
-  .qa-button:hover {{ background: #f3f4f6; }}
-  a {{ color: #2563eb; text-decoration: none; }}
+              border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+              cursor: pointer; }}
+  .qa-button:hover {{ background: var(--header-bg); }}
+  a {{ color: var(--link); text-decoration: none; }}
   a:hover {{ text-decoration: underline; }}
   .pager {{ display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem;
-            font-size: 0.85rem; color: #4b5563; }}
+            font-size: 0.85rem; color: var(--muted); }}
   .pager button {{ font-size: 0.8rem; padding: 0.3rem 0.7rem; border-radius: 6px;
-              border: 1px solid #d1d5db; background: #fff; cursor: pointer; }}
+              border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+              cursor: pointer; }}
   .pager button:disabled {{ opacity: 0.5; cursor: default; }}
   dialog {{ border: none; border-radius: 10px; padding: 1.25rem 1.5rem; max-width: 32rem;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.15); }}
-  dialog::backdrop {{ background: rgba(0,0,0,0.35); }}
+            background: var(--surface); color: var(--fg); box-shadow: 0 10px 30px var(--dialog-shadow); }}
+  dialog::backdrop {{ background: var(--backdrop); }}
   .qa-list dt {{ font-weight: 600; margin-top: 0.75rem; }}
-  .qa-list dd {{ margin: 0.25rem 0 0; color: #374151; }}
-  #qaClose {{ margin-top: 1rem; }}
+  .qa-list dd {{ margin: 0.25rem 0 0; color: var(--fg); }}
+  #qaClose {{ margin-top: 1rem; font-size: 0.85rem; padding: 0.35rem 0.8rem; border-radius: 6px;
+              border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}
 </style>
 </head>
 <body>
@@ -277,6 +305,7 @@ def render_page_html(
   </select>
 </form>
 
+<div class="table-wrap">
 <table>
   <thead>
     <tr><th>Title</th><th>Company</th><th>Score</th><th>Status</th><th>Applied</th><th>Job ID</th><th>Actions</th></tr>
@@ -285,6 +314,7 @@ def render_page_html(
 {rows_html}
   </tbody>
 </table>
+</div>
 
 <div class="pager">
   <button type="button" id="prevPage">&laquo; Prev</button>
