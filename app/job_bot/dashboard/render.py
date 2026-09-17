@@ -92,6 +92,45 @@ def _status_select(job_id: str, current_status: str) -> str:
     )
 
 
+def _stat_pill(status: str, label: str, count: int, active: bool) -> str:
+    color = STATUS_COLORS.get(status, "#374151") if status else "#374151"
+    cls = "stat-pill active" if active else "stat-pill"
+    safe_status = html.escape(status, quote=True)
+    return (
+        f'<button type="button" class="{cls}" data-status="{safe_status}" '
+        f'style="--pill-color:{color}">{html.escape(label)} <span class="count">{count}</span></button>'
+    )
+
+
+def render_stats_html(counts: dict[str, int], selected_status: str) -> str:
+    """Clickable per-status count pills above the table - reused by both
+    the full page and the polling refresh (see server.py's /api/stats) so
+    the counts stay live as statuses change, the same pattern render_rows_html
+    already uses for the table body. `counts` should come from
+    Tracker.status_counts(search=...) so the pills reflect the current
+    search box; a status filter is never baked into `counts` itself, or
+    every pill but the selected one would show zero.
+
+    A zero-count status is hidden unless it's the one currently selected -
+    otherwise picking a status that has since emptied out (e.g. the last
+    "interviewing" job was just marked "offer") would leave no way to
+    click back off of it.
+    """
+    total = sum(counts.values())
+    pills = [_stat_pill("", "All", total, selected_status == "")]
+    # Known statuses first in their usual order, then any unrecognized ones
+    # `counts` turned up (e.g. legacy data predating a TRACKER_STATUSES
+    # change) - same defensive stance render_rows_html's status <select>
+    # already takes: an unknown status still needs a way to filter to it.
+    unknown = sorted(s for s in counts if s not in STATUS_COLORS)
+    for status in (*STATUS_COLORS, *unknown):
+        count = counts.get(status, 0)
+        if count == 0 and status != selected_status:
+            continue
+        pills.append(_stat_pill(status, status.replace("_", " ").title(), count, status == selected_status))
+    return "\n".join(pills)
+
+
 def render_rows_html(jobs: list[dict[str, Any]]) -> str:
     """The <tbody> contents only - reused by both the full page and the
     polling/filtering endpoint that refreshes just the table body.
@@ -160,8 +199,10 @@ def render_page_html(
     sort: str = "first_seen_at",
     direction: str = "desc",
     refresh_seconds: int = 5,
+    counts: dict[str, int] | None = None,
 ) -> str:
     rows_html = render_rows_html(jobs)
+    stats_html = render_stats_html(counts or {}, status)
     status_options = [("", "All statuses"), *((s, s.replace("_", " ")) for s in sorted(TRACKER_STATUSES))]
     sort_value = f"{sort}:{direction}"
 
@@ -176,6 +217,13 @@ def render_page_html(
           background: #f9fafb; color: #111827; }}
   h1 {{ font-size: 1.25rem; margin-bottom: 0.25rem; }}
   .subtitle {{ color: #6b7280; font-size: 0.85rem; margin-bottom: 1.25rem; }}
+  .stats {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }}
+  .stat-pill {{ display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem;
+              padding: 0.3rem 0.75rem; border-radius: 999px; cursor: pointer;
+              background: #fff; color: #374151; border: 1px solid var(--pill-color, #d1d5db); }}
+  .stat-pill:hover {{ border-color: var(--pill-color, #9ca3af); }}
+  .stat-pill.active {{ background: var(--pill-color, #374151); color: #fff; border-color: var(--pill-color, #374151); }}
+  .stat-pill .count {{ font-weight: 600; }}
   .toolbar {{ display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
               margin-bottom: 1rem; }}
   .toolbar input, .toolbar select {{ font-size: 0.85rem; padding: 0.4rem 0.6rem;
@@ -213,6 +261,10 @@ def render_page_html(
 <h1>{html.escape(PAGE_TITLE)}</h1>
 <p class="subtitle">Auto-refreshes every {refresh_seconds}s. Update a status inline below, or via
 `job-bot status` / `job-bot run` / `job-bot gmail-sync`.</p>
+
+<div class="stats" id="stats">
+{stats_html}
+</div>
 
 <form class="toolbar" id="filters">
   <input type="search" id="q" name="q" placeholder="Search title or company..."
@@ -271,8 +323,9 @@ function buildQuery() {{
 }}
 
 async function refresh() {{
+  const query = buildQuery();
   try {{
-    const res = await fetch('/api/rows?' + buildQuery());
+    const res = await fetch('/api/rows?' + query);
     if (!res.ok) return;
     document.getElementById('rows').innerHTML = await res.text();
     const total = parseInt(res.headers.get('X-Total-Jobs') || '0', 10);
@@ -283,6 +336,12 @@ async function refresh() {{
     document.getElementById('nextPage').disabled = end >= total;
   }} catch (e) {{
     // Network hiccup on a local server - next tick will retry.
+  }}
+  try {{
+    const statsRes = await fetch('/api/stats?' + query);
+    if (statsRes.ok) document.getElementById('stats').innerHTML = await statsRes.text();
+  }} catch (e) {{
+    // Same as above - leave the stat pills as they were until the next tick.
   }}
 }}
 
@@ -297,6 +356,17 @@ document.getElementById('q').addEventListener('input', (e) => {{
 }});
 document.getElementById('status').addEventListener('change', (e) => {{
   state.status = e.target.value;
+  state.page = 1;
+  refresh();
+}});
+// Delegated to the container, not bound to individual pill buttons, since
+// #stats' contents are replaced wholesale on every refresh() - a listener
+// on the old buttons would stop firing the moment they're replaced.
+document.getElementById('stats').addEventListener('click', (e) => {{
+  const pill = e.target.closest('.stat-pill');
+  if (!pill) return;
+  state.status = pill.dataset.status;
+  document.getElementById('status').value = state.status;
   state.page = 1;
   refresh();
 }});

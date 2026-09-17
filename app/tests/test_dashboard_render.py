@@ -1,4 +1,4 @@
-from job_bot.dashboard.render import render_page_html, render_qa_html, render_rows_html
+from job_bot.dashboard.render import render_page_html, render_qa_html, render_rows_html, render_stats_html
 
 
 def make_job(**overrides):
@@ -173,3 +173,46 @@ def test_render_page_html_includes_pager():
     assert 'id="prevPage"' in html
     assert 'id="nextPage"' in html
     assert "page: 2," in html
+
+
+def test_render_stats_html_shows_all_pill_with_summed_total():
+    html = render_stats_html({"applied": 2, "seen": 3}, selected_status="")
+    assert "All <span class=\"count\">5</span>" in html
+    assert 'data-status=""' in html
+
+
+def test_render_stats_html_marks_selected_status_active():
+    html = render_stats_html({"applied": 2, "seen": 3}, selected_status="applied")
+    assert '<button type="button" class="stat-pill active" data-status="applied"' in html
+    assert '<button type="button" class="stat-pill" data-status="seen"' in html
+
+
+def test_render_stats_html_hides_zero_count_statuses_unless_selected():
+    html = render_stats_html({"applied": 2}, selected_status="")
+    assert "seen" not in html
+    assert "offer" not in html
+
+    # A status can legitimately have zero matches right now (e.g. the last
+    # "offer" job was just moved to "interviewing") while still being the
+    # active filter - it must stay visible so the user can click off of it.
+    html = render_stats_html({"applied": 2}, selected_status="offer")
+    assert 'data-status="offer"' in html
+
+
+def test_render_stats_html_escapes_unknown_status_value():
+    html = render_stats_html({"<script>alert(1)</script>": 1}, selected_status="")
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_render_page_html_includes_stats_bar():
+    html = render_page_html([make_job()], counts={"applied": 2, "seen": 1}, status="applied")
+    assert 'id="stats"' in html
+    assert 'class="stat-pill active" data-status="applied"' in html
+    assert "/api/stats" in html
+
+
+def test_render_page_html_defaults_to_empty_stats_when_counts_omitted():
+    html = render_page_html([make_job()])
+    assert 'id="stats"' in html
+    assert 'All <span class="count">0</span>' in html

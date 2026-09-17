@@ -153,6 +153,24 @@ def test_status_counts_reflects_multiple_jobs(tmp_path):
     assert tracker.status_counts() == {"applied": 2, "skipped": 1}
 
 
+def test_status_counts_can_be_scoped_to_a_search_term(tmp_path):
+    """The dashboard's stat pills call this with the current search box
+    text so the counts they show match what's actually visible in the
+    table - not whole-database totals unrelated to what the user is
+    looking at.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Frontend Engineer", "Acme", "https://example.com/2")
+    tracker.upsert_job("3", "Data Scientist", "Acme", "https://example.com/3")
+    tracker.mark_applied("1")
+    tracker.mark_applied("2")
+
+    assert tracker.status_counts(search="engineer") == {"applied": 2}
+    assert tracker.status_counts(search="scientist") == {"seen": 1}
+    assert tracker.status_counts(search="nonexistent") == {}
+
+
 def test_record_qa_and_upsert_job_do_not_conflict(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")

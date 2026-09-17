@@ -18,7 +18,13 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import parse_qs, unquote, urlparse
 
-from job_bot.dashboard.render import PAGE_SIZE, render_page_html, render_qa_html, render_rows_html
+from job_bot.dashboard.render import (
+    PAGE_SIZE,
+    render_page_html,
+    render_qa_html,
+    render_rows_html,
+    render_stats_html,
+)
 from job_bot.tracker.db import InvalidSort, InvalidStatus, Tracker
 
 DASHBOARD_HOST = "127.0.0.1"
@@ -106,6 +112,8 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
                 self._handle_index(tracker, parse_qs(parsed.query))
             elif parsed.path == "/api/rows":
                 self._handle_rows(tracker, parse_qs(parsed.query))
+            elif parsed.path == "/api/stats":
+                self._handle_stats(tracker, parse_qs(parsed.query))
             elif parsed.path == "/api/jobs":
                 jobs = tracker.list_jobs()
                 self._send(200, "application/json", json.dumps(jobs, default=str).encode("utf-8"))
@@ -148,7 +156,14 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
                 search=params["search"] or "",
                 sort=params["sort"],
                 direction=params["direction"],
+                counts=tracker.status_counts(search=params["search"]),
             ).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_stats(self, tracker: Tracker, query: dict[str, list[str]]) -> None:
+            params = _parse_list_params(query)
+            counts = tracker.status_counts(search=params["search"])
+            body = render_stats_html(counts, params["status"] or "").encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
         def _handle_rows(self, tracker: Tracker, query: dict[str, list[str]]) -> None:

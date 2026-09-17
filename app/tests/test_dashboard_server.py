@@ -97,6 +97,31 @@ def test_api_rows_reports_total_via_header(live_server):
         assert resp.headers["X-Total-Jobs"] == "2"
 
 
+def test_api_stats_returns_pill_fragment_reflecting_current_data(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/stats") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+    assert "<!doctype html>" not in body.lower()
+    assert 'All <span class="count">2</span>' in body
+    assert 'data-status="applied"' in body
+    assert 'data-status="seen"' in body
+
+
+def test_api_stats_scopes_counts_to_search_term(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/stats?q=Backend") as resp:
+        body = resp.read().decode("utf-8")
+    assert 'All <span class="count">1</span>' in body
+    assert 'data-status="applied"' in body
+    assert 'data-status="seen"' not in body
+
+
+def test_index_page_includes_stats_bar_reflecting_data(live_server):
+    with urllib.request.urlopen(f"{live_server}/") as resp:
+        body = resp.read().decode("utf-8")
+    assert 'id="stats"' in body
+    assert 'data-status="applied"' in body
+
+
 def test_api_rows_rejects_invalid_sort_column(live_server):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(f"{live_server}/api/rows?sort=job_id%3B+DROP+TABLE+jobs")
