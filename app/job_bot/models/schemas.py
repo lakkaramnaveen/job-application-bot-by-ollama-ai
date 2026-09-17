@@ -28,11 +28,20 @@ def _normalize_percent_as_fraction(value: object) -> object:
         return min(value, 100) / 100
     return value
 
-# "fail" means the posting explicitly requires something the resume gives no
-# indication the candidate holds (citizenship, permanent residency, an
-# existing security clearance) - a categorical exclusion, not a fit question.
-# "flag" means the posting is silent or ambiguous on work authorization -
-# not disqualifying, but worth a human's attention before applying.
+# "fail" means the posting clearly violates one of the categorical
+# eligibility rules given in the scorer's own system prompt (see
+# matching/scorer.py's _build_system_prompt) - citizenship/permanent-
+# residency/clearance is always checked; seniority/years-of-experience and
+# W2-only employment are checked too whenever the caller opts in
+# (Settings.max_years_experience/require_w2). Not a fit question - a
+# categorical exclusion, not something a high fit score should override.
+# "flag" means one of the active categorical rules is silent or ambiguous
+# on the posting - not disqualifying, but worth a human's attention before
+# applying. This Literal's own field description below (see JobMatchScore)
+# reaches the model as part of the JSON schema sent alongside the system
+# prompt, so it's kept broad enough to stay accurate regardless of which
+# optional rules are active, rather than repeating scorer.py's exact
+# wording and risking the two drifting out of sync.
 EligibilityVerdict = Literal["pass", "fail", "flag"]
 
 
@@ -48,10 +57,12 @@ class JobMatchScore(BaseModel):
 
     eligibility: EligibilityVerdict = Field(
         description=(
-            "'fail' if the posting explicitly requires citizenship, permanent "
-            "residency, or an existing security clearance with no indication "
-            "the candidate holds it. 'flag' if the posting is silent or "
-            "ambiguous on work authorization. 'pass' otherwise."
+            "'fail' if the posting clearly violates a categorical eligibility "
+            "rule given in the system prompt (citizenship/permanent-residency/"
+            "clearance always; seniority/years-of-experience or W2-only "
+            "employment too, if the system prompt asks for those checks). "
+            "'flag' if any such rule is silent or genuinely ambiguous rather "
+            "than clearly stated either way. 'pass' otherwise."
         )
     )
     eligibility_note: str = Field(

@@ -34,6 +34,21 @@ def test_job_match_score_rejects_invalid_eligibility_value():
         make_job_match_score(eligibility="maybe")
 
 
+def test_eligibility_field_description_covers_all_active_eligibility_rules():
+    """This description reaches the model as part of the JSON schema sent
+    alongside scorer.py's system prompt (see ollama_provider.py's `format`)
+    - it used to say eligibility='fail' means only citizenship/clearance,
+    which became a real, live contradiction once matching/scorer.py's
+    system prompt grew seniority/years-of-experience and W2-only checks:
+    the model received two authoritative-sounding but disagreeing
+    explanations of the same field in the same request.
+    """
+    description = JobMatchScore.model_json_schema()["properties"]["eligibility"]["description"]
+    assert "citizenship" in description.casefold()
+    assert "seniority" in description.casefold() or "years" in description.casefold()
+    assert "w2" in description.casefold()
+
+
 def test_application_answer_rejects_a_negative_confidence():
     with pytest.raises(ValidationError):
         ApplicationAnswer(answer="Yes", confidence=-0.1, based_on_resume=True)
