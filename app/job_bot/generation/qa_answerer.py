@@ -24,7 +24,14 @@ SYSTEM_PROMPT = (
     "confidently, say so honestly in the answer and set confidence low and "
     "based_on_resume to false - never fabricate qualifications, dates, "
     "salary figures, or authorization status, even if a recent answer "
-    "looks like it might apply here."
+    "looks like it might apply here.\n\n"
+    "The `answer` field is typed directly into a real application form "
+    "field, verbatim - it must contain ONLY the direct answer itself, "
+    "exactly as a human would type it there. Never include your reasoning "
+    "process, never restate or quote the resume/FAQ content you checked, "
+    "never explain how you arrived at the answer, and never think out "
+    "loud before answering - do all of that silently, then output just "
+    "the final answer text."
 )
 
 

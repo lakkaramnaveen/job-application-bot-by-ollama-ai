@@ -96,6 +96,46 @@ class CoverLetter(BaseModel):
     body: str = Field(description="Full cover letter body text, 3-4 short paragraphs")
 
 
+# Substrings unique enough to a local reasoning model's internal chain-of-
+# thought that a real form answer would essentially never contain them -
+# seen live, qwen3:30b: 115 of 1,644 recorded answers in one real user's
+# qa_history were this model's own reasoning trace leaking into the
+# `answer` field verbatim (starting "I need to answer the question about
+# ... [restates the entire resume] ..."), truncated mid-thought once
+# generation ran out of room before ever reaching a real answer. This is
+# syntactically a perfectly valid string - ordinary schema validation
+# (a bare `str` field) never catches it - but it's not an answer at all,
+# and it was getting submitted to a real application form field, then
+# reused via Tracker.recent_qa_pairs() as "informal reference" for future
+# questions, compounding the problem.
+_REASONING_LEAK_MARKERS = (
+    "i need to answer the question",
+    "let me carefully",
+    "let me search",
+    "let me check",
+    "i should not fabricate",
+)
+
+
+def _reject_leaked_reasoning(value: object) -> object:
+    """Raises if `value` looks like leaked reasoning rather than a real
+    answer - routes back through generate_structured()'s existing retry-
+    on-ValidationError loop (see ollama_provider.py), giving the model
+    another attempt instead of silently accepting the leaked reasoning as
+    if it were a real answer. See _REASONING_LEAK_MARKERS above for what
+    this guards against and why a substring/prefix check on a local
+    model's own consistent phrasing is reliable here.
+    """
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if any(marker in normalized for marker in _REASONING_LEAK_MARKERS):
+            raise ValueError(
+                "This looks like leaked reasoning, not a direct answer to fill into a form "
+                "field - answer only, with no explanation of how you checked the resume/FAQ."
+            )
+    return value
+
+
 class ApplicationAnswer(BaseModel):
     """An answer to one free-text or short-answer application question."""
 
@@ -108,6 +148,7 @@ class ApplicationAnswer(BaseModel):
     )
 
     _normalize_confidence = field_validator("confidence", mode="before")(_normalize_percent_as_fraction)
+    _reject_leaked_reasoning_answer = field_validator("answer", mode="before")(_reject_leaked_reasoning)
 
 
 # What kind of job-application-related email this is, if any. "other" covers

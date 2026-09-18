@@ -60,6 +60,44 @@ def test_application_answer_accepts_valid_data():
 
 
 @pytest.mark.parametrize(
+    "leaked_reasoning",
+    [
+        "I need to answer the question about years of experience with Tailwind CSS based on the resume.",
+        "Let me carefully check the resume for any mention of Golang experience before answering.",
+        "Let me search the FAQ data for anything relevant to this question first.",
+        "I should not fabricate any information, so let me look at the resume section by section.",
+    ],
+)
+def test_application_answer_rejects_leaked_reasoning(leaked_reasoning):
+    """Real bug this guards against: qwen3:30b (via Ollama) occasionally
+    emits its internal chain-of-thought directly into the `answer` field
+    instead of a real answer, truncated mid-thought once generation runs
+    out of room before ever reaching a conclusion - seen live, 115 of
+    1,644 recorded answers in one real user's qa_history were exactly
+    this. Syntactically this is a perfectly valid string (a bare `str`
+    field has nothing to reject it), but it's not an answer - and it was
+    getting typed into a real application form field verbatim, then reused
+    via Tracker.recent_qa_pairs() as "informal reference" for future
+    questions, compounding the problem.
+    """
+    with pytest.raises(ValidationError, match="leaked reasoning"):
+        ApplicationAnswer(answer=leaked_reasoning, confidence=0.5, based_on_resume=False)
+
+
+def test_application_answer_does_not_reject_a_long_but_genuine_answer():
+    """The leaked-reasoning check must not become so broad it rejects a
+    real, if lengthy, explanatory answer - only strings matching this
+    local model's own distinctive reasoning-trace phrasing.
+    """
+    genuine = (
+        "No, I am currently located in St Louis, MO and would need to relocate for this role, "
+        "though I am open to discussing relocation assistance."
+    )
+    answer = ApplicationAnswer(answer=genuine, confidence=0.8, based_on_resume=True)
+    assert answer.answer == genuine
+
+
+@pytest.mark.parametrize(
     ("raw", "expected"),
     [
         (100, 1.0),
