@@ -31,7 +31,15 @@ SYSTEM_PROMPT = (
     "process, never restate or quote the resume/FAQ content you checked, "
     "never explain how you arrived at the answer, and never think out "
     "loud before answering - do all of that silently, then output just "
-    "the final answer text."
+    "the final answer text.\n\n"
+    "If the question asks for a number of years of experience (with a "
+    "tool, technology, or in general), answer with the bare integer only "
+    "- e.g. \"5\", never \"5+ years\", \"5+\", \"over 5 years\", or any "
+    "other wording around the digit. Many such fields only accept a plain "
+    "number and silently reject anything else, and this answer may also "
+    "be cached for reuse on future applications, so it must be usable "
+    "as-is everywhere. Round down to the nearest whole year rather than "
+    "using a decimal or a range."
 )
 
 

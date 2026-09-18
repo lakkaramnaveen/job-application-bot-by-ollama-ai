@@ -581,6 +581,8 @@ class LinkedInAdapter(JobBoardAdapter):
                 continue
             answer = answer_question(label) if label else ""
             if answer:
+                if (text_input.get_attribute("type") or "").casefold() == "number":
+                    answer = self._numeric_value(answer) or answer
                 text_input.fill(answer)
 
         for group in dialog.locator("fieldset").all():
@@ -734,6 +736,26 @@ class LinkedInAdapter(JobBoardAdapter):
         except PlaywrightTimeoutError:
             pass
         return ""
+
+    @staticmethod
+    def _numeric_value(answer: str) -> str | None:
+        """Extracts a plain number from a free-text LLM answer (e.g. "5+
+        years", "5 years of experience") for filling an
+        input[type="number"] field. Playwright's .fill() sets a number
+        input's value the same way a real browser would - the input
+        rejects anything that isn't a valid number and silently resets to
+        empty, so a field like "years of experience" was ending up blank
+        even though the LLM's answer was substantively correct (qwen
+        answers these with a trailing "+"/"years" qualifier rather than a
+        bare digit; see _best_match_index()'s docstring for the same
+        pattern on radio/select fields). Returns the first digit sequence
+        found (with an optional decimal part), or None if the answer has
+        no digits at all - the caller then falls back to the raw answer,
+        which will be rejected the same way but at least isn't silently
+        swapped for something the LLM never said.
+        """
+        match = re.search(r"\d+(?:\.\d+)?", answer)
+        return match.group() if match else None
 
     @staticmethod
     def _select_best_radio(group: Locator, answer: str) -> None:

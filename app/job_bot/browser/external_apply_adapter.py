@@ -203,6 +203,8 @@ class ExternalApplyAdapter:
                 continue
             answer = answer_question(label) if label else ""
             if answer:
+                if (text_input.get_attribute("type") or "").casefold() == "number":
+                    answer = self._numeric_value(answer) or answer
                 text_input.fill(answer)
 
         for select in self._page.locator("select:visible").all():
@@ -306,6 +308,18 @@ class ExternalApplyAdapter:
         if placeholder:
             return placeholder.strip()
         return ""
+
+    @staticmethod
+    def _numeric_value(answer: str) -> str | None:
+        """Same purpose as linkedin_adapter.py's _numeric_value() -
+        extracts a plain number from a free-text LLM answer (e.g. "5+
+        years") for filling an input[type="number"] field, since the
+        browser silently resets such a field to empty on anything that
+        isn't a valid number. Returns the first digit sequence found (with
+        an optional decimal part), or None if the answer has no digits.
+        """
+        match = re.search(r"\d+(?:\.\d+)?", answer)
+        return match.group() if match else None
 
     @staticmethod
     def _best_match_index(options: list[str], answer: str) -> int | None:
