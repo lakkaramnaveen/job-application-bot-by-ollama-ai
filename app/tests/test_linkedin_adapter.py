@@ -48,6 +48,10 @@ NO_PROGRESS_BUTTON_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_app
 ARIA_REQUIRED_TEXT_FIELD_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_aria_required_text_field.html"
 )
+REQUIRED_CHECKBOX_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_checkbox.html"
+CHECKED_AND_OPTIONAL_CHECKBOXES_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_checked_and_optional_checkboxes.html"
+)
 
 
 @pytest.fixture
@@ -210,6 +214,59 @@ def test_unanswered_aria_required_text_field_fails_fast_instead_of_submitting_in
             cover_letter_text=None,
             dry_run=True,
         )
+
+
+def test_unanswered_required_checkbox_fails_fast_instead_of_submitting_incomplete(playwright_page):
+    """Real bug this guards against: nothing in this adapter mentioned
+    checkboxes at all - unlike external_apply_adapter.py's equivalent
+    required-field check, which explicitly handles them. A required
+    consent/agreement checkbox is correctly never auto-checked (same
+    "never guess/never act on the user's behalf" stance as a radio/select
+    non-match), but with no detection for it either, fill_and_submit()
+    went on to find and click Submit with it still unchecked - confirmed
+    live before this fix, `dry_run=True` returned False (reached Submit)
+    instead of raising.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{REQUIRED_CHECKBOX_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    with pytest.raises(RuntimeError, match="background check"):
+        adapter.fill_and_submit(
+            posting,
+            answer_question=lambda label: "",
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
+    assert not playwright_page.locator("#consent").is_checked()
+
+
+def test_checked_required_checkbox_does_not_block_an_unchecked_optional_one(playwright_page):
+    """Non-regression for the fix above: a required checkbox already
+    checked (a page-supplied default) must not block, and an unrelated
+    unchecked *optional* checkbox alongside it must not be mistaken for a
+    required one either.
+    """
+    posting = JobPosting(
+        job_id="1",
+        title="X",
+        company="Y",
+        url=f"file://{CHECKED_AND_OPTIONAL_CHECKBOXES_FIXTURE_PATH}",
+        description="",
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert submitted is False  # dry-run: reached Submit but stopped before clicking it
 
 
 def test_answering_every_required_field_still_completes_normally(playwright_page):

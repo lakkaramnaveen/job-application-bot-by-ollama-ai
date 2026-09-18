@@ -594,15 +594,16 @@ class LinkedInAdapter(JobBoardAdapter):
 
     def _first_unanswered_required_choice_label(self, dialog: Locator) -> str | None:
         """Same purpose as _first_unanswered_required_text_field_label(),
-        for a required radio group or <select> left unanswered - detected
-        via `required`/`aria-required="true"` on the individual radio
-        inputs (fieldset itself has no `required` attribute in HTML) or on
-        the select element, confirmed against a real LinkedIn Easy Apply
-        form's DOM. Only ever reports a field this attribute actually marks
-        as required; a genuinely required field LinkedIn doesn't mark this
-        way still falls through to the generic "stuck" message unchanged,
-        exactly as before this check existed - this can only add
-        diagnostic detail, never new false positives on an optional field.
+        for a required radio group, <select>, or standalone checkbox left
+        unanswered - detected via `required`/`aria-required="true"` on the
+        individual radio inputs (fieldset itself has no `required`
+        attribute in HTML), the select element, or the checkbox itself,
+        confirmed against a real LinkedIn Easy Apply form's DOM. Only ever
+        reports a field this attribute actually marks as required; a
+        genuinely required field LinkedIn doesn't mark this way still
+        falls through to the generic "stuck" message unchanged, exactly as
+        before this check existed - this can only add diagnostic detail,
+        never new false positives on an optional field.
         """
         for group in dialog.locator("fieldset").all():
             radios = group.locator('input[type="radio"]')
@@ -621,6 +622,23 @@ class LinkedInAdapter(JobBoardAdapter):
             if selected_index > 0:
                 continue
             return self._label_for(select) or "(unlabeled required dropdown)"
+
+        # A standalone required checkbox (a consent/agreement box, most
+        # commonly) - never auto-checked on the user's behalf, same
+        # "never guess" stance as a radio/select non-match (see
+        # _select_best_radio()'s docstring), so left unchecked here is
+        # correct. Real bug this guards against: nothing else in this
+        # adapter mentions checkboxes at all, unlike
+        # external_apply_adapter.py's equivalent check, which explicitly
+        # handles this case - a required checkbox was invisible to every
+        # check here, so fill_and_submit() went on to find and click
+        # Submit with it still unchecked. Confirmed live before this fix.
+        for checkbox in dialog.locator('input[type="checkbox"]').all():
+            if not self._is_marked_required(checkbox):
+                continue
+            if checkbox.is_checked():
+                continue
+            return self._label_for(checkbox) or "(unlabeled required checkbox)"
 
         return None
 

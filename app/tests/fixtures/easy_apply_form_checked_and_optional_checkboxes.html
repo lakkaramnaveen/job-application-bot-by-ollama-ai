@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form, required checkbox pre-checked plus an unchecked optional one</title></head>
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="consent">
+      <input id="consent" type="checkbox" required checked />
+      I consent to a background check
+    </label>
+
+    <label for="newsletter">
+      <input id="newsletter" type="checkbox" />
+      Subscribe to our newsletter (optional)
+    </label>
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>
