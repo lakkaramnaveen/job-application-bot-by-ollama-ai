@@ -309,8 +309,16 @@ class ExternalApplyAdapter:
 
     @staticmethod
     def _best_match_index(options: list[str], answer: str) -> int | None:
-        """Same word-boundary matching as linkedin_adapter.py's
-        _best_match_index() - never falls back to an arbitrary option.
+        """Same bidirectional, word-boundary matching as
+        linkedin_adapter.py's _best_match_index() - never falls back to an
+        arbitrary option. Checks both directions: a short canonical answer
+        (e.g. "Referral") naming one of several longer option labels needs
+        the answer found within the option; a short option (most commonly
+        a plain "Yes"/"No" pair) named by a longer, explanatory answer -
+        qa_answerer.py's own prompt allows elaboration, it doesn't require
+        a bare "yes"/"no" - needs the reverse, or the match would never
+        succeed for any yes/no-shaped question no matter how clearly the
+        answer states its position.
         """
         answer_norm = answer.strip().casefold()
         if not answer_norm:
@@ -321,5 +329,12 @@ class ExternalApplyAdapter:
         pattern = re.compile(rf"(?<!\w){re.escape(answer_norm)}(?!\w)")
         for i, opt in enumerate(options):
             if pattern.search(opt.strip().casefold()):
+                return i
+        for i, opt in enumerate(options):
+            opt_norm = opt.strip().casefold()
+            if not opt_norm:
+                continue
+            opt_pattern = re.compile(rf"(?<!\w){re.escape(opt_norm)}(?!\w)")
+            if opt_pattern.search(answer_norm):
                 return i
         return None

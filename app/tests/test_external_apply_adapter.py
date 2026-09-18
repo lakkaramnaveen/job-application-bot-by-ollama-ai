@@ -84,6 +84,27 @@ def test_selects_the_best_matching_option(playwright_page):
     assert playwright_page.locator("#how-heard").input_value() == "referral"
 
 
+# --- _best_match_index (no browser needed - pure string matching) ---
+
+
+def test_best_match_index_matches_a_short_option_named_by_a_long_explanatory_answer():
+    """Same bug/fix as linkedin_adapter.py's equivalent test: qa_answerer.py's
+    own prompt allows an explanatory answer rather than a bare "yes"/"no" -
+    the original single-direction check (answer found within option) could
+    never match a yes/no-shaped select option, no matter how clearly the
+    answer states its position.
+    """
+    options = ["Yes", "No"]
+    answer = "No, I am currently located in St Louis, MO and would need to relocate."
+    assert ExternalApplyAdapter._best_match_index(options, answer) == 1
+
+
+def test_best_match_index_reverse_direction_respects_word_boundaries():
+    options = ["Yes", "No"]
+    answer = "I know the role well and am a normal full-time candidate."
+    assert ExternalApplyAdapter._best_match_index(options, answer) is None
+
+
 def test_never_solves_a_captcha_and_raises_a_clear_error(playwright_page):
     playwright_page.goto(f"file://{CAPTCHA_FIXTURE}")
     adapter = ExternalApplyAdapter(playwright_page)

@@ -808,6 +808,25 @@ class LinkedInAdapter(JobBoardAdapter):
         for i, opt in enumerate(options):
             if pattern.search(opt.strip().casefold()):
                 return i
+        # Second fallback, the reverse direction: a short option (most
+        # commonly a plain "Yes"/"No" radio pair) as a whole word within a
+        # longer answer. qa_answerer.py's own prompt asks for a direct,
+        # sometimes explanatory answer ("No, I am currently located in..."),
+        # not a bare "yes"/"no" - the check above alone can then never
+        # match ANY yes/no-shaped question, no matter how clearly the
+        # answer states its position, since it only ever looks for the
+        # (long) answer inside the (short) option. Confirmed live: this
+        # exact case - a real, reasonable answer explicitly starting "No,
+        # ..." - left blank and recorded as the same unanswerable gap 27
+        # times in one real user's answer_gaps.json, despite the model
+        # clearly knowing and stating the answer every time.
+        for i, opt in enumerate(options):
+            opt_norm = opt.strip().casefold()
+            if not opt_norm:
+                continue
+            opt_pattern = re.compile(rf"(?<!\w){re.escape(opt_norm)}(?!\w)")
+            if opt_pattern.search(answer_norm):
+                return i
         return None
 
     @staticmethod

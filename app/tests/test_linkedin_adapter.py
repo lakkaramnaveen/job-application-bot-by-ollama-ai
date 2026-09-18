@@ -796,6 +796,45 @@ def test_best_match_index_non_word_answer_still_rejects_a_partial_number_match()
     assert LinkedInAdapter._best_match_index(["15+ years", "Not sure"], "5+") is None
 
 
+def test_best_match_index_matches_a_short_option_named_by_a_long_explanatory_answer():
+    """Real bug this guards against: qa_answerer.py's own system prompt
+    allows (and in practice usually produces) an explanatory answer rather
+    than a bare "yes"/"no" - the original single-direction check (answer
+    found within option) can then never match ANY yes/no-shaped question,
+    no matter how clearly the answer states its position, since the
+    answer is always longer than either option. Confirmed live in one
+    real user's own data: this exact answer shape, against options
+    ["Yes", "No"], returned None under the old code and was recorded as
+    the same unanswerable "commuting" gap 27 times despite the model
+    clearly knowing and stating the answer every time.
+    """
+    options = ["Yes", "No"]
+    answer = "No, I am currently located in St Louis, MO and would need to relocate."
+    assert LinkedInAdapter._best_match_index(options, answer) == 1
+
+
+def test_best_match_index_reverse_direction_respects_word_boundaries():
+    """The reverse-direction fallback must not match option "No" against
+    an answer merely containing "no" as a substring of a longer word
+    (e.g. "know", "normal") - the same word-boundary protection the
+    forward direction already has.
+    """
+    options = ["Yes", "No"]
+    answer = "I know the role well and am a normal full-time candidate."
+    assert LinkedInAdapter._best_match_index(options, answer) is None
+
+
+def test_best_match_index_reverse_direction_picks_the_first_stated_option():
+    """When an answer's wording could plausibly relate to more than one
+    option, the option matched first (in the order given - the order the
+    real form presents them in) wins, consistent with how a direct answer
+    naturally leads with its actual position.
+    """
+    options = ["Yes", "No", "Maybe"]
+    answer = "No, though I might consider it under the right circumstances - maybe."
+    assert LinkedInAdapter._best_match_index(options, answer) == 1
+
+
 # --- search() URL handling and pagination ---
 
 
