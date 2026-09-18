@@ -1,4 +1,6 @@
 import json
+import platform
+import subprocess
 
 import httpx
 from pydantic import ValidationError
@@ -99,3 +101,41 @@ class OllamaProvider(LLMProvider):
             f"Model '{self._model}' did not return schema-valid JSON after "
             f"{MAX_GENERATION_ATTEMPTS} attempts: {last_error}"
         ) from last_error
+
+
+def quit_ollama() -> bool:
+    """Best-effort shutdown of the locally running Ollama server/app - see
+    Settings.quit_ollama_when_done, which cli.py checks before calling this
+    once a run stops drawing on Ollama for the day. There is no HTTP
+    endpoint to ask Ollama to shut down (only to unload one loaded model,
+    which isn't the same as quitting the app/server), so this reaches for
+    the OS process directly instead.
+
+    On macOS this first asks the menu-bar app to quit via AppleScript (the
+    common install path - quitting the app also stops the server process it
+    launched), then falls back to killing a bare `ollama serve` process by
+    name in case that's how it was actually started; either, both, or
+    neither may apply on a given machine, so every command is attempted and
+    a failure in one doesn't skip the rest. Never raises - this is a
+    courtesy cleanup after a run that has already finished its real work,
+    not something that should fail the run itself, and "nothing to quit"
+    (Ollama already stopped, or was never running) is a normal, harmless
+    outcome each command reports as a plain nonzero exit rather than an
+    exception.
+    """
+    system = platform.system()
+    if system == "Darwin":
+        commands = [["osascript", "-e", 'quit app "Ollama"'], ["pkill", "-x", "ollama"]]
+    elif system == "Windows":
+        commands = [["taskkill", "/IM", "ollama app.exe", "/F"], ["taskkill", "/IM", "ollama.exe", "/F"]]
+    else:
+        commands = [["pkill", "-x", "ollama"]]
+
+    quit_ok = False
+    for command in commands:
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+            quit_ok = quit_ok or result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return quit_ok

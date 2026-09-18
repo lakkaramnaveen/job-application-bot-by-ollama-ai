@@ -43,7 +43,7 @@ from job_bot.integrations.gmail_sync import sync_gmail
 from job_bot.llm.base import LLMProvider
 from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.factory import get_provider
-from job_bot.llm.ollama_provider import OllamaProviderError
+from job_bot.llm.ollama_provider import OllamaProviderError, quit_ollama
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
@@ -239,6 +239,8 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         if not args.loop:
             applied, failed = run_one_cycle()
             _print_cycle_summary(applied, failed, rate_limiter, settings)
+            if rate_limiter.remaining_today() <= 0:
+                _quit_ollama_if_configured(settings)
             return
 
         print(
@@ -251,6 +253,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 _print_cycle_summary(applied, failed, rate_limiter, settings)
                 if rate_limiter.remaining_today() <= 0:
                     print("Daily application cap reached for today - stopping.")
+                    _quit_ollama_if_configured(settings)
                     break
                 if page.is_closed():
                     print("Browser window was closed - stopping.")
@@ -268,6 +271,19 @@ def _print_cycle_summary(applied: int, failed: int, rate_limiter: RateLimiter, s
             f"{failed} posting(s) could not be completed - see "
             f"{settings.failed_applications_log_path} for what happened and why."
         )
+
+
+def _quit_ollama_if_configured(settings: Settings) -> None:
+    """Called once `job-bot run` is done drawing on Ollama for the day (the
+    daily cap was reached) - see Settings.quit_ollama_when_done. No-op for
+    the Claude provider, and when the setting is off (its default).
+    """
+    if settings.llm_provider != "ollama" or not settings.quit_ollama_when_done:
+        return
+    if quit_ollama():
+        print("Daily cap reached - quit Ollama.")
+    else:
+        print("Daily cap reached - could not quit Ollama (it may already be stopped).")
 
 
 def _run_apply_cycle(

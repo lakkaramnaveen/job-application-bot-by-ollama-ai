@@ -134,6 +134,11 @@ Edit `.env`:
 - Set `LLM_PROVIDER` to `claude` or `ollama`.
 - If using Claude, set `ANTHROPIC_API_KEY` (get one at console.anthropic.com).
 - If using Ollama, set `OLLAMA_MODEL` to whatever you pulled above.
+- Optionally set `QUIT_OLLAMA_WHEN_DONE=true` to have `job-bot run` quit the
+  local Ollama server/app for you once today's application cap is reached
+  (or the loop otherwise stops), so it stops holding the model in memory
+  for the rest of the day. Off by default, and has no effect with
+  `LLM_PROVIDER=claude`.
 - **Put your resume at the path `RESUME_PATH` points to** - default
   `./data/resume.pdf` relative to `app/` (i.e. `app/data/resume.pdf`), or
   point `RESUME_PATH` at a file anywhere else on disk. PDF, DOCX, or TXT.

@@ -1,8 +1,10 @@
+import subprocess
+
 import httpx
 import pytest
 import respx
 
-from job_bot.llm.ollama_provider import OllamaProvider, OllamaProviderError
+from job_bot.llm.ollama_provider import OllamaProvider, OllamaProviderError, quit_ollama
 from job_bot.models.schemas import JobMatchScore
 
 BASE_URL = "http://localhost:11434"
@@ -177,3 +179,49 @@ def test_request_uses_json_schema_format():
     sent_body = route.calls.last.request.content
     assert b'"format"' in sent_body
     assert b"deepseek-r1:8b" in sent_body
+
+
+def test_quit_ollama_returns_true_when_a_command_succeeds(monkeypatch):
+    monkeypatch.setattr("job_bot.llm.ollama_provider.platform.system", lambda: "Darwin")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        returncode = 0 if command[0] == "pkill" else 1
+        return subprocess.CompletedProcess(command, returncode)
+
+    monkeypatch.setattr("job_bot.llm.ollama_provider.subprocess.run", fake_run)
+
+    assert quit_ollama() is True
+    # Both the AppleScript "quit app" attempt and the pkill fallback are
+    # tried, regardless of the first one's outcome - either may be the one
+    # that actually applies depending on how Ollama was started.
+    assert len(calls) == 2
+
+
+def test_quit_ollama_returns_false_when_nothing_was_running(monkeypatch):
+    """Ollama already stopped (or never running) is a normal, harmless
+    outcome - every command just reports a nonzero exit, not an exception.
+    """
+    monkeypatch.setattr("job_bot.llm.ollama_provider.platform.system", lambda: "Darwin")
+    monkeypatch.setattr(
+        "job_bot.llm.ollama_provider.subprocess.run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 1),
+    )
+
+    assert quit_ollama() is False
+
+
+def test_quit_ollama_survives_a_missing_command(monkeypatch):
+    """A command this function shells out to (osascript/pkill/taskkill) not
+    existing on the current machine must never surface as a crash - this is
+    a courtesy cleanup after a run that already finished its real work.
+    """
+    monkeypatch.setattr("job_bot.llm.ollama_provider.platform.system", lambda: "Linux")
+
+    def raise_missing(command, **kwargs):
+        raise FileNotFoundError("pkill not found")
+
+    monkeypatch.setattr("job_bot.llm.ollama_provider.subprocess.run", raise_missing)
+
+    assert quit_ollama() is False

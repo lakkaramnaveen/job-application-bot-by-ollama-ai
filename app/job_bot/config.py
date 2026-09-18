@@ -41,6 +41,15 @@ class Settings(BaseSettings):
 
     ollama_model: str = "deepseek-r1:8b"
     ollama_base_url: str = "http://localhost:11434"
+    # Once `job-bot run` hits today's application cap (or the loop stops for
+    # any other reason - browser closed, Ctrl+C), best-effort quit the local
+    # Ollama server/app so it stops holding the model in memory for the rest
+    # of the day. No effect when llm_provider is "claude", and no effect on
+    # a concurrent run/other process still using Ollama for something else -
+    # this is meant for the common single-user, single-purpose setup this
+    # project assumes. False (default) leaves Ollama running, matching the
+    # rest of this section's off-by-default convention.
+    quit_ollama_when_done: bool = False
 
     resume_path: Path = APP_DIR / "data" / "resume.pdf"
     faq_path: Path = APP_DIR / "data" / "faq_answers.json"

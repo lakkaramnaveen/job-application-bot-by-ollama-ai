@@ -1019,6 +1019,101 @@ def test_loop_runs_multiple_cycles_and_stops_once_the_daily_cap_is_reached(tmp_p
     assert sleep_calls == [7 * 60]
 
 
+def test_run_quits_ollama_once_the_daily_cap_is_reached_when_configured(tmp_path, monkeypatch):
+    """Settings.quit_ollama_when_done must actually reach cmd_run - proving
+    the wiring, not just that quit_ollama() itself works (see
+    test_ollama_provider.py for that).
+    """
+    provider = FakeProvider()
+    quit_calls: list[None] = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    monkeypatch.setattr("job_bot.cli.quit_ollama", lambda: quit_calls.append(None) or True)
+
+    settings = make_settings(
+        tmp_path, llm_provider="ollama", anthropic_api_key=None, daily_application_cap=1, quit_ollama_when_done=True
+    )
+    cmd_run(settings, make_args())
+
+    assert quit_calls == [None]
+
+
+def test_run_does_not_quit_ollama_when_the_setting_is_off(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    quit_calls: list[None] = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    monkeypatch.setattr("job_bot.cli.quit_ollama", lambda: quit_calls.append(None) or True)
+
+    settings = make_settings(
+        tmp_path, llm_provider="ollama", anthropic_api_key=None, daily_application_cap=1, quit_ollama_when_done=False
+    )
+    cmd_run(settings, make_args())
+
+    assert quit_calls == []
+
+
+def test_run_does_not_quit_ollama_for_the_claude_provider_even_if_configured(tmp_path, monkeypatch):
+    """quit_ollama_when_done is meaningless with LLM_PROVIDER=claude - must
+    stay inert rather than kill an Ollama the run never even used.
+    """
+    provider = FakeProvider()
+    quit_calls: list[None] = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    monkeypatch.setattr("job_bot.cli.quit_ollama", lambda: quit_calls.append(None) or True)
+
+    settings = make_settings(tmp_path, daily_application_cap=1, quit_ollama_when_done=True)
+    cmd_run(settings, make_args())
+
+    assert quit_calls == []
+
+
+def test_run_does_not_quit_ollama_when_the_daily_cap_is_not_yet_reached(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    quit_calls: list[None] = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    monkeypatch.setattr("job_bot.cli.quit_ollama", lambda: quit_calls.append(None) or True)
+
+    settings = make_settings(
+        tmp_path,
+        llm_provider="ollama",
+        anthropic_api_key=None,
+        daily_application_cap=100,
+        quit_ollama_when_done=True,
+    )
+    cmd_run(settings, make_args())
+
+    assert quit_calls == []
+
+
+def test_loop_quits_ollama_once_the_daily_cap_is_reached_when_configured(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    adapter = LoopFakeAdapter(page=None)
+    quit_calls: list[None] = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("job_bot.cli.quit_ollama", lambda: quit_calls.append(None) or True)
+
+    settings = make_settings(
+        tmp_path,
+        llm_provider="ollama",
+        anthropic_api_key=None,
+        daily_application_cap=2,
+        quit_ollama_when_done=True,
+    )
+    cmd_run(settings, make_args(loop=True, max_apps=1))
+
+    assert quit_calls == [None]
+
+
 def test_loop_stops_cleanly_on_keyboard_interrupt(tmp_path, monkeypatch):
     provider = FakeProvider()
     adapter = LoopFakeAdapter(page=None)
