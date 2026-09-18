@@ -4,8 +4,8 @@ docstring for the tradeoff between them, and README.md's "Browser profile"
 section for the user-facing explanation.
 """
 
+import contextlib
 from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, sync_playwright
@@ -19,7 +19,7 @@ class BrowserSessionError(RuntimeError):
     """
 
 
-@contextmanager
+@contextlib.contextmanager
 def browser_session(
     profile_dir: Path, headless: bool = False, cdp_url: str | None = None
 ) -> Iterator[BrowserContext]:
@@ -73,4 +73,16 @@ def browser_session(
         try:
             yield context
         finally:
-            context.close()
+            # The browser/driver connection can already be gone by the
+            # time we get here - most commonly a second Ctrl+C landing
+            # while this same close() is still in flight from the first
+            # one (confirmed live: "Connection closed while reading from
+            # the driver", a bare Exception - not even a PlaywrightError
+            # subclass - propagating all the way out of main() as a raw
+            # traceback after "Stopped." had already printed for the
+            # interrupt that triggered this cleanup). There's nothing left
+            # to close in that case, and a failure here must never
+            # overwrite or mask whatever real KeyboardInterrupt/error got
+            # us into this `finally` block in the first place.
+            with contextlib.suppress(Exception):
+                context.close()

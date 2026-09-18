@@ -13,11 +13,14 @@ from job_bot.browser.session import BrowserSessionError, browser_session
 
 
 class FakeContext:
-    def __init__(self):
+    def __init__(self, close_error: Exception | None = None):
         self.closed = False
+        self._close_error = close_error
 
     def close(self):
         self.closed = True
+        if self._close_error is not None:
+            raise self._close_error
 
 
 class FakeBrowser:
@@ -123,3 +126,42 @@ def test_default_mode_launches_an_isolated_profile_and_closes_it_on_exit(monkeyp
     assert chromium.connect_over_cdp_calls == []
     [call_kwargs] = chromium.launch_persistent_context_calls
     assert call_kwargs == {"user_data_dir": str(profile_dir), "headless": True}
+
+
+def test_default_mode_swallows_a_close_failure_during_cleanup(monkeypatch, tmp_path):
+    """Real failure this guards against: context.close() itself can raise
+    - most commonly a second Ctrl+C landing while this same close() is
+    still in flight from the first one (confirmed live:
+    "Connection closed while reading from the driver", a bare Exception,
+    not even a PlaywrightError subclass). Before this fix, that propagated
+    all the way out of main() as a raw traceback even after "Stopped." had
+    already printed for the interrupt that triggered this cleanup -
+    there's nothing left to close by that point, so a failure to close
+    cleanly must never surface as a crash of its own.
+    """
+    chromium = FakeChromium()
+    close_error = Exception("Connection closed while reading from the driver")
+    chromium.persistent_context = FakeContext(close_error=close_error)
+    monkeypatch.setattr(session_module, "sync_playwright", lambda: FakePlaywrightCM(chromium))
+
+    with browser_session(tmp_path / "profile", headless=True) as context:
+        pass  # must not raise on exit, even though context.close() below does
+
+    assert context.closed is True
+
+
+def test_a_close_failure_does_not_mask_a_real_error_from_inside_the_block(monkeypatch, tmp_path):
+    """A close() failure during cleanup swallowing itself must not also
+    swallow a genuine error the `with` block's own body raised - that
+    error is the one actually worth seeing.
+    """
+    chromium = FakeChromium()
+    close_error = Exception("Connection closed while reading from the driver")
+    chromium.persistent_context = FakeContext(close_error=close_error)
+    monkeypatch.setattr(session_module, "sync_playwright", lambda: FakePlaywrightCM(chromium))
+
+    with (
+        pytest.raises(RuntimeError, match="something went wrong inside the block"),
+        browser_session(tmp_path / "profile", headless=True),
+    ):
+        raise RuntimeError("something went wrong inside the block")
