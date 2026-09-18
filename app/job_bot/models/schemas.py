@@ -80,6 +80,61 @@ class JobMatchScore(BaseModel):
     missing_qualifications: list[str] = Field(default_factory=list)
 
 
+# Substrings unique enough to a local reasoning model's internal chain-of-
+# thought that real, submittable content would essentially never contain
+# them - seen live, qwen3:30b, in two separate real failures:
+# - 115 of 1,644 recorded answers in one real user's qa_history were this
+#   model's own reasoning trace leaking into ApplicationAnswer.answer
+#   verbatim (starting "I need to answer the question about ... [restates
+#   the entire resume] ..."), truncated mid-thought before ever reaching a
+#   real answer.
+# - One real, actually-submitted CoverLetter.body contained the finished
+#   letter followed by the model's own self-review ("Let me check if I've
+#   included only facts from the resume: ... Let me count [paragraphs] ...
+#   I think this is good to go ... Final version: ...") and then a second,
+#   duplicate copy of the letter - sent to a real employer under the
+#   user's name.
+# Both are syntactically perfectly valid strings - ordinary schema
+# validation (a bare `str` field) never catches either - but neither is
+# real, submittable content.
+_REASONING_LEAK_MARKERS = (
+    "i need to answer the question",
+    "i need to provide",
+    "let me carefully",
+    "let me search",
+    "let me check",
+    "let me count",
+    "let me think",
+    "let me write the final",
+    "let me make sure",
+    "i should not fabricate",
+    "i think this is good to go",
+    "i'll output",
+    "final version:",
+    "note: the user said",
+)
+
+
+def _reject_leaked_reasoning(value: object) -> object:
+    """Raises if `value` looks like leaked reasoning rather than real,
+    submittable content - routes back through generate_structured()'s
+    existing retry-on-ValidationError loop (see ollama_provider.py),
+    giving the model another attempt instead of silently accepting the
+    leaked reasoning as if it were the real thing. See
+    _REASONING_LEAK_MARKERS above for what this guards against and why a
+    substring/prefix check on a local model's own consistent phrasing is
+    reliable here.
+    """
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if any(marker in normalized for marker in _REASONING_LEAK_MARKERS):
+            raise ValueError(
+                "This looks like leaked reasoning, not the final content itself - output only "
+                "the finished text, with no explanation, self-review, or draft/revision process."
+            )
+    return value
+
+
 class TailoredResume(BaseModel):
     """A resume rewritten/reordered to emphasize fit for one specific job."""
 
@@ -89,51 +144,15 @@ class TailoredResume(BaseModel):
     )
     bullet_points: list[str] = Field(description="Tailored, ATS-friendly experience bullet points")
 
+    _reject_leaked_reasoning_summary = field_validator("summary", mode="before")(_reject_leaked_reasoning)
+
 
 class CoverLetter(BaseModel):
     """A cover letter generated for one specific job application."""
 
     body: str = Field(description="Full cover letter body text, 3-4 short paragraphs")
 
-
-# Substrings unique enough to a local reasoning model's internal chain-of-
-# thought that a real form answer would essentially never contain them -
-# seen live, qwen3:30b: 115 of 1,644 recorded answers in one real user's
-# qa_history were this model's own reasoning trace leaking into the
-# `answer` field verbatim (starting "I need to answer the question about
-# ... [restates the entire resume] ..."), truncated mid-thought once
-# generation ran out of room before ever reaching a real answer. This is
-# syntactically a perfectly valid string - ordinary schema validation
-# (a bare `str` field) never catches it - but it's not an answer at all,
-# and it was getting submitted to a real application form field, then
-# reused via Tracker.recent_qa_pairs() as "informal reference" for future
-# questions, compounding the problem.
-_REASONING_LEAK_MARKERS = (
-    "i need to answer the question",
-    "let me carefully",
-    "let me search",
-    "let me check",
-    "i should not fabricate",
-)
-
-
-def _reject_leaked_reasoning(value: object) -> object:
-    """Raises if `value` looks like leaked reasoning rather than a real
-    answer - routes back through generate_structured()'s existing retry-
-    on-ValidationError loop (see ollama_provider.py), giving the model
-    another attempt instead of silently accepting the leaked reasoning as
-    if it were a real answer. See _REASONING_LEAK_MARKERS above for what
-    this guards against and why a substring/prefix check on a local
-    model's own consistent phrasing is reliable here.
-    """
-    if isinstance(value, str):
-        normalized = value.strip().casefold()
-        if any(marker in normalized for marker in _REASONING_LEAK_MARKERS):
-            raise ValueError(
-                "This looks like leaked reasoning, not a direct answer to fill into a form "
-                "field - answer only, with no explanation of how you checked the resume/FAQ."
-            )
-    return value
+    _reject_leaked_reasoning_body = field_validator("body", mode="before")(_reject_leaked_reasoning)
 
 
 class ApplicationAnswer(BaseModel):

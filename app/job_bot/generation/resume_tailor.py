@@ -33,7 +33,11 @@ SYSTEM_PROMPT = (
     "- Naturally echo the exact phrasing the posting uses for a skill the "
     "candidate genuinely has (e.g. 'CI/CD' vs 'continuous integration') "
     "since ATS keyword matching is often literal - but only ever for skills "
-    "actually grounded in the resume."
+    "actually grounded in the resume.\n"
+    "- The `summary` field is the finished resume text itself, verbatim - "
+    "never your reasoning process, never a self-review, never a note about "
+    "how you checked the resume or arrived at the wording. Do all of that "
+    "silently, then output just the finished summary text."
 )
 
 

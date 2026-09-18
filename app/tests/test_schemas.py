@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from job_bot.models.schemas import ApplicationAnswer, EmailClassification, JobMatchScore
+from job_bot.models.schemas import (
+    ApplicationAnswer,
+    CoverLetter,
+    EmailClassification,
+    JobMatchScore,
+    TailoredResume,
+)
 
 
 def make_job_match_score(**overrides):
@@ -95,6 +101,61 @@ def test_application_answer_does_not_reject_a_long_but_genuine_answer():
     )
     answer = ApplicationAnswer(answer=genuine, confidence=0.8, based_on_resume=True)
     assert answer.answer == genuine
+
+
+def test_cover_letter_rejects_leaked_reasoning_and_a_duplicate_draft():
+    """Real, serious failure this guards against: an actually-submitted
+    cover letter (qwen3:30b, via Ollama) contained the finished letter
+    followed by the model's own self-review ("Let me check if I've
+    included only facts from the resume: ... Let me count [paragraphs]
+    ... I think this is good to go ... Final version:") and then a
+    second, duplicate copy of the letter - sent to a real employer under
+    the user's name. This is the actual contaminated text (company/
+    contact details unchanged from what was really sent).
+    """
+    contaminated = (
+        "Dear Hiring Manager,\n\n"
+        "I am writing to express my interest in the Software Engineer position at Acme Corp.\n\n"
+        "Sincerely,\nJane Doe\n\n"
+        "Let me check if I've included only facts from the resume:\n"
+        "- 5+ years of experience: Yes, mentioned in the summary.\n\n"
+        "Let me count: 1. Introduction. 2. Body. 3. Closing.\n"
+        "That's three paragraphs. I think this is good to go.\n\n"
+        "Final version:\n\n"
+        "Dear Hiring Manager,\n\nI am writing to express my interest..."
+    )
+    with pytest.raises(ValidationError, match="leaked reasoning"):
+        CoverLetter(body=contaminated)
+
+
+def test_cover_letter_accepts_a_genuine_multi_paragraph_letter():
+    genuine = (
+        "Dear Hiring Manager,\n\n"
+        "I am writing to express my interest in the Software Engineer position at Acme Corp. "
+        "With over five years of experience building Java backend services, I have a proven "
+        "track record of delivering reliable, high-performance systems.\n\n"
+        "Sincerely,\nJane Doe"
+    )
+    letter = CoverLetter(body=genuine)
+    assert letter.body == genuine
+
+
+def test_tailored_resume_summary_rejects_leaked_reasoning():
+    contaminated = (
+        "Let me carefully check the resume for the most relevant experience before writing "
+        "the summary, focusing on backend development and cloud infrastructure."
+    )
+    with pytest.raises(ValidationError, match="leaked reasoning"):
+        TailoredResume(summary=contaminated, highlighted_skills=["Java"], bullet_points=["Shipped X"])
+
+
+def test_tailored_resume_summary_accepts_a_genuine_summary():
+    genuine = (
+        "Software Engineer with 5+ years of experience building and maintaining Java backend "
+        "services, with a focus on microservices architecture and CI/CD automation."
+    )
+    resume = TailoredResume(summary=genuine, highlighted_skills=["Java"], bullet_points=["Shipped X"])
+    assert resume.summary == genuine
 
 
 @pytest.mark.parametrize(
