@@ -194,6 +194,10 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             )
             sys.exit(1)
 
+    max_years_experience = (
+        args.max_years_experience if args.max_years_experience is not None else settings.max_years_experience
+    )
+    require_w2 = args.require_w2 or settings.require_w2
     include_external = args.include_external_apply or settings.enable_external_apply
 
     with browser_session(
@@ -227,6 +231,8 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 min_score=min_score,
                 exclude_keywords=exclude_keywords,
                 experience_levels=experience_levels,
+                max_years_experience=max_years_experience,
+                require_w2=require_w2,
                 include_external=include_external,
             )
 
@@ -284,6 +290,8 @@ def _run_apply_cycle(
     min_score: int,
     exclude_keywords: list[str],
     experience_levels: list[str] | None,
+    max_years_experience: int | None,
+    require_w2: bool,
     include_external: bool,
 ) -> tuple[int, int]:
     """One search -> score -> tailor -> apply pass over a fresh batch of
@@ -344,8 +352,8 @@ def _run_apply_cycle(
             provider,
             resume_text,
             description,
-            max_years_experience=settings.max_years_experience,
-            require_w2=settings.require_w2,
+            max_years_experience=max_years_experience,
+            require_w2=require_w2,
         )
         # min_score is an extra floor on top of the model's own
         # should_apply verdict, not a replacement for it - the scorer's
@@ -919,6 +927,26 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Comma-separated LinkedIn seniority levels to restrict the search to: "
             f"{', '.join(sorted(EXPERIENCE_LEVEL_CODES))} (default: from .env, DEFAULT_EXPERIENCE_LEVELS)."
+        ),
+    )
+    run_p.add_argument(
+        "--max-years-experience",
+        type=int,
+        default=None,
+        help=(
+            "Treat a posting explicitly requiring more years of experience than this, or "
+            "explicitly Senior/Staff/Principal/Lead/Director-or-higher, as ineligible regardless "
+            "of match score (default: from .env, MAX_YEARS_EXPERIENCE; unset means no check)."
+        ),
+    )
+    run_p.add_argument(
+        "--require-w2",
+        action="store_true",
+        help=(
+            "Treat a posting explicitly stated as Corp-to-Corp (C2C), 1099, or otherwise not "
+            "offered as direct W2 employment as ineligible (default: from .env, REQUIRE_W2). "
+            "Only adds the restriction for this run - it can't be used to turn REQUIRE_W2=true "
+            "off for one run."
         ),
     )
     run_p.add_argument(

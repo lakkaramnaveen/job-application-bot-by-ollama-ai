@@ -203,7 +203,7 @@ Other useful flags on `run`:
     --loop --loop-interval-minutes 20 --max-apps 5 --yes-i-understand-the-risk
   ```
 
-**Getting better-quality matches** - three flags (each also settable as a
+**Getting better-quality matches** - five flags (each also settable as a
 persistent default in `.env` - see `.env.example`), applied in this order:
 1. `--experience-level mid-senior,director` - restricts the LinkedIn search
    itself to these seniority levels (`internship`/`entry`/`associate`/
@@ -214,7 +214,19 @@ persistent default in `.env` - see `.env.example`), applied in this order:
    posting whose title contains any of these (case-insensitive) before it's
    scored at all, for titles that keyword search turns up but aren't
    actually the role you do.
-3. `--min-score 75` - an extra floor on top of the model's own `should_apply`
+3. `--max-years-experience 6` - rejects a posting outright (regardless of
+   score) if the model reads it as explicitly titled/described as Senior/
+   Staff/Principal/Lead/Director-or-higher, or explicitly requiring more
+   years of experience than this. Useful alongside `--experience-level`
+   rather than instead of it: LinkedIn's own seniority facet has no separate
+   "mid" bucket - it bundles real mid-level postings in with senior ones
+   under "mid-senior" - so targeting entry-to-mid without losing genuine
+   mid-level roles means including `mid-senior` in `--experience-level` and
+   letting this flag reject the truly senior ones within it.
+4. `--require-w2` - rejects a posting outright if the model reads it as
+   explicitly Corp-to-Corp (C2C), 1099, or otherwise not offered as direct
+   W2 employment. A posting silent on employment type is not affected.
+5. `--min-score 75` - an extra floor on top of the model's own `should_apply`
    verdict; a posting only gets applied to if the model said yes *and* its
    score clears this. Use this if the model's own bar (it's told to say no
    below 60) feels too generous in practice. Raising this takes effect
@@ -223,36 +235,20 @@ persistent default in `.env` - see `.env.example`), applied in this order:
    it after the fact won't leave weak matches from before sitting in the
    queue to be applied to on the next run.
 
+`--max-years-experience`/`--require-w2` are assessed by the model reading
+the actual posting text (the same way the always-on citizenship/clearance
+check already works), not by a keyword search on the description - the
+language here is too varied and context-dependent ("5+ years" in a "nice to
+have" bullet vs. a hard requirement, or "no C2C" being a *good* signal
+despite containing "C2C") for a substring match to get right without
+rejecting postings it shouldn't.
+
 ```bash
 job-bot run --keywords "Full Stack Engineer" --location "United States" \
-  --experience-level mid-senior,director --min-score 75 \
+  --experience-level entry,associate,mid-senior --max-years-experience 6 \
+  --require-w2 --min-score 75 \
   --exclude-title-keywords "forward deployed,sales engineer" --dry-run
 ```
-
-**Targeting entry-to-mid-level, W2-only roles** - two more `.env`-only
-settings (see `.env.example`), enforced as part of scoring rather than as a
-pre-filter, since LinkedIn's own search facets can't express either of
-these precisely:
-- `MAX_YEARS_EXPERIENCE=6` - the model reads each posting's actual text and
-  rejects it outright (regardless of score) if it's explicitly titled/
-  described as Senior/Staff/Principal/Lead/Director-or-higher, or explicitly
-  requires more years of experience than this. LinkedIn's own seniority
-  facet has no separate "mid" bucket - it bundles real mid-level postings in
-  with senior ones under "mid-senior" - so `DEFAULT_EXPERIENCE_LEVELS=
-  entry,associate,mid-senior` (rather than excluding mid-senior outright)
-  plus this setting is the combination that actually targets entry-to-mid
-  without also losing genuine mid-level roles LinkedIn happened to bucket
-  the same way as senior ones.
-- `REQUIRE_W2=true` - rejects a posting outright if it explicitly states
-  Corp-to-Corp (C2C), 1099, or otherwise not offered as direct W2
-  employment. A posting silent on employment type is not affected.
-
-Both are assessed by the model reading the actual posting text (the same
-way the always-on citizenship/clearance check already works), not by a
-keyword search on the description - the language here is too varied and
-context-dependent ("5+ years" in a "nice to have" bullet vs. a hard
-requirement, or "no C2C" being a *good* signal despite containing "C2C")
-for a substring match to get right without rejecting postings it shouldn't.
 
 Switch providers per run without editing `.env`:
 ```bash

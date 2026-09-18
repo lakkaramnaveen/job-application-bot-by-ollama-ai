@@ -200,6 +200,8 @@ def make_args(**overrides) -> argparse.Namespace:
         min_score=None,
         exclude_title_keywords=None,
         experience_level=None,
+        max_years_experience=None,
+        require_w2=False,
         loop=False,
         loop_interval_minutes=20,
         include_external_apply=False,
@@ -226,7 +228,7 @@ def test_run_generates_and_persists_tailored_resume_and_cover_letter(tmp_path, m
     assert (job_dir / "cover_letter.txt").read_text() == "Dear Acme, I would love to join your team."
 
 
-def test_run_passes_max_years_experience_and_require_w2_to_the_scorer(tmp_path, monkeypatch):
+def test_run_passes_settings_max_years_experience_and_require_w2_to_the_scorer(tmp_path, monkeypatch):
     """cmd_run must wire Settings.max_years_experience/require_w2 through to
     score_job_match() - the eligibility check itself is scorer.py's
     responsibility (see test_scorer.py), this only guards the wiring gap
@@ -244,6 +246,46 @@ def test_run_passes_max_years_experience_and_require_w2_to_the_scorer(tmp_path, 
     system = provider.job_match_system_prompts[0]
     assert "more than 6 years" in system
     assert "Corp-to-Corp" in system
+
+
+def test_run_max_years_experience_flag_overrides_settings(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, max_years_experience=6)
+    cmd_run(settings, make_args(max_years_experience=3))
+
+    system = provider.job_match_system_prompts[0]
+    assert "more than 3 years" in system
+
+
+def test_run_require_w2_flag_turns_the_check_on_even_when_settings_has_it_off(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, require_w2=False)
+    cmd_run(settings, make_args(require_w2=True))
+
+    system = provider.job_match_system_prompts[0]
+    assert "Corp-to-Corp" in system
+
+
+def test_run_max_years_experience_setting_used_when_flag_not_given(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, max_years_experience=None, require_w2=False)
+    cmd_run(settings, make_args())  # neither flag passed on the CLI
+
+    system = provider.job_match_system_prompts[0]
+    assert "Seniority" not in system
+    assert "Corp-to-Corp" not in system
 
 
 def test_run_records_the_resume_generation_for_future_reuse(tmp_path, monkeypatch):
