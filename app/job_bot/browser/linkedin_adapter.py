@@ -319,8 +319,23 @@ class LinkedInAdapter(JobBoardAdapter):
         button = self._page.locator(SELECTORS["external_apply_button"])
         if button.count() == 0:
             return None
-        with self._page.expect_popup(timeout=15000) as popup_info:
-            button.first.click()
+        try:
+            with self._page.expect_popup(timeout=15000) as popup_info:
+                button.first.click()
+        except PlaywrightTimeoutError as e:
+            # Same "diagnostic, not a bare Playwright timeout" treatment
+            # as fill_and_submit()'s dialog wait: the click can fail to
+            # open a popup at all if the destination site navigates in
+            # place instead of via window.open() (confirmed live
+            # elsewhere that LinkedIn's own control does use window.open,
+            # but nothing guarantees every employer's redirect does too),
+            # or its own loading was just unusually slow this time.
+            raise RuntimeError(
+                f"Clicking the external-apply button for job {posting.job_id} didn't open a new "
+                f"tab/popup within 15s (page was at {self._page.url!r}, titled "
+                f"{self._page.title()!r}) - the destination site may navigate in place instead of "
+                "opening a popup, or its own loading was unusually slow this time."
+            ) from e
         external_page = popup_info.value
         external_page.wait_for_load_state("domcontentloaded")
         return external_page

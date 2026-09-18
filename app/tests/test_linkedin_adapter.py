@@ -41,6 +41,9 @@ REQUIRED_RADIO_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_f
 REQUIRED_SELECT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_select.html"
 MIXED_APPLY_TYPES_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_mixed_apply_types.html"
 EXTERNAL_APPLY_POSTING_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "job_posting_external_apply.html"
+EXTERNAL_APPLY_NO_POPUP_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "job_posting_external_apply_no_popup.html"
+)
 SUBMIT_BUTTON_TEXT_ONLY_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_submit_button_text_only.html"
 )
@@ -1002,6 +1005,38 @@ def test_open_external_application_returns_the_popup_page(playwright_page, monke
     finally:
         if external_page is not None:
             external_page.close()
+
+
+def test_open_external_application_raises_a_diagnostic_error_when_no_popup_opens(playwright_page, monkeypatch):
+    """Same "diagnostic, not a bare Playwright timeout" treatment as
+    fill_and_submit()'s dialog wait: a click that fails to open a popup at
+    all (the destination navigating in place instead of via window.open(),
+    or a broken control) used to surface as a bare
+    playwright._impl._errors.TimeoutError with no indication of what the
+    page actually did instead. Takes the real ~15s timeout to run, since
+    that's the actual behavior under verification.
+    """
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(
+        playwright_page,
+        "goto",
+        lambda url, **kw: real_goto(f"file://{EXTERNAL_APPLY_NO_POPUP_FIXTURE_PATH}"),
+    )
+    adapter = LinkedInAdapter(playwright_page)
+    posting = JobPosting(
+        job_id="202",
+        title="Senior Java Engineer",
+        company="FusionAuth",
+        url=f"file://{EXTERNAL_APPLY_NO_POPUP_FIXTURE_PATH}",
+        description="",
+        easy_apply=False,
+    )
+
+    with pytest.raises(RuntimeError, match="didn't open a new tab/popup") as exc_info:
+        adapter.open_external_application(posting)
+
+    assert "page was at" in str(exc_info.value)
+    assert "titled" in str(exc_info.value)
 
 
 def test_open_external_application_returns_none_when_theres_no_external_button(playwright_page, monkeypatch):
