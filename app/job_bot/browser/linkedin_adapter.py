@@ -340,7 +340,26 @@ class LinkedInAdapter(JobBoardAdapter):
         time.sleep(ACTION_DELAY_SECONDS)
 
         dialog = self._page.locator(SELECTORS["dialog"]).first
-        dialog.wait_for(timeout=10000)
+        try:
+            dialog.wait_for(timeout=10000)
+        except PlaywrightTimeoutError as e:
+            # Diagnostic, not just a bare Playwright timeout: confirmed
+            # live in a real run (twice in one cycle), Playwright's own
+            # message here names only the selector, never what the page
+            # actually showed instead - giving no lead on whether the
+            # click silently opened nothing, LinkedIn presented a re-
+            # authentication checkpoint instead of the dialog, the posting
+            # stopped accepting applications since it was found, or
+            # client-side rendering was just unusually slow this once. The
+            # current URL/title at least narrows that down the next time
+            # this shows up in failed_applications.log.
+            raise RuntimeError(
+                f"Easy Apply dialog never appeared for job {posting.job_id} within 10s of "
+                f"clicking Easy Apply (page was at {self._page.url!r}, titled "
+                f"{self._page.title()!r}) - the posting may require re-authentication, have "
+                "stopped accepting applications since it was found, or LinkedIn's own "
+                "rendering was unusually slow this time."
+            ) from e
 
         max_steps = 20  # hard cap so a stuck form can't loop forever
         for _ in range(max_steps):

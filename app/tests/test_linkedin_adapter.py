@@ -55,6 +55,9 @@ CHECKED_AND_OPTIONAL_CHECKBOXES_FIXTURE_PATH = (
 REQUIRED_FILE_AMBIGUOUS_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_required_file_ambiguous.html"
 )
+DIALOG_NEVER_APPEARS_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_dialog_never_appears.html"
+)
 
 
 @pytest.fixture
@@ -297,6 +300,33 @@ def test_unanswered_required_file_field_fails_fast_instead_of_submitting_incompl
             cover_letter_text=None,
             dry_run=True,
         )
+
+
+def test_dialog_never_appearing_raises_a_diagnostic_error_not_a_bare_playwright_timeout(playwright_page):
+    """Real failure from an actual run's failed_applications.log: clicking
+    Easy Apply can silently open nothing (a re-authentication checkpoint,
+    a "no longer accepting applications" notice, or unusually slow
+    rendering instead of the dialog) - Playwright's own timeout message
+    named only the selector that never became visible, giving no lead on
+    what the page showed instead. Takes the real ~10s timeout to run,
+    since that's the actual behavior under test.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{DIALOG_NEVER_APPEARS_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    with pytest.raises(RuntimeError, match="dialog never appeared") as exc_info:
+        adapter.fill_and_submit(
+            posting,
+            answer_question=lambda label: "",
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
+
+    assert "page was at" in str(exc_info.value)
+    assert "titled" in str(exc_info.value)
 
 
 def test_answering_every_required_field_still_completes_normally(playwright_page):
