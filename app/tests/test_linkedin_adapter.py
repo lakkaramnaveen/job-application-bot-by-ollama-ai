@@ -52,6 +52,9 @@ REQUIRED_CHECKBOX_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_appl
 CHECKED_AND_OPTIONAL_CHECKBOXES_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_checked_and_optional_checkboxes.html"
 )
+REQUIRED_FILE_AMBIGUOUS_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_required_file_ambiguous.html"
+)
 
 
 @pytest.fixture
@@ -267,6 +270,33 @@ def test_checked_required_checkbox_does_not_block_an_unchecked_optional_one(play
     )
 
     assert submitted is False  # dry-run: reached Submit but stopped before clicking it
+
+
+def test_unanswered_required_file_field_fails_fast_instead_of_submitting_incomplete(playwright_page):
+    """Real bug this guards against: nothing checked required file inputs
+    at all. Two file fields, neither confidently identifiable as the
+    resume field (see _upload_resume_if_requested()'s "ambiguous file
+    field" branch, already covered by
+    test_resume_is_not_uploaded_when_a_second_file_field_is_ambiguous) -
+    correctly leaving both empty rather than guessing which to fill. But
+    the first one is required, and with no detection for an unfilled
+    required file input, fill_and_submit() went on to find and click
+    Submit anyway - confirmed live before this fix, `dry_run=True`
+    returned False (reached Submit) instead of raising.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{REQUIRED_FILE_AMBIGUOUS_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    with pytest.raises(RuntimeError, match="Supporting document 1"):
+        adapter.fill_and_submit(
+            posting,
+            answer_question=lambda label: "",
+            resume_path=str(RESUME_FIXTURE_PATH),
+            cover_letter_text=None,
+            dry_run=True,
+        )
 
 
 def test_answering_every_required_field_still_completes_normally(playwright_page):

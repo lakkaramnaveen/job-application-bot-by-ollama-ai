@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form, required file field left empty by the ambiguous-file-field check</title></head>
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="doc-1">Supporting document 1</label>
+    <input id="doc-1" type="file" required />
+
+    <label for="doc-2">Supporting document 2</label>
+    <input id="doc-2" type="file" />
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

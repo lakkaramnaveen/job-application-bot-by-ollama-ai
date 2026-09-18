@@ -408,11 +408,14 @@ class LinkedInAdapter(JobBoardAdapter):
         "stuck" message - wasting up to 19 redundant LLM calls on a
         question already known to be unanswerable.
 
-        Covers both a plain text/number/textarea field
-        (_first_unanswered_required_text_field_label()) and a required
-        radio group/dropdown deliberately left unanswered rather than
+        Covers a plain text/number/textarea field
+        (_first_unanswered_required_text_field_label()), a required radio
+        group/dropdown/checkbox deliberately left unanswered rather than
         guessed (_first_unanswered_required_choice_label() - see its own
-        and _select_best_radio()'s "never guess" docstrings). The
+        and _select_best_radio()'s "never guess" docstrings), and a
+        required file upload _upload_resume_if_requested() didn't fill
+        (_first_unanswered_required_file_field_label() - most commonly its
+        "ambiguous file field" case, deliberately not guessed either). The
         radio/select case is the dominant one in practice: audit.log
         showed ~33 generic "stuck" errors against a single specific one
         before this check existed, since LinkedIn's own eligibility/
@@ -432,6 +435,16 @@ class LinkedInAdapter(JobBoardAdapter):
                 unanswered_choice,
                 "The LLM's answer didn't clearly match any option, so this was "
                 "deliberately left unanswered rather than guessed",
+            )
+
+        unanswered_file = self._first_unanswered_required_file_field_label(dialog)
+        if unanswered_file is not None:
+            raise UnansweredRequiredQuestion(
+                posting.job_id,
+                unanswered_file,
+                "No file was uploaded for it - either the resume path isn't configured, or "
+                "multiple file fields on this step made it impossible to confidently identify "
+                "which one to use (see _upload_resume_if_requested)",
             )
 
     def _goto_with_retry(self, url: str) -> None:
@@ -640,6 +653,26 @@ class LinkedInAdapter(JobBoardAdapter):
                 continue
             return self._label_for(checkbox) or "(unlabeled required checkbox)"
 
+        return None
+
+    def _first_unanswered_required_file_field_label(self, dialog: Locator) -> str | None:
+        """A required file input _upload_resume_if_requested() left empty
+        - most commonly its "ambiguous file field" case (multiple file
+        inputs on this step, none confidently identifiable as the resume
+        field - deliberately not guessed, see that method's docstring), or
+        resume_path itself not being configured for this run. Real bug
+        this guards against: nothing checked required file inputs at all,
+        so this case fell through to fill_and_submit() finding and
+        clicking Submit anyway with the field still empty - confirmed live
+        before this fix.
+        """
+        for file_input in dialog.locator('input[type="file"]').all():
+            if not self._is_marked_required(file_input):
+                continue
+            has_file = file_input.evaluate("el => el.files && el.files.length > 0")
+            if has_file:
+                continue
+            return self._label_for(file_input) or "(unlabeled required file upload)"
         return None
 
     @staticmethod
