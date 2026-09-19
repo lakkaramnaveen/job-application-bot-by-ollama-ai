@@ -273,6 +273,20 @@ def _print_cycle_summary(applied: int, failed: int, rate_limiter: RateLimiter, s
         )
 
 
+def _is_ollama_unreachable(e: Exception) -> bool:
+    """True for the specific OllamaProviderError raised when the local
+    server can't be connected to at all (see ollama_provider.py's
+    httpx.ConnectError handling) - deliberately narrower than "any
+    OllamaProviderError", since the other two cases it covers (a malformed
+    JSON response after retries, a 404 for an unpulled model) aren't
+    necessarily going to fail identically on every remaining posting the
+    way a fully unreachable server is. Checked by message rather than a
+    dedicated exception subclass since that string is this project's own
+    and unlikely to drift without both sides being updated together.
+    """
+    return isinstance(e, OllamaProviderError) and "Could not reach Ollama" in str(e)
+
+
 def _quit_ollama_if_configured(settings: Settings) -> None:
     """Called once `job-bot run` is done drawing on Ollama for the day (the
     daily cap was reached) - see Settings.quit_ollama_when_done. No-op for
@@ -317,13 +331,27 @@ def _run_apply_cycle(
     cycle, not just the ones visible at process start. Returns (applied,
     failed) for that cycle only, not a running total across cycles.
     """
-    postings = adapter.search(
-        args.keywords,
-        args.location,
-        max_results=args.search_pool,
-        experience_levels=experience_levels,
-        include_external=include_external,
-    )
+    try:
+        postings = adapter.search(
+            args.keywords,
+            args.location,
+            max_results=args.search_pool,
+            experience_levels=experience_levels,
+            include_external=include_external,
+        )
+    except Exception as e:  # noqa: BLE001 - a search failure should cost this cycle, not crash the whole run/loop
+        # Real bug this guards against: search() itself (not yet a specific
+        # posting) failing - e.g. LinkedIn briefly rate-limiting/erroring on
+        # the search results page itself after _goto_with_retry()'s own
+        # retries are exhausted - propagated straight out of this function
+        # uncaught. In --loop mode especially, that crashed the entire
+        # unattended run instead of just costing this one cycle, exactly
+        # the failure mode --loop exists to run through unattended over
+        # many hours. Confirmed live before this fix.
+        audit.log("search_error", keywords=args.keywords, location=args.location, error=str(e))
+        failure_log.log("search_error", keywords=args.keywords, location=args.location, error=str(e))
+        print(f"Error searching for postings: {e}")
+        return 0, 1
     audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
     def should_skip(posting: JobPosting) -> bool:
@@ -512,6 +540,17 @@ def _run_apply_cycle(
             )
             print(f"Error preparing application for {posting.title} at {posting.company}: {e}")
             failed += 1
+            if _is_ollama_unreachable(e):
+                # Same reasoning as the page.is_closed() check below: every
+                # remaining posting draws on the same unreachable Ollama
+                # server and would fail identically on it - stop here
+                # instead of burning a full LLM-call attempt (and an
+                # identical error message) once per remaining posting.
+                # Confirmed live: a run with Ollama down logged this same
+                # "Could not reach Ollama" prep_error 6 times in a row
+                # before this fix.
+                print("Ollama is unreachable - stopping the run instead of repeating this for every posting.")
+                break
             if page.is_closed():
                 # The browser itself is gone (closed, crashed, killed) -
                 # every remaining posting shares this one page and would
@@ -546,6 +585,9 @@ def _run_apply_cycle(
             )
             print(f"Error applying to {posting.title} at {posting.company}: {e}")
             failed += 1
+            if _is_ollama_unreachable(e):
+                print("Ollama is unreachable - stopping the run instead of repeating this for every posting.")
+                break
             if page.is_closed():
                 print("Browser window was closed - stopping the run.")
                 break

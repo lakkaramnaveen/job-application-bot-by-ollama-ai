@@ -19,6 +19,7 @@ from job_bot.browser.linkedin_adapter import UnansweredRequiredQuestion
 from job_bot.cli import cmd_run
 from job_bot.config import Settings
 from job_bot.llm.base import LLMProvider
+from job_bot.llm.ollama_provider import OllamaProviderError
 from job_bot.models.schemas import ApplicationAnswer, CoverLetter, JobMatchScore, TailoredResume
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.rate_limiter import DailyCapReached
@@ -886,6 +887,106 @@ def test_run_stops_the_whole_run_when_the_browser_closes_during_prep(tmp_path, m
     assert tracker.get_job("job2") is None
     assert tracker.get_job("job3") is None
     assert "Browser window was closed" in capsys.readouterr().out
+
+
+class OllamaUnreachableProvider(LLMProvider):
+    """Simulates Ollama being completely down for the whole run - every
+    call raises the exact OllamaProviderError ollama_provider.py raises on
+    httpx.ConnectError, not just some generic failure.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    def generate_structured(self, *, system, prompt, schema):
+        self.calls += 1
+        raise OllamaProviderError(
+            "Could not reach Ollama at http://localhost:11434. Is it running? "
+            "Try `ollama serve` in another terminal."
+        )
+
+
+def test_run_stops_the_whole_run_when_ollama_is_unreachable(tmp_path, monkeypatch, capsys):
+    """Real bug this guards against: with Ollama down, every remaining
+    posting otherwise repeats the exact same guaranteed-to-fail LLM call
+    and prints an identical error - confirmed live (the same "Could not
+    reach Ollama" prep_error 6 times in a row before this fix) instead of
+    recognizing after the first failure that nothing downstream can
+    succeed either.
+    """
+    provider = OllamaUnreachableProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10))
+
+    assert provider.calls == 1
+    out = capsys.readouterr().out
+    assert "Ollama is unreachable" in out
+    assert out.count("Error preparing application") == 1
+    tracker = Tracker(settings.db_path)
+    assert tracker.get_job("job2") is None
+    assert tracker.get_job("job3") is None
+
+
+class SearchFailsOnceAdapter(FakeAdapter):
+    """search() raises on its first call - simulating a transient
+    net::ERR_HTTP_RESPONSE_CODE_FAILURE that survives _goto_with_retry's
+    own retries and still fails - then succeeds on the next one, proving
+    a search failure costs only that cycle rather than crashing the run.
+    """
+
+    def __init__(self, page):
+        super().__init__(page)
+        self.search_calls = 0
+
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+        self.search_calls += 1
+        if self.search_calls == 1:
+            raise RuntimeError("Failed to load https://www.linkedin.com/jobs/search/... after 3 attempts")
+        return [JOB]
+
+
+def test_run_search_failure_is_logged_and_does_not_crash(tmp_path, monkeypatch, capsys):
+    """Real bug this guards against: adapter.search() itself failing (e.g.
+    LinkedIn erroring on the search results page after its own retries are
+    exhausted) propagated straight out of _run_apply_cycle() uncaught,
+    crashing the whole process with a raw traceback instead of failing
+    this one cycle cleanly - confirmed live.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", SearchFailsOnceAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args())  # must not raise
+
+    assert "Error searching for postings" in capsys.readouterr().out
+    failure_lines = settings.failed_applications_log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(failure_lines) == 1
+    assert json.loads(failure_lines[0])["action"] == "search_error"
+
+
+def test_loop_recovers_from_a_search_failure_on_the_next_cycle(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    adapter = SearchFailsOnceAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", lambda seconds: None)
+
+    settings = make_settings(tmp_path, daily_application_cap=1)
+    cmd_run(settings, make_args(loop=True, max_apps=1))  # must not raise
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied("job1") is True
+    # Cycle 1's search failed and applied nothing; cycle 2 recovered and
+    # applied the one job the cap allowed, which is also what stopped the
+    # loop - proving cycle 1's failure didn't end the run early.
+    assert adapter.search_calls == 2
 
 
 class ApplyClosesTheBrowserForFirstJobAdapter(FakeAdapter):

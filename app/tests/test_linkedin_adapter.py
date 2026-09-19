@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 from job_bot.browser.base_adapter import JobPosting
@@ -70,6 +71,46 @@ def playwright_page():
         page = browser.new_page()
         yield page
         browser.close()
+
+
+def test_goto_with_retry_retries_on_a_generic_playwright_error_not_just_a_timeout(playwright_page, monkeypatch):
+    """Real bug this guards against: a transient net::ERR_HTTP_RESPONSE_CODE_FAILURE
+    (seen live - LinkedIn briefly rate-limiting/erroring mid-run) is a
+    plain PlaywrightError, not a PlaywrightTimeoutError - the old except
+    clause let it propagate on the very first attempt with no retry at
+    all, which then crashed the whole --loop run since _search_one_window's
+    caller has no try/except around it (see test_cli_run.py's
+    test_run_search_failure_is_logged_and_does_not_crash for that half).
+    """
+    adapter = LinkedInAdapter(playwright_page)
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.time.sleep", lambda seconds: None)
+    real_goto = playwright_page.goto
+    calls: list[str] = []
+
+    def flaky_goto(url, **kwargs):
+        calls.append(url)
+        if len(calls) < 2:
+            raise PlaywrightError(f"net::ERR_HTTP_RESPONSE_CODE_FAILURE at {url}")
+        return real_goto(f"file://{FIXTURE_PATH}", **kwargs)
+
+    monkeypatch.setattr(playwright_page, "goto", flaky_goto)
+
+    adapter._goto_with_retry(f"file://{FIXTURE_PATH}")  # must not raise
+
+    assert len(calls) == 2
+
+
+def test_goto_with_retry_raises_after_exhausting_retries_on_a_generic_playwright_error(playwright_page, monkeypatch):
+    adapter = LinkedInAdapter(playwright_page)
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.time.sleep", lambda seconds: None)
+
+    def always_fails(url, **kwargs):
+        raise PlaywrightError(f"net::ERR_HTTP_RESPONSE_CODE_FAILURE at {url}")
+
+    monkeypatch.setattr(playwright_page, "goto", always_fails)
+
+    with pytest.raises(RuntimeError, match="Failed to load"):
+        adapter._goto_with_retry("https://example.com/never-loads")
 
 
 def test_dry_run_fills_fields_and_stops_before_submit(playwright_page):

@@ -20,6 +20,7 @@ import time
 from collections.abc import Callable
 from urllib.parse import quote, urljoin
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -485,15 +486,26 @@ class LinkedInAdapter(JobBoardAdapter):
         """Navigate with a couple of retries - LinkedIn's client-side
         rendering occasionally times out on a cold load with no real error
         in the page itself, and a bare retry resolves it almost every time.
+
+        Catches PlaywrightError (TimeoutError's own base class), not just
+        the timeout - real bug this guards against: a transient
+        net::ERR_HTTP_RESPONSE_CODE_FAILURE (seen live, LinkedIn briefly
+        rate-limiting/hiccuping mid-run) fell outside the old
+        PlaywrightTimeoutError-only catch and propagated straight out of
+        _search_one_window() uncaught - unlike a per-posting navigation
+        failure (load_description(), open_easy_apply_dialog(), ...), the
+        search page load isn't behind any try/except in cli.py's
+        _run_apply_cycle(), so this crashed the entire `--loop` run instead
+        of just costing this one navigation a retry.
         """
         last_error: Exception | None = None
         for attempt in range(NAVIGATION_RETRIES + 1):
             try:
                 self._page.goto(url, timeout=20000)
                 return
-            except PlaywrightTimeoutError as e:
+            except PlaywrightError as e:
                 last_error = e
-                logger.warning("Navigation to %s timed out (attempt %d), retrying", url, attempt + 1)
+                logger.warning("Navigation to %s failed (attempt %d): %s - retrying", url, attempt + 1, e)
                 time.sleep(ACTION_DELAY_SECONDS)
         raise RuntimeError(f"Failed to load {url} after {NAVIGATION_RETRIES + 1} attempts") from last_error
 
