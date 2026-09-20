@@ -150,7 +150,22 @@ class TailoredResume(BaseModel):
 class CoverLetter(BaseModel):
     """A cover letter generated for one specific job application."""
 
-    body: str = Field(description="Full cover letter body text, 3-4 short paragraphs")
+    # max_length isn't just validation - it reaches Ollama's own JSON-schema
+    # -constrained decoding (see OllamaProvider.generate_structured(), which
+    # passes schema.model_json_schema() as the response "format"), forcing
+    # the model to close the string once it hits this many characters. Real
+    # bug this mitigates: qwen3:30b was observed finishing a complete,
+    # coherent letter and then keeping the JSON string open for hundreds to
+    # thousands more characters of solely "\n" padding before being cut off
+    # by generation limits with no closing quote/brace at all - 10 failed
+    # applications in this project's own audit log alone. 2500 is well
+    # above every real letter this project has generated so far (max 1586
+    # chars observed across 20 saved applications - see
+    # data/applications/*/cover_letter.txt), so a genuinely well-formed
+    # letter is never truncated by this; see ollama_provider.py's
+    # _repair_truncated_json_string() for the complementary fix covering
+    # generations that stall before ever reaching this cap.
+    body: str = Field(description="Full cover letter body text, 3-4 short paragraphs", max_length=2500)
 
     _reject_leaked_reasoning_body = field_validator("body", mode="before")(_reject_leaked_reasoning)
 

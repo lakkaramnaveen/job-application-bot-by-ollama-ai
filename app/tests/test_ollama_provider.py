@@ -4,8 +4,13 @@ import httpx
 import pytest
 import respx
 
-from job_bot.llm.ollama_provider import OllamaProvider, OllamaProviderError, quit_ollama
-from job_bot.models.schemas import JobMatchScore
+from job_bot.llm.ollama_provider import (
+    OllamaProvider,
+    OllamaProviderError,
+    _repair_truncated_json_string,
+    quit_ollama,
+)
+from job_bot.models.schemas import CoverLetter, JobMatchScore
 
 BASE_URL = "http://localhost:11434"
 
@@ -81,6 +86,29 @@ def test_retries_once_after_truncated_json_then_succeeds():
 
     assert result.body == "Dear hiring team, I am excited to apply."
     assert route.call_count == 2
+
+
+@respx.mock
+def test_repairs_a_response_with_trailing_blank_line_padding_without_retrying():
+    """Real bug this guards against: qwen3:30b was observed finishing a
+    complete, coherent CoverLetter body and then continuing to emit pure
+    "\\n" padding for hundreds to thousands more characters before
+    generation was cut off with no closing quote/brace at all - unlike
+    test_retries_once_after_truncated_json_then_succeeds()'s plain
+    mid-word truncation, a bare retry here wastes a full, slow local-model
+    generation when the real content was already complete and salvageable
+    without one. Asserts a single HTTP call, not just the right answer -
+    proving the repair path short-circuits before any retry.
+    """
+    provider = make_provider()
+    truncated = '{"body": "Dear Hiring Manager, I am excited to apply.\\n\\n\\n\\n\\n\\n'
+    payload = {"message": {"role": "assistant", "content": truncated}}
+    route = respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(200, json=payload))
+
+    result = provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
+
+    assert result.body == "Dear Hiring Manager, I am excited to apply."
+    assert route.call_count == 1
 
 
 @respx.mock
@@ -225,3 +253,38 @@ def test_quit_ollama_survives_a_missing_command(monkeypatch):
     monkeypatch.setattr("job_bot.llm.ollama_provider.subprocess.run", raise_missing)
 
     assert quit_ollama() is False
+
+
+def test_repair_truncated_json_string_closes_a_padded_response():
+    truncated = '{"body": "Dear Hiring Manager, I am excited to apply.\\n\\n\\n\\n\\n\\n'
+
+    repaired = _repair_truncated_json_string(truncated)
+
+    assert repaired == '{"body": "Dear Hiring Manager, I am excited to apply."}'
+
+
+def test_repair_truncated_json_string_declines_a_mid_word_cutoff():
+    """No trailing blank-line padding at all - a genuinely different
+    truncation shape (cut off mid-content, not after finishing) that this
+    narrow repair must never guess at; the caller falls through to a full
+    retry instead, same as before this repair existed.
+    """
+    assert _repair_truncated_json_string('{"body": "Dear Hiring Manager, I am excit') is None
+
+
+def test_repair_truncated_json_string_declines_without_enough_padding():
+    """Two "\\n" is a legitimate paragraph break, not the degenerate
+    padding this guards against - the pattern requires 3 or more in a row.
+    """
+    assert _repair_truncated_json_string('{"body": "Dear Hiring Manager.\\n\\n') is None
+
+
+def test_repair_truncated_json_string_declines_more_than_one_open_object():
+    """Every schema this project uses is a flat, single-level object (see
+    models/schemas.py) - a second unclosed '{' is structurally different
+    from the one pattern this was built for, so this bails out rather than
+    guess how many braces to close.
+    """
+    truncated = '{"body": "Dear Hiring Manager", "extra": {"nested": "x\\n\\n\\n\\n'
+
+    assert _repair_truncated_json_string(truncated) is None

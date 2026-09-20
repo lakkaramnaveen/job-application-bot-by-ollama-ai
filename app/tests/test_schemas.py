@@ -140,6 +140,22 @@ def test_cover_letter_accepts_a_genuine_multi_paragraph_letter():
     assert letter.body == genuine
 
 
+def test_cover_letter_rejects_a_body_past_the_length_cap():
+    """max_length isn't just local validation - it reaches Ollama's own
+    JSON-schema-constrained decoding (see OllamaProvider.generate_structured,
+    which sends schema.model_json_schema() as the response "format"),
+    forcing the model to close the string once it hits this length instead
+    of running on indefinitely. Real bug this mitigates: qwen3:30b was
+    observed finishing a complete, coherent letter and then continuing to
+    emit pure "\\n" padding for thousands more characters before being cut
+    off with invalid, unterminated JSON. 2500 is well above every real
+    letter this project has generated so far (max 1586 characters observed
+    across 20 saved applications).
+    """
+    with pytest.raises(ValidationError, match="at most 2500 characters"):
+        CoverLetter(body="x" * 2501)
+
+
 def test_tailored_resume_summary_rejects_leaked_reasoning():
     contaminated = (
         "Let me carefully check the resume for the most relevant experience before writing "

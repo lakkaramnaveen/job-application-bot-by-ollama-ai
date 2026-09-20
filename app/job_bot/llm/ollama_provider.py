@@ -1,5 +1,6 @@
 import json
 import platform
+import re
 import subprocess
 
 import httpx
@@ -18,6 +19,64 @@ DEFAULT_TIMEOUT = 120.0
 # without the user fixing that first can't help) and a 404 (the model isn't
 # pulled - same reasoning).
 MAX_GENERATION_ATTEMPTS = 3
+
+# Matches a long run of literal "\n" (backslash-n, two characters each)
+# escape sequences at the very end of an otherwise-unterminated JSON string
+# value - see _repair_truncated_json_string()'s docstring for what this
+# guards against. 3+ in a row is deliberately conservative: a real letter
+# legitimately has isolated "\n\n" between paragraphs, never a long
+# uninterrupted run of them.
+_TRAILING_BLANK_LINE_PADDING = re.compile(r"(?:\\n){3,}$")
+
+# An unescaped '"' - i.e. not immediately preceded by a backslash - used to
+# count how many quote characters delimit real JSON string boundaries
+# rather than being part of an escaped \" inside one.
+_UNESCAPED_QUOTE = re.compile(r'(?<!\\)"')
+
+
+def _repair_truncated_json_string(content: str) -> str | None:
+    """Attempts to recover a response cut off mid-string, specifically the
+    pattern observed live with qwen3:30b: it finishes writing a complete,
+    coherent CoverLetter body (ending naturally, e.g. "Sincerely, <name>")
+    and then keeps the JSON string open for hundreds to thousands more
+    characters of pure "\\n" padding before generation is cut off with no
+    closing quote/brace at all - 10 failed applications in this project's
+    own audit log from this exact shape alone. Not a context-window or
+    output-length-limit issue (reproduced identically regardless of prompt
+    length or num_predict/num_ctx), so nothing in the request options can
+    tune it away - see CoverLetter.body's max_length for the complementary
+    fix that bounds how much padding can accumulate before Ollama's own
+    JSON-schema-constrained decoding is forced to close the string, which
+    doesn't by itself cover generations that stall before ever reaching
+    that cap.
+
+    Deliberately narrow, to only ever trim clearly-inert trailing padding
+    off content that already looks finished - never fabricates or alters
+    real content. Returns the repaired JSON text if all of these hold,
+    else None (the caller then falls through to a full retry as before):
+    - the tail matches the padding pattern above (3+ consecutive "\\n"
+      escapes) at the very end of the response,
+    - what remains after trimming that ends inside an open string (an odd
+      number of unescaped quote characters), and
+    - exactly one top-level object is still open (true for every schema
+      this project uses - see models/schemas.py, all flat/single-level).
+    Anything else - cut off mid-word with no trailing padding, more than
+    one unclosed brace, an escape sequence split mid-pair - is structurally
+    different from the one pattern this was built for, and is left to the
+    normal retry path rather than guessed at.
+    """
+    match = _TRAILING_BLANK_LINE_PADDING.search(content)
+    if not match:
+        return None
+    trimmed = content[: match.start()]
+    if not trimmed or trimmed.endswith("\\"):
+        return None
+    if len(_UNESCAPED_QUOTE.findall(trimmed)) % 2 == 0:
+        return None
+    open_braces = trimmed.count("{") - trimmed.count("}")
+    if open_braces != 1:
+        return None
+    return trimmed + '"}'
 
 
 class OllamaProviderError(RuntimeError):
@@ -94,6 +153,12 @@ class OllamaProvider(LLMProvider):
             try:
                 return schema.model_validate_json(content)
             except (ValidationError, ValueError) as e:
+                repaired = _repair_truncated_json_string(content)
+                if repaired is not None:
+                    try:
+                        return schema.model_validate_json(repaired)
+                    except (ValidationError, ValueError):
+                        pass
                 last_error = e
                 continue
 
