@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form with a duplicated legend</title></head>
+<!--
+  Mirrors a real LinkedIn eligibility-question fieldset whose <legend>
+  renders the question text twice as separate block-level lines, plus a
+  trailing "Required" hint line - confirmed against this project's own
+  accumulated data (see _dedupe_repeated_lines()'s docstring). The radio
+  group is otherwise identical to easy_apply_form_required_radio.html.
+-->
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <fieldset>
+      <legend>
+        <div>Are you comfortable commuting to this job's location?</div>
+        <div>Are you comfortable commuting to this job's location?</div>
+        <div> </div>
+        <div>Required</div>
+      </legend>
+      <input id="commute-yes" type="radio" name="commute" aria-required="true" />
+      <label for="commute-yes">Yes</label>
+      <input id="commute-no" type="radio" name="commute" aria-required="true" />
+      <label for="commute-no">No</label>
+    </fieldset>
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

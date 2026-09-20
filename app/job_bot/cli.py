@@ -443,10 +443,26 @@ def _run_apply_cycle(
         return cover_letter
 
     def answer(question: str, job_id: str) -> str:
+        faq_answers = resume_store.faq_answers()
+        # An exact-text match against FAQ_PATH is already a curated,
+        # confident, resume-grounded answer (see save_faq_answer() below and
+        # qa_answerer.py's SYSTEM_PROMPT, which tells the LLM the same
+        # thing) - asking the LLM to re-derive it is a guaranteed-redundant
+        # round trip on every posting that repeats a question this exact,
+        # near-universal on eligibility/sponsorship-style questions asked
+        # near-verbatim across many postings. Skipping it matters
+        # especially for a local model, where each such call can otherwise
+        # cost many seconds for an answer already known. A near-miss
+        # (different phrasing/whitespace) still falls through to the LLM
+        # unaffected - this only ever short-circuits a literal match.
+        cached = faq_answers.get(question)
+        if cached is not None:
+            tracker.record_qa(job_id, question, cached)
+            return cached
         result = answer_question(
             provider,
             resume_text,
-            resume_store.faq_answers(),
+            faq_answers,
             question,
             recent_answers=tracker.recent_qa_pairs(),
         )

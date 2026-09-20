@@ -420,6 +420,31 @@ def test_run_does_not_cache_low_confidence_answers_to_faq(tmp_path, monkeypatch)
     assert not settings.faq_path.exists()
 
 
+def test_run_reuses_an_exact_faq_match_without_calling_the_llm(tmp_path, monkeypatch):
+    """A question whose exact text is already a FAQ_PATH key is a curated,
+    confident, resume-grounded answer (that's the whole promotion bar in
+    save_faq_answer()) - asking the LLM to re-derive it is a guaranteed-
+    redundant round trip, and a slow one on a local model. This proves
+    that exact match short-circuits ApplicationAnswer generation entirely,
+    not just that the cached text happens to be returned.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    settings.faq_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.faq_path.write_text(json.dumps({"Years of experience?": "7"}), encoding="utf-8")
+
+    cmd_run(settings, make_args())
+
+    assert ApplicationAnswer not in provider.schemas_requested
+    tracker = Tracker(settings.db_path)
+    pairs = tracker.recent_qa_pairs()
+    assert {"question": "Years of experience?", "answer": "7"} in pairs
+
+
 def test_run_min_score_skips_a_posting_the_model_said_yes_to(tmp_path, monkeypatch):
     """FakeProvider's JobMatchScore always has should_apply=True, score=90 -
     --min-score is an extra floor on top of that verdict, not a replacement

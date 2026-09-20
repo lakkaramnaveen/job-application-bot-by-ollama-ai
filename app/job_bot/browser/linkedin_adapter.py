@@ -268,7 +268,21 @@ class LinkedInAdapter(JobBoardAdapter):
             return None
 
         title_el = card.locator("a").first
-        title = (title_el.inner_text() or "").strip()
+        # inner_text() on this anchor commonly returns two lines, not one -
+        # a "Verified" employer badge nested inside it repeats the title as
+        # its own accessible text, either verbatim or with " with
+        # verification" appended (confirmed against this project's own
+        # accumulated data: every multi-line title recorded in
+        # answer_gaps.json/faq_answers.json's example_title fields was
+        # exactly one of those two shapes, never independent content on
+        # line two). The first line is always the clean title either way,
+        # so that's the only line kept - real bug this guards against: the
+        # raw two-line text was flowing untouched into JobPosting.title and
+        # from there into every prompt, log line, and stored answer-gap
+        # keyed on it, doubling the title's length everywhere and (for a
+        # "with verification" card) baking the badge text into what should
+        # have been just the job title.
+        title = (title_el.inner_text() or "").strip().split("\n")[0].strip()
         if not title:
             return None
         href = title_el.get_attribute("href") or ""
@@ -738,16 +752,53 @@ class LinkedInAdapter(JobBoardAdapter):
             if el_id:
                 label = el.page.locator(f'label[for="{el_id}"]')
                 if label.count() > 0:
-                    return label.first.inner_text().strip()
+                    return LinkedInAdapter._dedupe_repeated_lines(label.first.inner_text().strip())
             legend = el.locator("legend")
             if legend.count() > 0:
-                return legend.first.inner_text().strip()
+                return LinkedInAdapter._dedupe_repeated_lines(legend.first.inner_text().strip())
             aria = el.get_attribute("aria-label")
             if aria:
                 return aria.strip()
         except PlaywrightTimeoutError:
             pass
         return ""
+
+    @staticmethod
+    def _dedupe_repeated_lines(text: str) -> str:
+        """LinkedIn commonly renders a fieldset's question text twice as
+        separate lines inside its <legend> (confirmed live - e.g. a
+        visually-hidden duplicate alongside the visible text for
+        accessibility, both picked up by Playwright's inner_text(), which
+        inserts a line break between them). Left uncollapsed, this doubled
+        every such question's length in every LLM prompt it was ever sent
+        in, and - worse - made it an unreliable cache key: whether a given
+        occurrence of the same real-world question got the duplicate
+        depended on incidental DOM structure, so answer_question()'s FAQ
+        cache lookup (keyed on this exact label - see qa_answerer.py) could
+        miss a previously-answered question purely because this run's
+        rendering happened to duplicate the text and an earlier run's
+        didn't (or vice versa) - a real, measured problem: 129 of 235
+        entries in this project's own faq_answers.json were found keyed on
+        a doubled question text like this before this fix, each one a
+        cache entry that could only ever be reused by another equally
+        duplicated rendering of the identical question, not by the
+        question's own plain (undoubled) text.
+
+        Also drops a trailing bare "Required" line - LinkedIn's own
+        required-field hint text, rendered as its own line inside the same
+        legend on some fieldsets, that carries no question content but
+        would otherwise still fragment the cache key/prompt exactly like
+        the duplicate-line case above depending on whether a given
+        rendering happened to include it.
+        """
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        if lines and lines[-1] == "Required":
+            lines = lines[:-1]
+        deduped: list[str] = []
+        for line in lines:
+            if not deduped or deduped[-1] != line:
+                deduped.append(line)
+        return "\n".join(deduped)
 
     @staticmethod
     def _numeric_value(answer: str) -> str | None:

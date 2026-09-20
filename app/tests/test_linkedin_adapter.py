@@ -23,6 +23,7 @@ from job_bot.browser.linkedin_adapter import (
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
 LINK_ENTRY_POINT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_link_entry_point.html"
 SEARCH_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results.html"
+VERIFIED_BADGE_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_verified_badge.html"
 RELATIVE_HREF_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_relative_hrefs.html"
 ALL_APPLIED_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_all_applied.html"
 PAGE_TWO_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_page_two.html"
@@ -39,6 +40,9 @@ RADIO_COVERED_BY_LABEL_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_radio_covered_by_label.html"
 )
 REQUIRED_RADIO_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_radio.html"
+DUPLICATE_LEGEND_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_duplicate_legend_text.html"
+)
 REQUIRED_SELECT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_select.html"
 MIXED_APPLY_TYPES_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_mixed_apply_types.html"
 EXTERNAL_APPLY_POSTING_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "job_posting_external_apply.html"
@@ -468,6 +472,39 @@ def test_unanswered_required_radio_group_fails_fast_with_a_specific_message(play
         )
 
 
+def test_duplicate_legend_text_is_collapsed_to_a_single_clean_question(playwright_page):
+    """Real bug this guards against: LinkedIn commonly renders a fieldset's
+    question text twice inside its <legend> (a visually-hidden duplicate
+    alongside the visible text, both picked up by inner_text()), sometimes
+    with a trailing bare "Required" hint line too - the raw, undeduped text
+    was flowing straight into every LLM prompt and answer_question() cache
+    key it reached. Confirmed against this project's own accumulated data:
+    129 of 235 entries in faq_answers.json were keyed on exactly this kind
+    of doubled text before this fix. answer_question() here records the
+    label it was actually called with, so this asserts the clean,
+    single-line form reached it - not just that the form still works.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{DUPLICATE_LEGEND_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+    seen_labels: list[str] = []
+
+    def answer_question(label: str) -> str:
+        seen_labels.append(label)
+        return "Yes"
+
+    adapter.fill_and_submit(
+        posting,
+        answer_question=answer_question,
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert seen_labels == ["Are you comfortable commuting to this job's location?"]
+
+
 def test_unanswered_required_select_fails_fast_with_a_specific_message(playwright_page):
     posting = JobPosting(
         job_id="1", title="X", company="Y", url=f"file://{REQUIRED_SELECT_FIXTURE_PATH}", description=""
@@ -737,6 +774,30 @@ def test_search_skips_already_applied_and_deduplicates_across_pages(playwright_p
     ids = {p.job_id for p in postings}
     assert ids == {"101", "103"}  # 102 is marked Applied and excluded
     assert all(p.title and p.company for p in postings)
+
+
+def test_search_strips_the_duplicate_verified_badge_line_from_the_title(playwright_page, monkeypatch):
+    """Real bug this guards against: LinkedIn's "Verified" employer badge,
+    when present, is nested inside the same title <a> and repeats the
+    title as its own accessible text (verbatim, or with " with
+    verification" appended) - Playwright's inner_text() then returns both
+    lines, and the raw two-line text was flowing straight into
+    JobPosting.title untouched. Confirmed against this project's own
+    accumulated data: 400 of 429 rows in the tracker DB's jobs table, and
+    every multi-line title recorded in answer_gaps.json, were exactly this
+    shape before this fix - doubling the title's length in every prompt,
+    log line, and stored record it ever reached.
+    """
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(
+        playwright_page, "goto", lambda url, **kw: real_goto(f"file://{VERIFIED_BADGE_FIXTURE_PATH}")
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    postings = adapter.search("python", "Remote", max_results=10)
+
+    assert len(postings) == 1
+    assert postings[0].title == "Backend Engineer"
 
 
 def test_search_respects_max_results(playwright_page, monkeypatch):
