@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form with an unrelated dialog ahead of it</title></head>
+<!--
+  Reproduces a hypothesis for this adapter's most common real-world
+  failure ("stuck on a step with no Next/Review/Submit button found" -
+  even when a plausible-looking Next/Review/Back button was reportedly
+  visible on that same step): SELECTORS["dialog"] is the generic
+  div[role="dialog"], and fill_and_submit() pins `dialog` to `.first` -
+  if any OTHER role="dialog" element (a nudge/interstitial LinkedIn shows
+  ahead of or instead of the real Easy Apply modal) sits earlier in DOM
+  order, every field/button query in the whole loop silently scopes to
+  that unrelated dialog instead, which explains why plausible button text
+  can be visible on the page yet never match a real Submit/Review/Next.
+  This fixture's decoy dialog is unrelated to Easy Apply but coincidentally
+  has buttons whose text overlaps ("Back", "Review") without being real
+  progress controls, mirroring the ambiguous button text seen in
+  production failure logs.
+-->
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Update your profile">
+    <p>Review your profile photo before continuing?</p>
+    <button>Back</button>
+    <button>Review</button>
+  </div>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="years-python">Years of Python experience</label>
+    <input id="years-python" type="text" />
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

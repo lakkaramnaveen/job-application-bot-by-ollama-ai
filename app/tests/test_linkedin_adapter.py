@@ -40,6 +40,7 @@ RADIO_COVERED_BY_LABEL_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_radio_covered_by_label.html"
 )
 REQUIRED_RADIO_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_radio.html"
+EXTRA_DIALOG_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_extra_dialog.html"
 DUPLICATE_LEGEND_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_duplicate_legend_text.html"
 )
@@ -115,6 +116,38 @@ def test_goto_with_retry_raises_after_exhausting_retries_on_a_generic_playwright
 
     with pytest.raises(RuntimeError, match="Failed to load"):
         adapter._goto_with_retry("https://example.com/never-loads")
+
+
+def test_fill_and_submit_ignores_an_unrelated_dialog_ahead_of_the_real_one(playwright_page):
+    """Real bug this guards against - by a wide margin this adapter's
+    single most common real-world failure: an unrelated role="dialog"
+    element (e.g. a LinkedIn profile-photo nudge) sitting ahead of the
+    real Easy Apply modal in DOM order used to make fill_and_submit() pin
+    every field/button query to that wrong dialog for the whole method
+    (dialog = self._page.locator(SELECTORS["dialog"]).first). That dialog
+    has no real fields or Submit button, so the loop always ended up
+    "stuck" reporting whatever unrelated button text (here, "Back" and
+    "Review", from an unrelated "review your photo" prompt) that OTHER
+    dialog happened to have - exactly the "'Back', 'Review'" shape seen
+    repeatedly in this project's own failed_applications.log. Reproduced
+    against this exact fixture (RAISED the same "stuck" message, never
+    touching #years-python) before _find_easy_apply_dialog() existed.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{EXTRA_DIALOG_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "5" if "Python" in label else "",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert submitted is False
+    assert playwright_page.locator("#years-python").input_value() == "5"
 
 
 def test_dry_run_fills_fields_and_stops_before_submit(playwright_page):

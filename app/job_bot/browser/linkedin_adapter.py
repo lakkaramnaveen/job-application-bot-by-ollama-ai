@@ -355,6 +355,58 @@ class LinkedInAdapter(JobBoardAdapter):
         external_page.wait_for_load_state("domcontentloaded")
         return external_page
 
+    def _find_easy_apply_dialog(self) -> Locator:
+        """Picks the actual Easy Apply modal out of every div[role="dialog"]
+        currently on the page, rather than blindly taking the first one.
+
+        Real bug this guards against - and by a wide margin this adapter's
+        single most common real-world failure: SELECTORS["dialog"] is the
+        generic div[role="dialog"], and fill_and_submit() used to pin
+        `dialog` to plain `.first`. LinkedIn can show an unrelated
+        role="dialog" nudge/interstitial (e.g. a profile-photo prompt)
+        ahead of the real Easy Apply modal in DOM order - `.first` then
+        latched onto that unrelated dialog for the entire method, since
+        every field/button query in the loop below is scoped to `dialog`.
+        That dialog has no real Submit/Review/Next button and no fields to
+        fill, so the loop always ended up "stuck", reporting whatever
+        button text that OTHER dialog happened to have - which is exactly
+        why failed_applications.log had dozens of "stuck" errors naming a
+        plausible-looking "Next"/"Review"/"Back" button that supposedly
+        couldn't be found: it wasn't missing, it was just never the dialog
+        being searched. Confirmed reproducible with a fixture (see
+        test_linkedin_adapter.py's test_fill_and_submit_ignores_an_unrelated_
+        dialog_ahead_of_the_real_one) before this fix, using the exact
+        "'Back', 'Review'" button-list shape seen in production.
+
+        Prefers whichever dialog actually contains a real form field (a
+        text/number/file input, textarea, select, or fieldset) over raw DOM
+        position. Deliberately NOT based on button text (a Submit/Review/
+        Next label) - the whole failure this guards against is a decoy
+        dialog whose own unrelated buttons happen to say things like
+        "Review", so treating button text as a positive signal would have
+        picked the same wrong dialog right back (confirmed while building
+        this fix: an earlier version of this method that also matched on
+        SUBMIT/REVIEW/NEXT_BUTTON_SELECTORS still chose the decoy dialog
+        against the fixture below, because its own "Review" button
+        satisfied that check too). Falls back to the first dialog
+        when there's only one on the page (the overwhelmingly common case)
+        or when none of several contain a form field - identical to the
+        prior behavior either way, so this can only change what happens
+        when more than one dialog is present.
+        """
+        dialogs = self._page.locator(SELECTORS["dialog"])
+        count = dialogs.count()
+        if count <= 1:
+            return dialogs.first
+        fillable_selector = (
+            'input[type="text"], input[type="number"], input[type="file"], textarea, select, fieldset'
+        )
+        for i in range(count):
+            candidate = dialogs.nth(i)
+            if candidate.locator(fillable_selector).count() > 0:
+                return candidate
+        return dialogs.first
+
     def fill_and_submit(
         self,
         posting: JobPosting,
@@ -369,7 +421,7 @@ class LinkedInAdapter(JobBoardAdapter):
         self._page.locator(SELECTORS["easy_apply_button"]).first.click()
         time.sleep(ACTION_DELAY_SECONDS)
 
-        dialog = self._page.locator(SELECTORS["dialog"]).first
+        dialog = self._find_easy_apply_dialog()
         try:
             dialog.wait_for(timeout=10000)
         except PlaywrightTimeoutError as e:
