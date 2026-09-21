@@ -2,13 +2,14 @@
 localhost only (never 0.0.0.0) since it serves your application data with
 no access control. See render.py for the HTML/escaping logic this wraps.
 
-The dashboard also accepts two state-changing requests: POST status update
-and POST blacklist. Because the server has no auth, any page open in the
-same browser could in principle try to trigger one (a "drive-by localhost"
-request) - _is_same_origin (both endpoints) plus the browser's own CORS
-preflight (triggered by the status endpoint's required JSON Content-Type)
-are what stand in for auth here. See _is_same_origin, _handle_status_update,
-and _handle_blacklist below.
+The dashboard also accepts three state-changing requests: POST status
+update, POST blacklist (add), and POST blacklist/remove. Because the
+server has no auth, any page open in the same browser could in principle
+try to trigger one (a "drive-by localhost" request) - _is_same_origin (all
+three) plus the browser's own CORS preflight (triggered by the JSON
+Content-Type the status and blacklist/remove endpoints require) are what
+stand in for auth here. See _is_same_origin, _handle_status_update,
+_handle_blacklist, and _handle_blacklist_remove below.
 """
 
 import io
@@ -22,6 +23,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from job_bot.dashboard.render import (
     PAGE_SIZE,
+    render_blacklist_html,
     render_page_html,
     render_qa_html,
     render_rows_html,
@@ -132,6 +134,8 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
                 self._send(200, "application/json", json.dumps(jobs, default=str).encode("utf-8"))
             elif (job_id := self._job_id_from_path("/api/jobs/", "/qa")) is not None:
                 self._handle_qa(tracker, job_id)
+            elif parsed.path == "/api/blacklist":
+                self._handle_blacklist_list()
             else:
                 self._send_text(404, "Not found")
 
@@ -140,6 +144,8 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
                 self._handle_status_update(Tracker(db_path), job_id)
             elif (job_id := self._job_id_from_path("/api/jobs/", "/blacklist")) is not None:
                 self._handle_blacklist(Tracker(db_path), job_id)
+            elif urlparse(self.path).path == "/api/blacklist/remove":
+                self._handle_blacklist_remove()
             else:
                 self._send_text(404, "Not found")
 
@@ -291,6 +297,46 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
             company = job["company"]
             CompanyBlacklist(blacklist_path).add(company)
             self._send_json(200, {"ok": True, "job_id": job_id, "company": company})
+
+        def _handle_blacklist_list(self) -> None:
+            """Every blacklisted company, for the dashboard's Manage
+            Blacklist modal - the read-only counterpart to _handle_blacklist
+            above and _handle_blacklist_remove below, together giving the
+            dashboard the same add/view/remove blacklist actions
+            `job-bot blacklist` already has on the CLI.
+            """
+            companies = CompanyBlacklist(blacklist_path).list_companies()
+            body = render_blacklist_html(companies).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_blacklist_remove(self) -> None:
+            if not self._is_same_origin():
+                self._send_text(403, "Cross-origin request rejected")
+                return
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                self._send_text(400, "Content-Type must be application/json")
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._send_text(400, "Invalid Content-Length header")
+                return
+            if length <= 0 or length > MAX_BODY_BYTES:
+                self._send_text(400, "Request body missing or too large")
+                return
+            raw_body = self.rfile.read(length)
+
+            try:
+                payload = json.loads(raw_body)
+                company = payload["company"]
+                if not isinstance(company, str):
+                    raise ValueError("company must be a string")
+            except (json.JSONDecodeError, KeyError, ValueError):
+                self._send_text(400, "Body must be JSON: {\"company\": \"<company>\"}")
+                return
+
+            removed = CompanyBlacklist(blacklist_path).remove(company)
+            self._send_json(200, {"ok": True, "company": company, "removed": removed})
 
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             pass  # quiet by default; the CLI prints the one line that matters

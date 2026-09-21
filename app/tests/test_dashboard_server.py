@@ -402,6 +402,51 @@ def test_post_blacklist_decodes_percent_encoded_job_id(live_server):
     assert data == {"ok": True, "job_id": "job 2", "company": "Acme Corp"}
 
 
+def test_get_blacklist_is_empty_by_default(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/blacklist") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+    assert "Blacklist is empty." in body
+
+
+def test_get_blacklist_lists_added_companies(live_server, tmp_path):
+    CompanyBlacklist(tmp_path / "blacklist.json").add("Acme Corp")
+
+    with urllib.request.urlopen(f"{live_server}/api/blacklist") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "Acme Corp" in body
+    assert 'data-company="Acme Corp"' in body
+
+
+def test_post_blacklist_remove_removes_the_company(live_server, tmp_path):
+    CompanyBlacklist(tmp_path / "blacklist.json").add("Acme Corp")
+
+    resp = _post_json(f"{live_server}/api/blacklist/remove", {"company": "Acme Corp"})
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "company": "Acme Corp", "removed": True}
+    assert not CompanyBlacklist(tmp_path / "blacklist.json").is_blocked("Acme Corp")
+
+
+def test_post_blacklist_remove_of_absent_company_reports_not_removed(live_server, tmp_path):
+    resp = _post_json(f"{live_server}/api/blacklist/remove", {"company": "Nobody Inc"})
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "company": "Nobody Inc", "removed": False}
+
+
+def test_post_blacklist_remove_rejects_a_cross_origin_request(live_server, tmp_path):
+    CompanyBlacklist(tmp_path / "blacklist.json").add("Acme Corp")
+
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/blacklist/remove", {"company": "Acme Corp"}, same_origin=False)
+    assert exc_info.value.code == 403
+    assert CompanyBlacklist(tmp_path / "blacklist.json").is_blocked("Acme Corp")
+
+
 def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatch):
     """run_dashboard() is the CLI's actual entry point (`job-bot dashboard`)
     - the rest of this file exercises the request handlers directly via

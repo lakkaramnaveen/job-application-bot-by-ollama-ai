@@ -499,6 +499,8 @@ seen, and lets you:
   `job-bot status <job_id> <status>` for a quick correction.
 - **Blacklist a job's company** with one click - the same effect
   `job-bot blacklist add "<company>"` has from the command line.
+- **Manage the blacklist** (view and remove entries) from a modal, without
+  dropping to `job-bot blacklist list`/`remove`.
 - **View a job's Q&A history** (every application-question answer the bot
   gave, and what it was based on) in a modal, without querying the DB by hand.
 - **Export CSV or JSON** for whatever's currently filtered/searched, not just

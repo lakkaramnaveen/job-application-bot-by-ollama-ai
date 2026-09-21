@@ -1,4 +1,10 @@
-from job_bot.dashboard.render import render_page_html, render_qa_html, render_rows_html, render_stats_html
+from job_bot.dashboard.render import (
+    render_blacklist_html,
+    render_page_html,
+    render_qa_html,
+    render_rows_html,
+    render_stats_html,
+)
 
 
 def make_job(**overrides):
@@ -168,6 +174,33 @@ def test_render_qa_html_renders_all_entries_in_order():
     ]
     html = render_qa_html(qa)
     assert html.index("Q1") < html.index("Q2")
+
+
+def test_render_blacklist_html_empty_state():
+    html = render_blacklist_html([])
+    assert "Blacklist is empty." in html
+
+
+def test_render_blacklist_html_renders_a_remove_button_per_company():
+    html = render_blacklist_html(["Acme Corp", "Beta Inc"])
+    assert "Acme Corp" in html
+    assert "Beta Inc" in html
+    assert html.count("blacklist-remove-button") == 2
+    assert 'data-company="Acme Corp"' in html
+    assert 'data-company="Beta Inc"' in html
+
+
+def test_render_blacklist_html_escapes_company_name_to_prevent_xss():
+    html = render_blacklist_html(['<script>alert(1)</script>Acme"'])
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_render_page_html_includes_the_manage_blacklist_button_and_dialog():
+    html = render_page_html([make_job()])
+    assert 'id="manageBlacklist"' in html
+    assert 'id="blacklistDialog"' in html
+    assert 'id="blacklistContent"' in html
 
 
 def test_render_page_html_does_not_leak_search_term_into_script_context():

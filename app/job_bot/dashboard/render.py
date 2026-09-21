@@ -189,6 +189,27 @@ def render_qa_html(qa: list[dict[str, Any]]) -> str:
     return f'<dl class="qa-list">{"".join(items)}</dl>'
 
 
+def render_blacklist_html(companies: list[str]) -> str:
+    """The blacklisted-companies list as an HTML fragment, for the
+    dashboard's Manage Blacklist modal - same shape as render_qa_html
+    above (a server-rendered fragment the client just drops into the
+    dialog), with one remove button per company wired the same
+    data-attribute way status-select/qa-button/blacklist-button already
+    are, rather than an inline onclick with interpolated data.
+    """
+    if not companies:
+        return '<p class="empty">Blacklist is empty.</p>'
+    items = []
+    for company in companies:
+        safe_company = html.escape(company, quote=True)
+        items.append(
+            f"<li>{html.escape(company)} "
+            f'<button type="button" class="blacklist-remove-button" data-company="{safe_company}">'
+            "Remove</button></li>"
+        )
+    return f'<ul class="blacklist-list">{"".join(items)}</ul>'
+
+
 def _options_html(options: list[tuple[str, str]], selected: str) -> str:
     return "\n".join(
         f'<option value="{html.escape(value, quote=True)}"{" selected" if value == selected else ""}>'
@@ -288,8 +309,15 @@ def render_page_html(
   dialog::backdrop {{ background: var(--backdrop); }}
   .qa-list dt {{ font-weight: 600; margin-top: 0.75rem; }}
   .qa-list dd {{ margin: 0.25rem 0 0; color: var(--fg); }}
-  #qaClose {{ margin-top: 1rem; font-size: 0.85rem; padding: 0.35rem 0.8rem; border-radius: 6px;
+  #qaClose, #blacklistClose {{ margin-top: 1rem; font-size: 0.85rem; padding: 0.35rem 0.8rem; border-radius: 6px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}
+  .blacklist-list {{ list-style: none; margin: 0; padding: 0; }}
+  .blacklist-list li {{ display: flex; justify-content: space-between; align-items: center;
+              gap: 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
+  .blacklist-list li:last-child {{ border-bottom: none; }}
+  .blacklist-remove-button {{ font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px;
+              border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}
+  .blacklist-remove-button:hover {{ border-color: #ef4444; color: #ef4444; }}
 </style>
 </head>
 <body>
@@ -312,6 +340,7 @@ def render_page_html(
   </select>
   <a id="exportCsv" class="export-link" href="/api/export.csv">Export CSV</a>
   <a id="exportJson" class="export-link" href="/api/export.json">Export JSON</a>
+  <button type="button" id="manageBlacklist" class="export-link">Manage Blacklist</button>
 </form>
 
 <div class="table-wrap">
@@ -335,6 +364,12 @@ def render_page_html(
   <h2>Q&amp;A history</h2>
   <div id="qaContent"></div>
   <button type="button" id="qaClose">Close</button>
+</dialog>
+
+<dialog id="blacklistDialog">
+  <h2>Blacklisted companies</h2>
+  <div id="blacklistContent"></div>
+  <button type="button" id="blacklistClose">Close</button>
 </dialog>
 
 <script>
@@ -473,6 +508,39 @@ document.getElementById('rows').addEventListener('click', async (e) => {{
     }}
   }} catch (err) {{
     alert('Could not blacklist (network error).');
+  }}
+}});
+
+const blacklistDialog = document.getElementById('blacklistDialog');
+async function loadBlacklist() {{
+  const content = document.getElementById('blacklistContent');
+  content.innerHTML = 'Loading...';
+  try {{
+    const res = await fetch('/api/blacklist');
+    content.innerHTML = res.ok ? await res.text() : 'Could not load the blacklist.';
+  }} catch (err) {{
+    content.innerHTML = 'Could not load the blacklist (network error).';
+  }}
+}}
+document.getElementById('manageBlacklist').addEventListener('click', () => {{
+  blacklistDialog.showModal();
+  loadBlacklist();
+}});
+document.getElementById('blacklistClose').addEventListener('click', () => blacklistDialog.close());
+document.getElementById('blacklistContent').addEventListener('click', async (e) => {{
+  if (!e.target.classList.contains('blacklist-remove-button')) return;
+  const company = e.target.dataset.company;
+  try {{
+    const res = await fetch('/api/blacklist/remove', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ company }}),
+    }});
+    if (!res.ok) alert('Could not remove: ' + (await res.text()));
+  }} catch (err) {{
+    alert('Could not remove (network error).');
+  }} finally {{
+    loadBlacklist();
   }}
 }});
 
