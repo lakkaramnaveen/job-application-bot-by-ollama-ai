@@ -114,3 +114,33 @@ def test_save_faq_answer_visible_to_a_fresh_store_instance(tmp_path):
 
     store2 = ResumeStore(store1._resume_path, store1._faq_path)
     assert store2.faq_answers() == {"Years of experience?": "5"}
+
+
+def test_remove_faq_answer_deletes_and_returns_true(tmp_path):
+    store = make_store(tmp_path)
+    store.save_faq_answer("Years of experience?", "5")
+    store.save_faq_answer("Willing to relocate?", "No")
+
+    removed = store.remove_faq_answer("Years of experience?")
+
+    assert removed is True
+    assert store.faq_answers() == {"Willing to relocate?": "No"}
+
+
+def test_remove_faq_answer_of_uncached_question_returns_false(tmp_path):
+    store = make_store(tmp_path)
+    store.save_faq_answer("Years of experience?", "5")
+
+    removed = store.remove_faq_answer("Never asked")
+
+    assert removed is False
+    assert store.faq_answers() == {"Years of experience?": "5"}
+
+
+def test_remove_faq_answer_of_the_only_entry_leaves_an_empty_but_valid_file(tmp_path):
+    store = make_store(tmp_path)
+    store.save_faq_answer("Years of experience?", "5")
+
+    store.remove_faq_answer("Years of experience?")
+
+    assert ResumeStore(store._resume_path, store._faq_path).faq_answers() == {}

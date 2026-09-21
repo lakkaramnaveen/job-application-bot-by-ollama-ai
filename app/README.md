@@ -424,6 +424,11 @@ Answers `job-bot run` is confident in (grounded in your resume/FAQ, above
 reuse on future applications - the bot gets faster and more consistent the
 more you use it, without ever caching a low-confidence guess.
 
+```bash
+job-bot faq list                          # every cached question/answer pair
+job-bot faq remove "Years of Python experience?"   # e.g. to fix a wrong one
+```
+
 ## Learning from questions it couldn't answer
 
 The flip side of the FAQ cache above: a required text/radio/select question

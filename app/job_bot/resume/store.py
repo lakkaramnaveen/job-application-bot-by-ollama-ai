@@ -59,3 +59,18 @@ class ResumeStore:
         answers[question] = answer
         self._faq_path.parent.mkdir(parents=True, exist_ok=True)
         self._faq_path.write_text(json.dumps(answers, indent=2), encoding="utf-8")
+
+    def remove_faq_answer(self, question: str) -> bool:
+        """Removes one cached FAQ answer - e.g. to force a wrong or stale
+        one (a low-confidence guess that slipped past FAQ_SAVE_CONFIDENCE,
+        or a typo made during `job-bot review-answers`) to be re-asked and
+        re-reviewed instead of kept forever, exactly as `save_faq_answer()`
+        commits it. Returns True if the question was cached (and is now
+        removed), False if it wasn't there to begin with.
+        """
+        answers = self.faq_answers()
+        if question not in answers:
+            return False
+        del answers[question]
+        self._faq_path.write_text(json.dumps(answers, indent=2), encoding="utf-8")
+        return True

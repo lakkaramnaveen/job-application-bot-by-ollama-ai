@@ -791,6 +791,32 @@ def cmd_review_answers(settings: Settings) -> None:
     print(f"Answered {answered} question(s). {remaining} still unanswered.")
 
 
+def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
+    """view/remove cached FAQ answers - see resume/store.py's
+    save_faq_answer()/faq_answers(). `job-bot review-answers` is the only
+    way to *add* one (it's tied to reviewing an actual unanswered
+    question), but neither it nor anything else could view what's already
+    cached or remove a wrong one short of hand-editing FAQ_PATH's JSON -
+    this is that missing view/remove counterpart, the same shape
+    `job-bot blacklist` already gives the blacklist.
+    """
+    resume_store = ResumeStore(settings.resume_path, settings.faq_path)
+    if args.faq_action == "list":
+        answers = resume_store.faq_answers()
+        if not answers:
+            print("No cached FAQ answers.")
+        else:
+            for question, answer in answers.items():
+                print(f'"{question}"\n  -> {answer}\n')
+    elif args.faq_action == "remove":
+        removed = resume_store.remove_faq_answer(args.question)
+        print(
+            f'Removed cached answer for: "{args.question}"'
+            if removed
+            else f'No cached answer for: "{args.question}"'
+        )
+
+
 # Score buckets for `job-bot report --by-score`'s outcome breakdown, widest
 # (worst-fit) first so a job with a null match_score never fits any bucket
 # and is simply left out - it hasn't been through the LLM scorer yet.
@@ -1203,6 +1229,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    faq_p = sub.add_parser("faq", help="View or remove cached FAQ answers (see `job-bot review-answers`).")
+    faq_sub = faq_p.add_subparsers(dest="faq_action", required=True)
+    faq_sub.add_parser("list", help="Print every cached question/answer pair.")
+    faq_remove_p = faq_sub.add_parser("remove", help="Remove one cached answer, e.g. to fix a wrong one.")
+    faq_remove_p.add_argument("question", help="The exact question text, as shown by `job-bot faq list`.")
+
     report_p = sub.add_parser("report", help="Print a count of tracked jobs by status.")
     report_p.add_argument(
         "--stale-days",
@@ -1297,6 +1329,8 @@ def main() -> None:
             cmd_dashboard(settings, args)
         elif args.command == "blacklist":
             cmd_blacklist(settings, args)
+        elif args.command == "faq":
+            cmd_faq(settings, args)
     except EXPECTED_ERRORS as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

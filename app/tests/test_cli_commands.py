@@ -21,6 +21,7 @@ from job_bot.cli import (
     cmd_dashboard,
     cmd_doctor,
     cmd_export,
+    cmd_faq,
     cmd_gmail_sync,
     cmd_report,
     cmd_review_answers,
@@ -708,6 +709,51 @@ def test_review_answers_stops_cleanly_on_keyboard_interrupt_mid_review(tmp_path,
     assert len(AnswerGapStore(settings.answer_gaps_path).list_unanswered()) == 2
 
 
+# --- faq ---
+
+
+def test_faq_list_says_so_when_nothing_cached(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None))
+
+    assert "No cached FAQ answers." in capsys.readouterr().out
+
+
+def test_faq_list_prints_every_cached_question_and_answer(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Years of Python experience?", "5")
+    store.save_faq_answer("Willing to relocate?", "No")
+
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None))
+
+    out = capsys.readouterr().out
+    assert "Years of Python experience?" in out
+    assert "5" in out
+    assert "Willing to relocate?" in out
+    assert "No" in out
+
+
+def test_faq_remove_deletes_a_cached_answer(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Years of Python experience?", "5")
+
+    cmd_faq(settings, argparse.Namespace(faq_action="remove", question="Years of Python experience?"))
+
+    assert 'Removed cached answer for: "Years of Python experience?"' in capsys.readouterr().out
+    assert ResumeStore(settings.resume_path, settings.faq_path).faq_answers() == {}
+
+
+def test_faq_remove_of_uncached_question_says_so(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_faq(settings, argparse.Namespace(faq_action="remove", question="Never asked"))
+
+    assert 'No cached answer for: "Never asked"' in capsys.readouterr().out
+
+
 # --- main() ---
 
 
@@ -772,6 +818,7 @@ def test_main_reports_an_expected_error_and_exits_1(tmp_path, monkeypatch, capsy
         (["job-bot", "gmail-sync"], "cmd_gmail_sync"),
         (["job-bot", "dashboard"], "cmd_dashboard"),
         (["job-bot", "blacklist", "list"], "cmd_blacklist"),
+        (["job-bot", "faq", "list"], "cmd_faq"),
     ],
 )
 def test_main_dispatches_each_subcommand_to_its_own_handler(tmp_path, monkeypatch, argv, cmd_name):
