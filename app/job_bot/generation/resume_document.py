@@ -38,6 +38,25 @@ _MAX_HEADER_LINE_LENGTH = 40
 # need to separately recognize any section that comes later.
 _EXPERIENCE_HEADER_KEYWORDS = ("EXPERIENCE", "EMPLOYMENTHISTORY", "WORKHISTORY")
 
+# "PROFILE" alone is too permissive to match as a free substring: unlike
+# SUMMARY/OBJECTIVE/EXPERIENCE, it's also an ordinary word in a resume's own
+# contact block ("LinkedIn Profile", "GitHub Profile", "Portfolio"), which
+# a plain substring match would mistake for the header itself, truncating
+# the real header_lines and potentially misplacing summary_idx (confirmed:
+# "LinkedIn Profile" as a lone contact-info line collapses to
+# "LINKEDINPROFILE", which contains "PROFILE"). Matched only when the whole
+# collapsed line is exactly "PROFILE" or one of a small allowlist of
+# legitimate resume-header modifiers plus "PROFILE" - never as a substring
+# of an arbitrary surrounding word.
+_AMBIGUOUS_KEYWORDS = frozenset({"PROFILE"})
+_HEADER_PREFIX_WORDS = ("PROFESSIONAL", "PERSONAL", "CAREER", "EXECUTIVE", "CANDIDATE")
+
+
+def _matches_keyword(collapsed: str, keyword: str) -> bool:
+    if keyword not in _AMBIGUOUS_KEYWORDS:
+        return keyword in collapsed
+    return collapsed == keyword or any(collapsed == prefix + keyword for prefix in _HEADER_PREFIX_WORDS)
+
 
 def _collapse(line: str) -> str:
     """Removes all whitespace and uppercases a line before keyword matching.
@@ -56,7 +75,7 @@ def _find_header_line(lines: list[str], keywords: tuple[str, ...], start: int) -
         collapsed = _collapse(lines[i])
         if len(collapsed) > _MAX_HEADER_LINE_LENGTH:
             continue
-        if any(keyword in collapsed for keyword in keywords):
+        if any(_matches_keyword(collapsed, keyword) for keyword in keywords):
             return i
     return None
 

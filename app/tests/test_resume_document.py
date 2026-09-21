@@ -93,6 +93,38 @@ def test_build_tailored_resume_docx_declines_when_no_experience_header_is_found(
     assert not output_path.exists()
 
 
+def test_build_tailored_resume_docx_does_not_mistake_a_linkedin_profile_contact_line_for_the_header(tmp_path):
+    """Real bug this guards against: "PROFILE" is one of the SUMMARY
+    section's keywords (to catch a header literally titled "Profile"), but
+    it's also an ordinary word in a resume's own contact block - a lone
+    "LinkedIn Profile" contact-info line collapses to "LINKEDINPROFILE",
+    which a plain substring match against "PROFILE" would wrongly treat as
+    the SUMMARY header itself, truncating header_lines and misplacing the
+    real summary boundary. The true "SUMMARY" header further down must
+    still be found.
+    """
+    resume_with_linkedin_contact_line = (
+        "Jane Doe\n"
+        "jane@example.com\n"
+        "LinkedIn Profile\n\n"
+        "SUMMARY\n"
+        "Backend engineer with 5 years of Python experience.\n\n"
+        "SKILLS\n"
+        "Python, Django, PostgreSQL, AWS\n\n"
+        "EXPERIENCE\n"
+        "Software Engineer, Acme Corp, 2020-Present\n"
+        "- Built and maintained REST APIs handling 100,000+ requests daily.\n"
+    )
+    output_path = tmp_path / "tailored.docx"
+
+    built = build_tailored_resume_docx(resume_with_linkedin_contact_line, TAILORED, output_path)
+
+    assert built is True
+    texts = _paragraph_texts(output_path)
+    assert "LinkedIn Profile" in texts
+    assert TAILORED.summary in texts
+
+
 def test_build_tailored_resume_docx_tolerates_pdf_ligature_split_headers(tmp_path):
     """Confirmed against a real resume.pdf parsed by this project: PDF text
     extraction can split a header's own letters across a stray space
