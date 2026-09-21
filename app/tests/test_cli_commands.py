@@ -388,6 +388,52 @@ def test_blacklist_remove_accepts_multiple_companies_in_one_call(tmp_path, capsy
     assert "Blacklist is empty." in capsys.readouterr().out
 
 
+def test_blacklist_import_adds_every_company_skipping_blanks_and_comments(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    import_file = tmp_path / "past_employers.txt"
+    import_file.write_text(
+        "# Companies I've already worked for\n"
+        "Acme Corp\n"
+        "\n"
+        "  Beta Inc  \n"
+        "# a trailing comment\n"
+        "Gamma LLC\n",
+        encoding="utf-8",
+    )
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="import", file=import_file))
+
+    out = capsys.readouterr().out
+    assert f"Imported 3 companies from {import_file}." in out
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
+    listed = capsys.readouterr().out
+    assert "Acme Corp" in listed
+    assert "Beta Inc" in listed
+    assert "Gamma LLC" in listed
+
+
+def test_blacklist_import_reports_singular_for_one_company(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    import_file = tmp_path / "one.txt"
+    import_file.write_text("Acme Corp\n", encoding="utf-8")
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="import", file=import_file))
+
+    assert f"Imported 1 company from {import_file}." in capsys.readouterr().out
+
+
+def test_blacklist_import_of_missing_file_exits_with_error(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_blacklist(
+            settings, argparse.Namespace(blacklist_action="import", file=tmp_path / "does-not-exist.txt")
+        )
+
+    assert exc_info.value.code == 1
+    assert "Error" in capsys.readouterr().err
+
+
 # --- export ---
 
 

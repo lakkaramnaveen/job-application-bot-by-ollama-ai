@@ -920,10 +920,11 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
-    """add/remove/list companies `job-bot run` will always skip - see
-    build_parser()'s `blacklist` subparser for the three actions. add/remove
-    each take one or more company names (nargs="+"), so blacklisting several
-    past employers at once doesn't need a separate invocation per company.
+    """add/remove/list/import companies `job-bot run` will always skip -
+    see build_parser()'s `blacklist` subparser for the four actions.
+    add/remove each take one or more company names (nargs="+"), so
+    blacklisting several past employers at once doesn't need a separate
+    invocation per company.
     """
     blacklist = CompanyBlacklist(settings.blacklist_path)
     if args.blacklist_action == "add":
@@ -943,6 +944,20 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
         else:
             for company in companies:
                 print(company)
+    elif args.blacklist_action == "import":
+        try:
+            lines = args.file.read_text(encoding="utf-8").splitlines()
+        except OSError as e:
+            print(f"Error: could not read {args.file}: {e}", file=sys.stderr)
+            sys.exit(1)
+        # One company per line - blank lines and "#"-prefixed comment lines
+        # skipped, the same lightweight convention as a requirements.txt or
+        # .gitignore, so a list exported from a spreadsheet (or hand-edited)
+        # doesn't need any real structure beyond that.
+        companies = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+        for company in companies:
+            blacklist.add(company)
+        print(f"Imported {len(companies)} compan{'y' if len(companies) == 1 else 'ies'} from {args.file}.")
 
 
 def cmd_dashboard(settings: Settings, args: argparse.Namespace) -> None:
@@ -1234,6 +1249,12 @@ def build_parser() -> argparse.ArgumentParser:
     remove_p = blacklist_sub.add_parser("remove", help="Remove one or more companies from the blacklist.")
     remove_p.add_argument("company", nargs="+", help="One or more company names, each quoted separately.")
     blacklist_sub.add_parser("list", help="List blacklisted companies.")
+    import_p = blacklist_sub.add_parser(
+        "import", help="Add every company listed in a text file (one per line)."
+    )
+    import_p.add_argument(
+        "file", type=Path, help="Plain text file, one company per line. Blank and '#'-comment lines skipped."
+    )
 
     return parser
 
