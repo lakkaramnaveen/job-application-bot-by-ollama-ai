@@ -1,13 +1,15 @@
 """Persists generated application material to disk.
 
-The LinkedIn adapter always uploads the user's own verified resume file
-(settings.resume_path) - never a freshly LLM-generated document the user
-hasn't reviewed, since a factual error in a document actually submitted to
-an employer is a real, hard-to-undo risk. The *tailored* resume (summary,
-highlighted skills, reordered bullets) is instead written here as a plain
-text file per job, for the user to read, copy from, or reuse in interview
-prep - closing the loop on generation without auto-submitting unreviewed
-content.
+write_tailored_resume() below is always written, as a plain-text reference
+copy of the summary/skills/bullets for the user to read, copy from, or reuse
+in interview prep. write_tailored_resume_docx() additionally builds the
+actual per-job .docx LinkedInAdapter.fill_and_submit() uploads in place of
+the user's static resume file, at the user's request to have the submitted
+resume vary by job description - see generation/resume_document.py's module
+docstring for why it only ever tailors the summary/skills, never the real
+work-history section, and for why it can decline (returning None here) if
+that resume's sections can't be confidently located; cli.py falls back to
+the user's own unmodified resume_path whenever that happens.
 
 Materials land under base_dir (settings.applications_dir) as
 <today's date>/<job folder>/ - one dated folder per day's worth of
@@ -20,6 +22,7 @@ import re
 from datetime import date
 from pathlib import Path
 
+from job_bot.generation.resume_document import build_tailored_resume_docx
 from job_bot.models.schemas import CoverLetter, TailoredResume
 
 # job_id ultimately comes from a scraped LinkedIn data-job-id DOM attribute -
@@ -81,6 +84,18 @@ def write_tailored_resume(
     path = _job_dir(base_dir, job_id, company=company, title=title) / "tailored_resume.txt"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+def write_tailored_resume_docx(
+    base_dir: Path, job_id: str, resume_text: str, tailored: TailoredResume, *, company: str = "", title: str = ""
+) -> Path | None:
+    """Returns the written .docx's path, or None if build_tailored_resume_docx()
+    declined (resume_text's sections couldn't be confidently located) -
+    callers must fall back to the user's own resume_path in that case, never
+    treat None as "retry" or "error".
+    """
+    path = _job_dir(base_dir, job_id, company=company, title=title) / "tailored_resume.docx"
+    return path if build_tailored_resume_docx(resume_text, tailored, path) else None
 
 
 def write_cover_letter(

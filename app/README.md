@@ -142,10 +142,12 @@ Edit `.env`:
 - **Put your resume at the path `RESUME_PATH` points to** - default
   `./data/resume.pdf` relative to `app/` (i.e. `app/data/resume.pdf`), or
   point `RESUME_PATH` at a file anywhere else on disk. PDF, DOCX, or TXT.
-  This exact file is what's actually uploaded to every real Easy Apply
-  submission - the per-job tailored resume the bot generates is a
-  reference document only (see "Running it" below), never a substitute
-  for this one.
+  When your resume has clearly-labeled SUMMARY/SKILLS/EXPERIENCE-or-similar
+  sections, this is what a freshly per-job tailored `.docx` (built from it)
+  is uploaded instead of - see "Running it" below for exactly what does and
+  doesn't get changed. When those sections can't be confidently found, this
+  exact file is uploaded unmodified instead, same as before that feature
+  existed.
 
 ## Running it
 
@@ -262,16 +264,26 @@ job-bot run --provider claude --model claude-opus-5 --dry-run
 ```
 
 For every job that passes the fit/eligibility gate (even on a `--dry-run`),
-`job-bot run` writes a tailored resume and cover letter to
+`job-bot run` writes a tailored resume (as both a plain-text reference copy
+and a `.docx`) and cover letter to
 `<APPLICATIONS_DIR>/<today's date>/<job id - company - title>/` - one dated
 folder per day's worth of applications, for you to read, copy from, or reuse
 in interview prep. `APPLICATIONS_DIR` defaults to `data/applications` inside
 the repo; point it at a folder outside the repo (e.g. on your Desktop) in
-`.env` if you want to browse it directly day by day. The file actually
-uploaded to the LinkedIn form is still always your own `RESUME_PATH`
-document, unedited - the generated tailored resume is a reference artifact,
-not something auto-substituted into a real submission without your review.
-See `job_bot/generation/artifacts.py`.
+`.env` if you want to browse it directly day by day.
+
+That per-job `.docx` is also what actually gets uploaded to the LinkedIn
+form, in place of your static `RESUME_PATH` file - but only the professional
+summary and skills line are the LLM-generated content; your real job
+titles, companies, dates, and every bullet under them are copied verbatim
+from your own resume, never reworded, reordered, or replaced by the model's
+own rewritten bullets, since a wrong company name or fabricated-sounding
+claim in a document actually submitted to a real employer is a much more
+serious mistake than an imperfectly-phrased summary sentence. If your
+resume's sections can't be confidently located (see `resume_document.py`),
+your unmodified `RESUME_PATH` file is uploaded instead, exactly like before
+this feature existed. See `job_bot/generation/resume_document.py` and
+`artifacts.py`.
 
 Tailoring is written to be ATS-friendly: plain text with a single leading
 `-` per bullet (no tables, columns, icons, or special unicode a parser can

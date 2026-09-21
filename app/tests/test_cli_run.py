@@ -11,6 +11,7 @@ import argparse
 import json
 from contextlib import contextmanager
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -366,10 +367,14 @@ def test_run_dry_run_does_not_mark_applied(tmp_path, monkeypatch):
     assert (job_dir / "cover_letter.txt").exists()
 
 
-def test_run_uploads_the_original_resume_file_not_a_generated_one(tmp_path, monkeypatch):
-    """The tailored resume is a reference artifact only - fill_and_submit
-    must still receive the user's own verified resume_path. See
-    job_bot/generation/artifacts.py's module docstring for why.
+def test_run_uploads_the_original_resume_file_when_a_tailored_docx_cant_be_built(tmp_path, monkeypatch):
+    """make_settings()'s resume fixture is a single plain sentence with no
+    SUMMARY/SKILLS/EXPERIENCE section headers - build_tailored_resume_docx()
+    can't confidently locate them, so write_tailored_resume_docx() returns
+    None and generate_materials() must fall back to the user's own
+    unmodified resume_path rather than upload nothing or guess. See
+    test_run_uploads_a_freshly_tailored_docx_resume_when_one_can_be_built()
+    for the case where a tailored .docx is built and used instead.
     """
     provider = FakeProvider()
     monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
@@ -389,6 +394,46 @@ def test_run_uploads_the_original_resume_file_not_a_generated_one(tmp_path, monk
 
     call = captured_adapter["adapter"].fill_and_submit_calls[0]
     assert call["resume_path"] == str(settings.resume_path)
+
+
+def test_run_uploads_a_freshly_tailored_docx_resume_when_one_can_be_built(tmp_path, monkeypatch):
+    """When resume_text has clearly-labeled SUMMARY/SKILLS/EXPERIENCE
+    sections, generate_materials() must build and use a per-job tailored
+    .docx instead of falling back to the static resume_path - this is the
+    user-requested behavior change (the actual uploaded resume now varies
+    by job description, unlike test_run_uploads_the_original_resume_file_
+    when_a_tailored_docx_cant_be_built()'s no-structure-detected case).
+    """
+    structured_resume_path = tmp_path / "structured_resume.txt"
+    structured_resume_path.write_text(
+        "Jane Doe\njane@example.com\n\n"
+        "SUMMARY\nExperienced backend engineer skilled in Python.\n\n"
+        "SKILLS\nPython, Django, PostgreSQL\n\n"
+        "EXPERIENCE\nSoftware Engineer, Acme Corp, 2020-Present\n- Built things.\n",
+        encoding="utf-8",
+    )
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, resume_path=structured_resume_path)
+    adapter_instances = []
+    original_fake_adapter = FakeAdapter
+
+    class CapturingAdapter(original_fake_adapter):
+        def __init__(self, page):
+            super().__init__(page)
+            adapter_instances.append(self)
+
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", CapturingAdapter)
+
+    cmd_run(settings, make_args())
+
+    resume_path_used = adapter_instances[0].fill_and_submit_calls[0]["resume_path"]
+    assert resume_path_used.endswith(".docx")
+    assert resume_path_used != str(structured_resume_path)
+    assert Path(resume_path_used).exists()
 
 
 def test_run_caches_high_confidence_answers_to_faq(tmp_path, monkeypatch):

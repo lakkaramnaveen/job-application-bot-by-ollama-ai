@@ -34,7 +34,12 @@ from job_bot.browser.linkedin_adapter import (
 from job_bot.browser.session import BrowserSessionError, browser_session
 from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError, get_settings
 from job_bot.dashboard.server import run_dashboard
-from job_bot.generation.artifacts import UnsafeJobId, write_cover_letter, write_tailored_resume
+from job_bot.generation.artifacts import (
+    UnsafeJobId,
+    write_cover_letter,
+    write_tailored_resume,
+    write_tailored_resume_docx,
+)
 from job_bot.generation.cover_letter import generate_cover_letter
 from job_bot.generation.qa_answerer import answer_question
 from job_bot.generation.resume_tailor import tailor_resume
@@ -410,14 +415,18 @@ def _run_apply_cycle(
         audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
         return should_apply
 
-    def generate_materials(posting: JobPosting, description: str) -> CoverLetter:
+    def generate_materials(posting: JobPosting, description: str) -> tuple[CoverLetter, str]:
         """Tailors the resume (using past generations that led to a real
         interview/offer as few-shot examples - see
         Tracker.best_resume_examples()) and a cover letter, writes both to
         disk as reference material, and records the generation. The
-        returned cover letter's body is also what gets filled into the
-        application form itself - the tailored resume never is (see
-        generation/artifacts.py's module docstring).
+        returned cover letter's body is what gets filled into the
+        application form itself; the returned resume path is what gets
+        uploaded as the resume - a freshly tailored .docx when
+        write_tailored_resume_docx() could confidently build one (see
+        generation/resume_document.py's module docstring for exactly what
+        it will and won't change), else the user's own unmodified
+        resume_path, unchanged from this project's original behavior.
         """
         examples = [
             TailoredResume(summary=r["summary"], highlighted_skills=r["skills"], bullet_points=r["bullets"])
@@ -436,11 +445,20 @@ def _run_apply_cycle(
         write_tailored_resume(
             settings.applications_dir, posting.job_id, tailored, company=posting.company, title=posting.title
         )
+        tailored_resume_path = write_tailored_resume_docx(
+            settings.applications_dir,
+            posting.job_id,
+            resume_text,
+            tailored,
+            company=posting.company,
+            title=posting.title,
+        )
         write_cover_letter(
             settings.applications_dir, posting.job_id, cover_letter, company=posting.company, title=posting.title
         )
         audit.log("generated_materials", job_id=posting.job_id)
-        return cover_letter
+        resume_path = str(tailored_resume_path) if tailored_resume_path is not None else str(settings.resume_path)
+        return cover_letter, resume_path
 
     def answer(question: str, job_id: str) -> str:
         faq_answers = resume_store.faq_answers()
@@ -471,7 +489,7 @@ def _run_apply_cycle(
             resume_store.save_faq_answer(question, result.answer)
         return result.answer
 
-    def apply_to(posting: JobPosting, cover_letter: CoverLetter) -> bool | None:
+    def apply_to(posting: JobPosting, cover_letter: CoverLetter, resume_path: str) -> bool | None:
         """Confirms, then submits for real (or stops right before the
         final click on --dry-run). Returns None if the user declined the
         confirmation prompt - not an error, the caller just moves on to
@@ -500,7 +518,7 @@ def _run_apply_cycle(
                 return adapter.fill_and_submit(
                     posting,
                     answer_question=answer_for_this_posting,
-                    resume_path=str(settings.resume_path),
+                    resume_path=resume_path,
                     cover_letter_text=cover_letter.body,
                     dry_run=args.dry_run,
                 )
@@ -513,7 +531,7 @@ def _run_apply_cycle(
                 )
             return ExternalApplyAdapter(external_page).fill_and_submit(
                 answer_question=answer_for_this_posting,
-                resume_path=str(settings.resume_path),
+                resume_path=resume_path,
                 cover_letter_text=cover_letter.body,
                 dry_run=args.dry_run,
             )
@@ -543,7 +561,7 @@ def _run_apply_cycle(
             description = adapter.load_description(posting)
             if not clears_the_bar(posting, description, existing):
                 continue
-            cover_letter = generate_materials(posting, description)
+            cover_letter, resume_path = generate_materials(posting, description)
         except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
             audit.log("prep_error", job_id=posting.job_id, error=str(e))
             failure_log.log(
@@ -577,7 +595,7 @@ def _run_apply_cycle(
             continue
 
         try:
-            submitted = apply_to(posting, cover_letter)
+            submitted = apply_to(posting, cover_letter, resume_path)
         except Exception as e:  # noqa: BLE001 - surface and continue to the next job
             if isinstance(e, UnansweredRequiredQuestion):
                 # Log this one specifically, not just as a generic
