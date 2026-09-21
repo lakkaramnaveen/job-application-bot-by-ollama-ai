@@ -754,6 +754,58 @@ def test_faq_remove_of_uncached_question_says_so(tmp_path, capsys):
     assert 'No cached answer for: "Never asked"' in capsys.readouterr().out
 
 
+def test_faq_import_merges_answers_from_a_json_file(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Willing to relocate?", "No")
+    import_file = tmp_path / "faq_backup.json"
+    import_file.write_text(
+        json.dumps({"Years of Python experience?": "5", "Willing to relocate?": "Yes"}), encoding="utf-8"
+    )
+
+    cmd_faq(settings, argparse.Namespace(faq_action="import", file=import_file))
+
+    out = capsys.readouterr().out
+    assert f"Imported 2 FAQ answer(s) from {import_file}." in out
+    answers = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
+    assert answers["Years of Python experience?"] == "5"
+    assert answers["Willing to relocate?"] == "Yes"  # imported value wins over the existing one
+
+
+def test_faq_import_of_missing_file_exits_with_error(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_faq(settings, argparse.Namespace(faq_action="import", file=tmp_path / "does-not-exist.json"))
+
+    assert exc_info.value.code == 1
+    assert "Error" in capsys.readouterr().err
+
+
+def test_faq_import_of_invalid_json_exits_with_error(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    import_file = tmp_path / "bad.json"
+    import_file.write_text("not valid json {{{", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_faq(settings, argparse.Namespace(faq_action="import", file=import_file))
+
+    assert exc_info.value.code == 1
+    assert "not valid JSON" in capsys.readouterr().err
+
+
+def test_faq_import_of_non_object_json_exits_with_error(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    import_file = tmp_path / "list.json"
+    import_file.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_faq(settings, argparse.Namespace(faq_action="import", file=import_file))
+
+    assert exc_info.value.code == 1
+    assert "must contain a JSON object" in capsys.readouterr().err
+
+
 # --- main() ---
 
 

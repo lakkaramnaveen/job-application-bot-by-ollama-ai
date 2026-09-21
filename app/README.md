@@ -427,6 +427,7 @@ more you use it, without ever caching a low-confidence guess.
 ```bash
 job-bot faq list                          # every cached question/answer pair
 job-bot faq remove "Years of Python experience?"   # e.g. to fix a wrong one
+job-bot faq import faq_backup.json        # merge in a backup, or another install's FAQ_PATH
 ```
 
 ## Learning from questions it couldn't answer
