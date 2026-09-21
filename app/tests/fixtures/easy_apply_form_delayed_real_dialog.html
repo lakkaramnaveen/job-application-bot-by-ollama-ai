@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: real Easy Apply dialog renders after the decoy</title></head>
+<!--
+  Reproduces a narrower timing variant of the "unrelated dialog ahead of
+  the real one" bug: here the decoy is the ONLY dialog in the DOM at the
+  moment Easy Apply is clicked, and the real modal is appended slightly
+  later (simulating a slow profile-prefill fetch) - _find_easy_apply_dialog()
+  must not permanently commit to the decoy just because it was the only
+  dialog present at the instant it was first checked.
+-->
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Update your profile">
+    <p>Review your profile photo before continuing?</p>
+    <button>Back</button>
+    <button>Review</button>
+  </div>
+
+  <script>
+    setTimeout(() => {
+      const dialog = document.createElement('div');
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-label', 'Job application');
+      dialog.innerHTML = `
+        <label for="years-python">Years of Python experience</label>
+        <input id="years-python" type="text" />
+        <button aria-label="Submit application">Submit application</button>
+      `;
+      document.body.appendChild(dialog);
+    }, 1500);
+  </script>
+</body>
+</html>

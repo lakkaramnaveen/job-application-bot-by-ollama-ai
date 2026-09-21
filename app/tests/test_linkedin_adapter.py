@@ -67,6 +67,9 @@ REQUIRED_FILE_AMBIGUOUS_FIXTURE_PATH = (
 DIALOG_NEVER_APPEARS_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_dialog_never_appears.html"
 )
+DELAYED_REAL_DIALOG_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_delayed_real_dialog.html"
+)
 
 
 @pytest.fixture
@@ -135,6 +138,33 @@ def test_fill_and_submit_ignores_an_unrelated_dialog_ahead_of_the_real_one(playw
     """
     posting = JobPosting(
         job_id="1", title="X", company="Y", url=f"file://{EXTRA_DIALOG_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "5" if "Python" in label else "",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert submitted is False
+    assert playwright_page.locator("#years-python").input_value() == "5"
+
+
+def test_fill_and_submit_waits_for_the_real_dialog_when_it_renders_after_the_decoy(playwright_page):
+    """Narrower timing variant of the bug above: the decoy is the ONLY
+    dialog present at the moment Easy Apply is clicked, and the real modal
+    is appended to the DOM slightly later (simulating a slow profile-
+    prefill fetch). Before _find_easy_apply_dialog() polled instead of
+    sampling the dialog list exactly once, a count() == 1 snapshot taken
+    right after the click would lock onto the decoy for the rest of the
+    method, reproducing the exact "stuck" bug under different timing than
+    the fixture above covers.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{DELAYED_REAL_DIALOG_FIXTURE_PATH}", description=""
     )
     adapter = LinkedInAdapter(playwright_page)
 

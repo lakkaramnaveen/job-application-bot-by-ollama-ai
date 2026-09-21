@@ -87,6 +87,14 @@ SUBMIT_BUTTON_SELECTORS = (
 # race the DOM. Real users don't click at machine speed either.
 ACTION_DELAY_SECONDS = 1.0
 
+# How long _find_easy_apply_dialog() will keep re-checking for a fillable
+# dialog before giving up and falling back to whatever's there - long
+# enough to cover the real Easy Apply modal rendering somewhat after a
+# decoy dialog does, short enough to stay well under fill_and_submit()'s
+# own 10s dialog.wait_for() budget that follows it.
+_DIALOG_POLL_TIMEOUT_SECONDS = 4.0
+_DIALOG_POLL_INTERVAL_SECONDS = 0.5
+
 RESULTS_PER_PAGE = 25
 MAX_SEARCH_PAGES = 8  # hard cap so a huge search can't page forever
 NAVIGATION_RETRIES = 2
@@ -393,19 +401,35 @@ class LinkedInAdapter(JobBoardAdapter):
         or when none of several contain a form field - identical to the
         prior behavior either way, so this can only change what happens
         when more than one dialog is present.
+
+        Polls for up to _DIALOG_POLL_TIMEOUT_SECONDS rather than sampling
+        the dialog list exactly once: a decoy dialog (e.g. the profile-
+        photo nudge above) commonly renders before the real Easy Apply
+        modal does, so a single check made right after the click can see
+        only the decoy - count == 1, no fillable field yet - and lock onto
+        it for good, reproducing the exact "stuck" bug this method exists
+        to fix, just under different timing than the single-snapshot
+        fixture covers. The common case (one dialog, already fillable, or
+        several with the real one already present) still returns on the
+        very first pass with no added delay - only the ambiguous case
+        (nothing fillable found yet) waits, and only up to the deadline.
         """
-        dialogs = self._page.locator(SELECTORS["dialog"])
-        count = dialogs.count()
-        if count <= 1:
-            return dialogs.first
         fillable_selector = (
             'input[type="text"], input[type="number"], input[type="file"], textarea, select, fieldset'
         )
-        for i in range(count):
-            candidate = dialogs.nth(i)
-            if candidate.locator(fillable_selector).count() > 0:
-                return candidate
-        return dialogs.first
+        deadline = time.monotonic() + _DIALOG_POLL_TIMEOUT_SECONDS
+        while True:
+            dialogs = self._page.locator(SELECTORS["dialog"])
+            count = dialogs.count()
+            if count == 0:
+                return dialogs.first
+            for i in range(count):
+                candidate = dialogs.nth(i)
+                if candidate.locator(fillable_selector).count() > 0:
+                    return candidate
+            if time.monotonic() >= deadline:
+                return dialogs.first
+            time.sleep(_DIALOG_POLL_INTERVAL_SECONDS)
 
     def fill_and_submit(
         self,
