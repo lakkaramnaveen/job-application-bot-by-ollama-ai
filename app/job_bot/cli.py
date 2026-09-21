@@ -309,6 +309,26 @@ def _is_ollama_unreachable(e: Exception) -> bool:
     return isinstance(e, OllamaProviderError) and "Could not reach Ollama" in str(e)
 
 
+# The three claude_provider.py ClaudeProviderError messages that mean the
+# provider is fundamentally misconfigured - not a one-off request failure
+# (rate limit, network blip) - and will therefore raise the exact same
+# error on every remaining posting in the batch too. Same reasoning as
+# _is_ollama_unreachable() above, and the same fix: recognize it after the
+# first failure instead of repeating an identical, guaranteed-to-fail LLM
+# call (and an identical printed error) once per remaining posting.
+_CLAUDE_CONFIG_ERROR_MARKERS = (
+    "Invalid ANTHROPIC_API_KEY",
+    "API key lacks permission",
+    "not found.",  # ClaudeProviderError(f"Model '{model}' not found.")
+)
+
+
+def _is_claude_misconfigured(e: Exception) -> bool:
+    return isinstance(e, ClaudeProviderError) and any(
+        marker in str(e) for marker in _CLAUDE_CONFIG_ERROR_MARKERS
+    )
+
+
 def _quit_ollama_if_configured(settings: Settings) -> None:
     """Called once `job-bot run` is done drawing on Ollama for the day (the
     daily cap was reached) - see Settings.quit_ollama_when_done. No-op for
@@ -604,6 +624,9 @@ def _run_apply_cycle(
                 # before this fix.
                 print("Ollama is unreachable - stopping the run instead of repeating this for every posting.")
                 break
+            if _is_claude_misconfigured(e):
+                print(f"Claude provider is misconfigured ({e}) - stopping the run instead of repeating this for every posting.")
+                break
             if page.is_closed():
                 # The browser itself is gone (closed, crashed, killed) -
                 # every remaining posting shares this one page and would
@@ -640,6 +663,9 @@ def _run_apply_cycle(
             failed += 1
             if _is_ollama_unreachable(e):
                 print("Ollama is unreachable - stopping the run instead of repeating this for every posting.")
+                break
+            if _is_claude_misconfigured(e):
+                print(f"Claude provider is misconfigured ({e}) - stopping the run instead of repeating this for every posting.")
                 break
             if page.is_closed():
                 print("Browser window was closed - stopping the run.")

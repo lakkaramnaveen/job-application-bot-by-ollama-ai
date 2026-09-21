@@ -20,6 +20,7 @@ from job_bot.browser.linkedin_adapter import UnansweredRequiredQuestion
 from job_bot.cli import cmd_run
 from job_bot.config import Settings
 from job_bot.llm.base import LLMProvider
+from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.ollama_provider import OllamaProviderError
 from job_bot.models.schemas import ApplicationAnswer, CoverLetter, JobMatchScore, TailoredResume
 from job_bot.safety.answer_gaps import AnswerGapStore
@@ -995,6 +996,45 @@ def test_run_stops_the_whole_run_when_ollama_is_unreachable(tmp_path, monkeypatc
     assert provider.calls == 1
     out = capsys.readouterr().out
     assert "Ollama is unreachable" in out
+    assert out.count("Error preparing application") == 1
+    tracker = Tracker(settings.db_path)
+    assert tracker.get_job("job2") is None
+    assert tracker.get_job("job3") is None
+
+
+class ClaudeMisconfiguredProvider(LLMProvider):
+    """Simulates a revoked/invalid Claude API key - every call raises the
+    exact ClaudeProviderError claude_provider.py raises on
+    anthropic.AuthenticationError, not just some generic failure.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    def generate_structured(self, *, system, prompt, schema):
+        self.calls += 1
+        raise ClaudeProviderError("Invalid ANTHROPIC_API_KEY.")
+
+
+def test_run_stops_the_whole_run_when_claude_is_misconfigured(tmp_path, monkeypatch, capsys):
+    """Same class of bug as test_run_stops_the_whole_run_when_ollama_is_unreachable
+    above, for the Claude provider: an invalid/revoked API key fails
+    identically on every remaining posting, so the run should recognize
+    that after the first failure instead of repeating the identical,
+    guaranteed-to-fail LLM call (and an identical printed error) once per
+    remaining posting.
+    """
+    provider = ClaudeMisconfiguredProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10))
+
+    assert provider.calls == 1
+    out = capsys.readouterr().out
+    assert "Claude provider is misconfigured" in out
     assert out.count("Error preparing application") == 1
     tracker = Tracker(settings.db_path)
     assert tracker.get_job("job2") is None
