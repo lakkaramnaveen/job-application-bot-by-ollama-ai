@@ -401,6 +401,7 @@ to observe what happens after you submit. Record what you hear back by hand:
 
 ```bash
 job-bot report                          # counts of tracked jobs by status
+job-bot report --by-score --format json # same data as one JSON object, for a script or cron job
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response
 job-bot status <job_id>                 # no status - print the job's record and Q&A history instead
 job-bot export                          # all tracked jobs as CSV, to stdout

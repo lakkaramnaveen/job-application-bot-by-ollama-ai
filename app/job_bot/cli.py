@@ -851,17 +851,26 @@ def _score_bucket_label(score: int) -> str:
     return "?"
 
 
-def _print_score_breakdown(tracker: Tracker) -> None:
+def _score_breakdown(tracker: Tracker) -> dict[str, dict[str, int]]:
+    """bucket label -> status -> count, for `job-bot report --by-score` -
+    shared by both the text table (_print_score_breakdown below) and JSON
+    output (cmd_report's --format json) so the two can never compute this
+    differently.
+    """
     scored_jobs = [job for job in tracker.list_jobs() if job["match_score"] is not None]
-    if not scored_jobs:
-        return
-
     buckets: dict[str, dict[str, int]] = {}
     for job in scored_jobs:
         by_status = buckets.setdefault(_score_bucket_label(job["match_score"]), {})
         by_status[job["status"]] = by_status.get(job["status"], 0) + 1
+    return buckets
 
-    statuses = sorted({job["status"] for job in scored_jobs})
+
+def _print_score_breakdown(tracker: Tracker) -> None:
+    buckets = _score_breakdown(tracker)
+    if not buckets:
+        return
+
+    statuses = sorted({status for counts in buckets.values() for status in counts})
     print("\nOutcomes by match score:")
     header = "score".ljust(8) + "".join(status.ljust(14) for status in statuses) + "total"
     print(header)
@@ -886,10 +895,36 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
     """Print status counts, plus two optional sections: `--stale-days`
     (applications with no reply worth a manual follow-up) and `--by-score`
     (how match score correlates with actual outcomes, to sanity-check
-    whether the LLM scorer's judgment tracks reality).
+    whether the LLM scorer's judgment tracks reality). `--format json`
+    prints the same data as one JSON object instead - for a script or cron
+    job that wants to alert on e.g. a growing stale-applications count
+    without scraping the human-readable text layout.
     """
     tracker = Tracker(settings.db_path)
     counts = tracker.status_counts()
+    stale_days = args.stale_days if args.stale_days is not None else settings.stale_after_days
+    stale = _stale_applications(tracker, stale_days)
+
+    if args.format == "json":
+        payload: dict[str, Any] = {
+            "counts": counts,
+            "total": sum(counts.values()),
+            "stale_days": stale_days,
+            "stale": [
+                {
+                    "job_id": job["job_id"],
+                    "company": job["company"],
+                    "title": job["title"],
+                    "applied_at": job["applied_at"],
+                }
+                for job in stale
+            ],
+        }
+        if args.by_score:
+            payload["by_score"] = _score_breakdown(tracker)
+        print(json.dumps(payload, indent=2))
+        return
+
     if not counts:
         print("No jobs tracked yet.")
         return
@@ -898,8 +933,6 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
         print(f"{status:<{width}}  {counts[status]}")
     print(f"{'total':<{width}}  {sum(counts.values())}")
 
-    stale_days = args.stale_days if args.stale_days is not None else settings.stale_after_days
-    stale = _stale_applications(tracker, stale_days)
     if stale:
         print(f"\nApplied {stale_days}+ days ago with no reply ({len(stale)}):")
         for job in stale:
@@ -1273,6 +1306,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report_p.add_argument(
         "--by-score", action="store_true", help="Break outcomes down by match-score bucket."
+    )
+    report_p.add_argument(
+        "--format", choices=["text", "json"], default="text", help="Print as one JSON object instead."
     )
 
     export_p = sub.add_parser("export", help="Export tracked jobs as CSV or JSON.")

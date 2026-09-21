@@ -89,7 +89,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
 
 
 def report_args(**overrides) -> argparse.Namespace:
-    defaults = dict(stale_days=None, by_score=False)
+    defaults = dict(stale_days=None, by_score=False, format="text")
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -326,6 +326,52 @@ def test_report_by_score_omitted_without_the_flag(tmp_path, capsys):
     cmd_report(settings, report_args())
 
     assert "Outcomes by match score" not in capsys.readouterr().out
+
+
+def test_report_json_includes_counts_total_and_stale(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
+    tracker.mark_applied("job2")
+    _backdate_applied_at(settings.db_path, "job2", datetime.now(UTC) - timedelta(days=20))
+
+    cmd_report(settings, report_args(stale_days=14, format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["counts"] == {"seen": 1, "applied": 1}
+    assert payload["total"] == 2
+    assert payload["stale_days"] == 14
+    assert len(payload["stale"]) == 1
+    stale_entry = payload["stale"][0]
+    assert stale_entry["job_id"] == "job2"
+    assert stale_entry["company"] == "Beta"
+    assert stale_entry["title"] == "Frontend Engineer"
+    assert stale_entry["applied_at"]  # a non-empty ISO timestamp string
+
+
+def test_report_json_includes_by_score_only_when_requested(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score("job1", "Backend Engineer", "Acme", "https://x/1", score=92, should_apply=True)
+
+    cmd_report(settings, report_args(by_score=True, format="json"))
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["by_score"] == {"90-100": {"seen": 1}}
+
+    cmd_report(settings, report_args(format="json"))
+    payload = json.loads(capsys.readouterr().out)
+    assert "by_score" not in payload
+
+
+def test_report_json_on_empty_tracker_is_still_valid_json(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path)
+
+    cmd_report(settings, report_args(format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"counts": {}, "total": 0, "stale_days": settings.stale_after_days, "stale": []}
 
 
 # --- blacklist ---
