@@ -15,6 +15,8 @@ that an applied job is recorded once and never re-applied to on a second
 run, and that an email arriving later moves that same row forward.
 """
 
+import csv
+import io
 import json
 import threading
 import urllib.request
@@ -320,9 +322,15 @@ def test_run_then_report_and_export_reflect_the_same_state(settings, wired_run, 
 
     cmd_export(settings, run_args(status="applied", search=None, out=None, format="csv"))
     csv_out = capsys.readouterr().out
-    assert APPLICABLE_JOB_ID in csv_out
+    # Checked via the job_id column specifically, not a raw substring search
+    # over the whole CSV blob - LOW_SCORE_JOB_ID ("902") is short enough
+    # that it can coincidentally appear inside an unrelated row's own
+    # first_seen_at/applied_at microsecond timestamp (e.g. ".902719"),
+    # which made this assertion flaky roughly once in thousands of runs.
+    job_ids = [row["job_id"] for row in csv.DictReader(io.StringIO(csv_out))]
+    assert APPLICABLE_JOB_ID in job_ids
     assert "https://www.linkedin.com/jobs/view/901/?refId=e2e" in csv_out
-    assert LOW_SCORE_JOB_ID not in csv_out
+    assert LOW_SCORE_JOB_ID not in job_ids
 
 
 def test_dashboard_serves_the_run_result_and_accepts_a_status_change(settings, wired_run):
