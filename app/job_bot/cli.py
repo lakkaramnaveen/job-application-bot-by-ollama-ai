@@ -674,13 +674,45 @@ def _run_apply_cycle(
     return applied, failed
 
 
+_STATUS_VIEW_FIELDS = (
+    "title",
+    "company",
+    "status",
+    "match_score",
+    "url",
+    "first_seen_at",
+    "applied_at",
+)
+
+
 def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
     """Record an outcome the bot has no way to observe on its own -
     `job-bot run` only ever writes seen/applied/skipped; everything past
     that (interviewing, offer, ...) is reported by the user by hand, or by
     `job-bot gmail-sync` reading a reply email.
+
+    With no <status> given, prints the job's current tracked record and
+    answered-question history instead of changing anything - a quick,
+    CLI-only way to check one application (e.g. before deciding what status
+    to set) without opening the dashboard.
     """
     tracker = Tracker(settings.db_path)
+
+    if args.status is None:
+        job = tracker.get_job(args.job_id)
+        if job is None:
+            print(f"No tracked job with id {args.job_id!r}.", file=sys.stderr)
+            sys.exit(1)
+        width = max(len(field) for field in _STATUS_VIEW_FIELDS)
+        for field in _STATUS_VIEW_FIELDS:
+            print(f"{field:<{width}}  {job.get(field)}")
+        qa = tracker.list_qa(args.job_id)
+        if qa:
+            print(f"\nQ&A history ({len(qa)}):")
+            for pair in qa:
+                print(f"  Q: {pair['question']}\n  A: {pair['answer']}\n")
+        return
+
     try:
         tracker.update_status(args.job_id, args.status)
     except ValueError as e:
@@ -1084,12 +1116,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     status_p = sub.add_parser(
-        "status", help="Record an application outcome (interviewing, offer, rejected, ...) by hand."
+        "status",
+        help="Record an application outcome by hand, or view one job's record with no <status>.",
     )
     status_p.add_argument(
         "job_id", help="The LinkedIn job id, as shown in `job-bot report` or the audit log."
     )
-    status_p.add_argument("status", choices=sorted(TRACKER_STATUSES))
+    status_p.add_argument(
+        "status",
+        nargs="?",
+        default=None,
+        choices=sorted(TRACKER_STATUSES),
+        help="New status to record. Omit to print the job's current record instead.",
+    )
 
     sub.add_parser(
         "review-answers",

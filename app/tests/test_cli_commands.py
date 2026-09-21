@@ -129,6 +129,47 @@ def test_status_on_unknown_job_id_exits_with_error(tmp_path, capsys):
     assert "Error" in capsys.readouterr().err
 
 
+def test_status_with_no_status_arg_prints_the_job_record_and_does_not_change_it(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1", match_score=80)
+    tracker.mark_applied("job1")
+
+    cmd_status(settings, argparse.Namespace(job_id="job1", status=None))
+
+    out = capsys.readouterr().out
+    assert "Backend Engineer" in out
+    assert "Acme" in out
+    assert "applied" in out
+    assert "80" in out
+    assert tracker.get_job("job1")["status"] == "applied"  # unchanged
+
+
+def test_status_with_no_status_arg_includes_qa_history(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.record_qa("job1", "Years of Python?", "5")
+
+    cmd_status(settings, argparse.Namespace(job_id="job1", status=None))
+
+    out = capsys.readouterr().out
+    assert "Q&A history (1):" in out
+    assert "Years of Python?" in out
+    assert "5" in out
+
+
+def test_status_with_no_status_arg_on_unknown_job_id_exits_with_error(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path)  # create the (empty) DB
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_status(settings, argparse.Namespace(job_id="does-not-exist", status=None))
+
+    assert exc_info.value.code == 1
+    assert "No tracked job" in capsys.readouterr().err
+
+
 # --- report ---
 
 
