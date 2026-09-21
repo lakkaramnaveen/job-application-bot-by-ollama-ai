@@ -333,13 +333,13 @@ def test_report_by_score_omitted_without_the_flag(tmp_path, capsys):
 def test_blacklist_add_list_remove_round_trip(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company="Acme Corp"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
     assert "Added to blacklist: Acme Corp" in capsys.readouterr().out
 
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
     assert "Acme Corp" in capsys.readouterr().out  # display casing preserved, not normalized
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="remove", company="Acme Corp"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="remove", company=["Acme Corp"]))
     assert "Removed from blacklist: Acme Corp" in capsys.readouterr().out
 
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
@@ -349,9 +349,43 @@ def test_blacklist_add_list_remove_round_trip(tmp_path, capsys):
 def test_blacklist_remove_of_absent_company_says_so(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="remove", company="Nobody Inc"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="remove", company=["Nobody Inc"]))
 
     assert "Not on the blacklist: Nobody Inc" in capsys.readouterr().out
+
+
+def test_blacklist_add_accepts_multiple_companies_in_one_call(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_blacklist(
+        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"])
+    )
+
+    out = capsys.readouterr().out
+    assert "Added to blacklist: Acme Corp" in out
+    assert "Added to blacklist: Beta Inc" in out
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
+    listed = capsys.readouterr().out
+    assert "Acme Corp" in listed
+    assert "Beta Inc" in listed
+
+
+def test_blacklist_remove_accepts_multiple_companies_in_one_call(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(
+        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"])
+    )
+    capsys.readouterr()
+
+    cmd_blacklist(
+        settings, argparse.Namespace(blacklist_action="remove", company=["Acme Corp", "Beta Inc"])
+    )
+
+    out = capsys.readouterr().out
+    assert "Removed from blacklist: Acme Corp" in out
+    assert "Removed from blacklist: Beta Inc" in out
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
+    assert "Blacklist is empty." in capsys.readouterr().out
 
 
 # --- export ---

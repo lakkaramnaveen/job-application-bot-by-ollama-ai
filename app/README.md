@@ -465,6 +465,7 @@ use it, purely from normal usage, with no separate step required.
 
 ```bash
 job-bot blacklist add "Company Name"      # job-bot run will always skip it
+job-bot blacklist add "Company A" "Company B" "Company C"   # add several at once
 job-bot blacklist remove "Company Name"
 job-bot blacklist list
 ```

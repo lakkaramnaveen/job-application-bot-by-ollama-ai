@@ -921,17 +921,21 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
 
 def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
     """add/remove/list companies `job-bot run` will always skip - see
-    build_parser()'s `blacklist` subparser for the three actions.
+    build_parser()'s `blacklist` subparser for the three actions. add/remove
+    each take one or more company names (nargs="+"), so blacklisting several
+    past employers at once doesn't need a separate invocation per company.
     """
     blacklist = CompanyBlacklist(settings.blacklist_path)
     if args.blacklist_action == "add":
-        blacklist.add(args.company)
-        print(f"Added to blacklist: {args.company}")
+        for company in args.company:
+            blacklist.add(company)
+            print(f"Added to blacklist: {company}")
     elif args.blacklist_action == "remove":
-        removed = blacklist.remove(args.company)
-        print(
-            f"Removed from blacklist: {args.company}" if removed else f"Not on the blacklist: {args.company}"
-        )
+        for company in args.company:
+            removed = blacklist.remove(company)
+            print(
+                f"Removed from blacklist: {company}" if removed else f"Not on the blacklist: {company}"
+            )
     elif args.blacklist_action == "list":
         companies = blacklist.list_companies()
         if not companies:
@@ -1225,10 +1229,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     blacklist_p = sub.add_parser("blacklist", help="Manage the list of companies to never apply to.")
     blacklist_sub = blacklist_p.add_subparsers(dest="blacklist_action", required=True)
-    add_p = blacklist_sub.add_parser("add", help="Add a company to the blacklist.")
-    add_p.add_argument("company")
-    remove_p = blacklist_sub.add_parser("remove", help="Remove a company from the blacklist.")
-    remove_p.add_argument("company")
+    add_p = blacklist_sub.add_parser("add", help="Add one or more companies to the blacklist.")
+    add_p.add_argument("company", nargs="+", help="One or more company names, each quoted separately.")
+    remove_p = blacklist_sub.add_parser("remove", help="Remove one or more companies from the blacklist.")
+    remove_p.add_argument("company", nargs="+", help="One or more company names, each quoted separately.")
     blacklist_sub.add_parser("list", help="List blacklisted companies.")
 
     return parser
