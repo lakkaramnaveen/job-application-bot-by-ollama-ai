@@ -16,6 +16,7 @@ import dataclasses
 from pathlib import Path
 from typing import Any
 
+from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -63,13 +64,38 @@ class GmailClient:
     def _load_credentials(self) -> Credentials:
         creds: Credentials | None = None
         if self._token_path.exists():
-            creds = Credentials.from_authorized_user_file(str(self._token_path), SCOPES)
+            try:
+                creds = Credentials.from_authorized_user_file(str(self._token_path), SCOPES)
+            except ValueError as e:
+                # Corrupted (invalid JSON) or wrong-shape (missing
+                # refresh_token/client_id/...) token file - every other
+                # failure path in this method already raises
+                # GmailClientError; this one didn't, so a bad token.json
+                # (interrupted write, manual edit, ...) crashed
+                # `job-bot gmail-sync` with a raw ValueError/JSONDecodeError
+                # traceback instead of a clear, actionable message.
+                raise GmailClientError(
+                    f"Could not read the Gmail token file at {self._token_path}: {e}. "
+                    "Delete it and re-run to sign in again."
+                ) from e
 
         if creds and creds.valid:
             return creds
 
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except GoogleAuthError as e:
+                # Same reasoning as above: a revoked or expired-beyond-
+                # refresh-eligibility refresh token (Google's own "testing"
+                # OAuth apps expire refresh tokens after 7 days, and a user
+                # can revoke access at any time in their Google account
+                # settings) raises google.auth's own RefreshError here,
+                # uncaught by anything before this fix.
+                raise GmailClientError(
+                    f"Could not refresh the Gmail token: {e}. Delete {self._token_path} "
+                    "and re-run to sign in again."
+                ) from e
         else:
             if not self._credentials_path.exists():
                 raise GmailClientError(

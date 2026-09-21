@@ -1,6 +1,7 @@
 import base64
 
 import pytest
+from google.auth.exceptions import RefreshError
 
 from job_bot.integrations.gmail_client import GmailClient, GmailClientError
 
@@ -237,6 +238,50 @@ def test_load_credentials_refreshes_an_expired_token(tmp_path, monkeypatch):
     assert result is fake_creds
     assert fake_creds.refreshed
     assert token_path.read_text(encoding="utf-8") == '{"fake": "creds"}'
+
+
+def test_load_credentials_raises_gmail_client_error_for_a_corrupted_token_file(tmp_path):
+    """Real bug this guards against: an interrupted write or a manual edit
+    leaving gmail_token.json as invalid JSON (or valid JSON missing
+    required OAuth fields) used to crash `job-bot gmail-sync` with a raw
+    ValueError/JSONDecodeError - not GmailClientError, the one type every
+    other failure path in this class (and cli.py's EXPECTED_ERRORS)
+    actually handles cleanly. Uses a real, unmocked
+    Credentials.from_authorized_user_file() against genuinely invalid
+    content, since the bug is specifically about that call's own real
+    exception type escaping uncaught.
+    """
+    token_path = tmp_path / "token.json"
+    token_path.write_text("not valid json", encoding="utf-8")
+    client = GmailClient(tmp_path / "creds.json", token_path)
+
+    with pytest.raises(GmailClientError, match="Could not read the Gmail token file"):
+        client._load_credentials()
+
+
+def test_load_credentials_raises_gmail_client_error_when_refresh_fails(tmp_path, monkeypatch):
+    """Same reasoning as the corrupted-token-file case above, for a revoked
+    or expired-beyond-refresh-eligibility refresh token: creds.refresh()
+    raising google.auth's own RefreshError used to escape uncaught instead
+    of becoming a clean GmailClientError.
+    """
+    token_path = tmp_path / "token.json"
+    token_path.write_text("{}", encoding="utf-8")
+
+    class RefreshFailingCreds(FakeCreds):
+        def refresh(self, request):
+            raise RefreshError("invalid_grant: Token has been expired or revoked.")
+
+    fake_creds = RefreshFailingCreds(valid=False, expired=True, refresh_token="rt")
+    monkeypatch.setattr(
+        "job_bot.integrations.gmail_client.Credentials.from_authorized_user_file",
+        lambda path, scopes: fake_creds,
+    )
+    monkeypatch.setattr("job_bot.integrations.gmail_client.Request", lambda: object())
+    client = GmailClient(tmp_path / "creds.json", token_path)
+
+    with pytest.raises(GmailClientError, match="Could not refresh the Gmail token"):
+        client._load_credentials()
 
 
 def test_load_credentials_runs_oauth_flow_when_no_token_exists(tmp_path, monkeypatch):
