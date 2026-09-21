@@ -47,9 +47,20 @@ def _parse_txt(path: Path) -> str:
 
 def _parse_pdf(path: Path) -> str:
     from pypdf import PdfReader
+    from pypdf.errors import PyPdfError
 
-    reader = PdfReader(str(path))
-    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    try:
+        reader = PdfReader(str(path))
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    except PyPdfError as e:
+        # A truncated download or a non-PDF file with a .pdf extension
+        # (confirmed live: pypdf raises PdfStreamError, a PyPdfError
+        # subclass, on garbage bytes) previously propagated straight out
+        # as a raw pypdf exception instead of this module's own
+        # ResumeParseError - the one exception type callers (cli.py's
+        # EXPECTED_ERRORS, config.py's validate_ready()) actually handle
+        # cleanly.
+        raise ResumeParseError(f"Could not read PDF file {path}: {e}") from e
     if not text.strip():
         raise ResumeParseError(f"No extractable text found in PDF: {path}")
     return text
@@ -57,9 +68,16 @@ def _parse_pdf(path: Path) -> str:
 
 def _parse_docx(path: Path) -> str:
     import docx
+    from docx.opc.exceptions import OpcError
 
-    document = docx.Document(str(path))
-    text = "\n".join(p.text for p in document.paragraphs)
+    try:
+        document = docx.Document(str(path))
+        text = "\n".join(p.text for p in document.paragraphs)
+    except OpcError as e:
+        # Same reasoning as _parse_pdf's PyPdfError handling above -
+        # confirmed live: python-docx raises PackageNotFoundError (an
+        # OpcError subclass) for a non-DOCX file with a .docx extension.
+        raise ResumeParseError(f"Could not read DOCX file {path}: {e}") from e
     if not text.strip():
         raise ResumeParseError(f"No extractable text found in DOCX: {path}")
     return text

@@ -95,6 +95,35 @@ def test_parse_resume_extracts_text_from_pdf(tmp_path, monkeypatch):
     assert parse_resume(path) == "Jane Doe\nSoftware Engineer"
 
 
+def test_parse_resume_raises_cleanly_for_a_corrupted_pdf(tmp_path):
+    """Unlike the other PDF/DOCX cases in this file, this one does NOT mock
+    PdfReader - it exercises pypdf's own real behavior against a genuinely
+    invalid file, since the bug being guarded against is specifically pypdf
+    raising its own PdfStreamError instead of this module's ResumeParseError.
+    A truncated download or a non-PDF file with a .pdf extension previously
+    crashed with a raw pypdf exception - not caught by cli.py's
+    EXPECTED_ERRORS or config.py's validate_ready() - instead of the clean
+    message every other unparseable-resume case already produced.
+    """
+    path = tmp_path / "resume.pdf"
+    path.write_bytes(b"this is not a real pdf file")
+
+    with pytest.raises(ResumeParseError, match="Could not read PDF file"):
+        parse_resume(path)
+
+
+def test_parse_resume_raises_cleanly_for_a_corrupted_docx(tmp_path):
+    """Same real-library-integration reasoning as the corrupted-PDF case
+    above, for python-docx: a non-DOCX file with a .docx extension raises
+    PackageNotFoundError, which must surface as ResumeParseError too.
+    """
+    path = tmp_path / "resume.docx"
+    path.write_bytes(b"this is not a real docx file")
+
+    with pytest.raises(ResumeParseError, match="Could not read DOCX file"):
+        parse_resume(path)
+
+
 def test_parse_resume_raises_for_pdf_with_no_extractable_text(tmp_path, monkeypatch):
     """Covers a scanned-image PDF with no OCR text layer - extract_text()
     returns "" (or None, which pypdf itself can also return) for every page.

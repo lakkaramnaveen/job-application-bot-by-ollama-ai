@@ -11,6 +11,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from job_bot.resume.parser import ResumeParseError, parse_resume
+
 APP_DIR = Path(__file__).resolve().parent.parent
 
 # Hard ceiling on daily applications, enforced in code regardless of what a user
@@ -159,12 +161,25 @@ class Settings(BaseSettings):
         rather than partway through a run. Returns non-blocking warnings;
         raises SettingsError on anything that would prevent the run from
         working at all.
+
+        Actually parses the resume, not just checks it exists - a
+        present-but-corrupted PDF, an empty resume.txt, or an unsupported
+        extension (resume/parser.py's ResumeParseError cases) previously
+        passed this check and only surfaced once cmd_run's
+        resume_store.resume_text() call ran inside the already-open
+        browser_session() - a real browser window opened for a run that
+        was always going to fail on its very first cycle.
         """
         errors: list[str] = []
         warnings: list[str] = []
 
         if not self.resume_path.exists():
             errors.append(f"Resume file not found at {self.resume_path} (set RESUME_PATH in .env).")
+        else:
+            try:
+                parse_resume(self.resume_path)
+            except ResumeParseError as e:
+                errors.append(str(e))
         if self.llm_provider == "claude" and not self.anthropic_api_key:
             errors.append("LLM_PROVIDER=claude but ANTHROPIC_API_KEY is not set in .env.")
         if self.daily_application_cap > HARD_DAILY_APPLICATION_CEILING:
