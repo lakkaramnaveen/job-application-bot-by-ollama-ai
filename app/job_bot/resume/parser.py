@@ -27,8 +27,22 @@ def parse_resume(path: Path) -> str:
     if suffix == ".docx":
         return _parse_docx(path)
     if suffix == ".txt":
-        return path.read_text(encoding="utf-8")
+        return _parse_txt(path)
     raise ResumeParseError(f"Unsupported resume format: {suffix} (use .pdf, .docx, or .txt)")
+
+
+def _parse_txt(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        # Same empty-content guard as _parse_pdf/_parse_docx below - an
+        # empty or whitespace-only resume.txt (truncated download, wrong
+        # RESUME_PATH, ...) used to silently return "" here instead of
+        # failing clearly like the other two formats already did, letting
+        # every downstream consumer (scoring, tailoring, Q&A) run against a
+        # blank resume with no error until something further along produced
+        # a confusing, hard-to-trace failure.
+        raise ResumeParseError(f"No extractable text found in resume file: {path}")
+    return text
 
 
 def _parse_pdf(path: Path) -> str:

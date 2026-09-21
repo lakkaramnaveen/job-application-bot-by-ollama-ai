@@ -33,6 +33,25 @@ def test_parse_resume_reads_txt_file(tmp_path):
     assert parse_resume(path) == "Jane Doe\nSoftware Engineer"
 
 
+def test_parse_resume_raises_for_empty_txt_file(tmp_path):
+    """Same empty-content guard as the PDF/DOCX cases below - a truncated
+    download or a wrong RESUME_PATH pointing at an empty file must fail
+    clearly here, not silently hand every downstream consumer (scoring,
+    tailoring, Q&A) a blank resume with no error until much later.
+    """
+    path = tmp_path / "resume.txt"
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(ResumeParseError, match="No extractable text found"):
+        parse_resume(path)
+
+
+def test_parse_resume_raises_for_whitespace_only_txt_file(tmp_path):
+    path = tmp_path / "resume.txt"
+    path.write_text("   \n\n\t  ", encoding="utf-8")
+    with pytest.raises(ResumeParseError, match="No extractable text found"):
+        parse_resume(path)
+
+
 def test_parse_resume_extension_check_is_case_insensitive(tmp_path):
     """A resume downloaded on Windows can easily carry an uppercase
     extension - the format dispatch must not silently misroute it to the
