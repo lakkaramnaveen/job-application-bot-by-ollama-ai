@@ -38,24 +38,30 @@ _MAX_HEADER_LINE_LENGTH = 40
 # need to separately recognize any section that comes later.
 _EXPERIENCE_HEADER_KEYWORDS = ("EXPERIENCE", "EMPLOYMENTHISTORY", "WORKHISTORY")
 
-# "PROFILE" alone is too permissive to match as a free substring: unlike
-# SUMMARY/OBJECTIVE/EXPERIENCE, it's also an ordinary word in a resume's own
-# contact block ("LinkedIn Profile", "GitHub Profile", "Portfolio"), which
-# a plain substring match would mistake for the header itself, truncating
-# the real header_lines and potentially misplacing summary_idx (confirmed:
+# Some header keywords are also ordinary words that show up as plain
+# section *content*, not as a header - a free substring match would mistake
+# that content line for the header itself, truncating header_lines (PROFILE)
+# or verbatim_rest (EXPERIENCE) and misplacing the real section boundary in
+# a document actually uploaded to a real employer. Confirmed for both:
 # "LinkedIn Profile" as a lone contact-info line collapses to
-# "LINKEDINPROFILE", which contains "PROFILE"). Matched only when the whole
-# collapsed line is exactly "PROFILE" or one of a small allowlist of
-# legitimate resume-header modifiers plus "PROFILE" - never as a substring
-# of an arbitrary surrounding word.
-_AMBIGUOUS_KEYWORDS = frozenset({"PROFILE"})
-_HEADER_PREFIX_WORDS = ("PROFESSIONAL", "PERSONAL", "CAREER", "EXECUTIVE", "CANDIDATE")
+# "LINKEDINPROFILE" (contains "PROFILE"), and a SKILLS-section bullet like
+# "5 years experience with AWS, Python, Django" collapses to
+# "5YEARSEXPERIENCEWITHAWS,PYTHON,DJANGO" (contains "EXPERIENCE") - both
+# short enough to pass _MAX_HEADER_LINE_LENGTH. Each is matched only when
+# the whole collapsed line is exactly the keyword, or one of its own small
+# allowlist of legitimate header prefixes plus the keyword - never as a
+# substring of an arbitrary surrounding word.
+_AMBIGUOUS_KEYWORD_PREFIXES: dict[str, tuple[str, ...]] = {
+    "PROFILE": ("PROFESSIONAL", "PERSONAL", "CAREER", "EXECUTIVE", "CANDIDATE"),
+    "EXPERIENCE": ("PROFESSIONAL", "WORK", "RELEVANT", "EMPLOYMENT", "CAREER"),
+}
 
 
 def _matches_keyword(collapsed: str, keyword: str) -> bool:
-    if keyword not in _AMBIGUOUS_KEYWORDS:
+    prefixes = _AMBIGUOUS_KEYWORD_PREFIXES.get(keyword)
+    if prefixes is None:
         return keyword in collapsed
-    return collapsed == keyword or any(collapsed == prefix + keyword for prefix in _HEADER_PREFIX_WORDS)
+    return collapsed == keyword or any(collapsed == prefix + keyword for prefix in prefixes)
 
 
 def _collapse(line: str) -> str:

@@ -125,6 +125,42 @@ def test_build_tailored_resume_docx_does_not_mistake_a_linkedin_profile_contact_
     assert TAILORED.summary in texts
 
 
+def test_build_tailored_resume_docx_does_not_mistake_a_skills_bullet_mentioning_experience_for_the_header(
+    tmp_path,
+):
+    """Same class of bug as the LinkedIn-Profile-contact-line case above,
+    for the EXPERIENCE keyword instead of PROFILE: "experience" is an
+    ordinary word a SKILLS-section bullet can plausibly contain ("5 years
+    experience with AWS, Python, Django" collapses to
+    "5YEARSEXPERIENCEWITHAWS,PYTHON,DJANGO", which a plain substring match
+    against "EXPERIENCE" wrongly treats as the EXPERIENCE header itself) -
+    that would truncate verbatim_rest starting at this SKILLS bullet
+    instead of the real EXPERIENCE section further down, dropping the
+    user's actual work history from the document uploaded to a real
+    employer. The true "EXPERIENCE" header further down must still be
+    found, and the skills bullet must be preserved as ordinary content.
+    """
+    resume_with_experience_worded_skill = (
+        "Jane Doe\n"
+        "jane@example.com\n\n"
+        "SUMMARY\n"
+        "Backend engineer with 5 years of Python experience.\n\n"
+        "SKILLS\n"
+        "5 years experience with AWS, Python, Django\n\n"
+        "EXPERIENCE\n"
+        "Software Engineer, Acme Corp, 2020-Present\n"
+        "- Built and maintained REST APIs handling 100,000+ requests daily.\n"
+    )
+    output_path = tmp_path / "tailored.docx"
+
+    built = build_tailored_resume_docx(resume_with_experience_worded_skill, TAILORED, output_path)
+
+    assert built is True
+    texts = _paragraph_texts(output_path)
+    assert "Software Engineer, Acme Corp, 2020-Present" in texts
+    assert "- Built and maintained REST APIs handling 100,000+ requests daily." in texts
+
+
 def test_build_tailored_resume_docx_tolerates_pdf_ligature_split_headers(tmp_path):
     """Confirmed against a real resume.pdf parsed by this project: PDF text
     extraction can split a header's own letters across a stray space
