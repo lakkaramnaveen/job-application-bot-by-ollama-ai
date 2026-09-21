@@ -1166,7 +1166,10 @@ def test_loop_runs_multiple_cycles_and_stops_once_the_daily_cap_is_reached(tmp_p
     """--loop must keep re-searching (picking up newly-posted jobs each
     cycle, via search_calls growing) rather than stopping after the first
     batch like a plain run does - but it's still bounded by the real daily
-    application cap, not truly infinite.
+    application cap, not truly infinite. Every cycle here applies to
+    something, so it must never sleep - each cycle starts immediately after
+    the last, only the cap itself stops it (see the next test for the
+    "nothing applied this cycle" case, which does sleep).
     """
     provider = FakeProvider()
     adapter = LoopFakeAdapter(page=None)
@@ -1185,8 +1188,55 @@ def test_loop_runs_multiple_cycles_and_stops_once_the_daily_cap_is_reached(tmp_p
     # A third cycle never happened - the cap was reached after cycle 2.
     assert adapter.search_calls == 2
     assert tracker.get_job("loop-job-3") is None
-    # Slept once, between cycle 1 and cycle 2 - not before cycle 1, and not
-    # again after cycle 2 since the cap check stops the loop first.
+    # Never slept: cycle 1 applied to something, so cycle 2 started right
+    # away, and the cap check stops the loop before a third cycle's sleep
+    # would ever be reached.
+    assert sleep_calls == []
+
+
+class SleepThenReturnsAJobAdapter(FakeAdapter):
+    """search() returns nothing on its first call (no eligible postings
+    right now), then a fresh, never-before-seen posting on the next -
+    exercises the one case where --loop still pauses between cycles: one
+    that applied to nothing, as opposed to test_loop_runs_multiple_cycles_
+    and_stops_once_the_daily_cap_is_reached above, where every cycle
+    applies to something and must never pause.
+    """
+
+    def __init__(self, page):
+        super().__init__(page)
+        self.search_calls = 0
+
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+        self.search_calls += 1
+        if self.search_calls == 1:
+            return []
+        return [JobPosting(job_id="loop-job-1", title="Backend Engineer", company="Acme Corp", url="https://x/1", description="")]
+
+
+def test_loop_only_sleeps_between_cycles_that_applied_to_nothing(tmp_path, monkeypatch):
+    """Real bug this guards against: --loop used to pause
+    --loop-interval-minutes between EVERY cycle, even one that just
+    successfully applied to as many jobs as --max-apps allowed - needlessly
+    slowing progress toward the daily cap. It must now only pause after a
+    cycle that applied to nothing (here, cycle 1's empty search result),
+    and go straight into the next cycle once postings are actually found.
+    """
+    provider = FakeProvider()
+    adapter = SleepThenReturnsAJobAdapter(page=None)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    settings = make_settings(tmp_path, daily_application_cap=1)
+    cmd_run(settings, make_args(loop=True, loop_interval_minutes=7, max_apps=1))
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied("loop-job-1") is True
+    # Slept once, after cycle 1's empty result - not after cycle 2, since
+    # the cap check stops the loop first.
     assert sleep_calls == [7 * 60]
 
 

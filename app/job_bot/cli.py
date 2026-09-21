@@ -249,8 +249,9 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             return
 
         print(
-            f"Loop mode: searching and applying every {args.loop_interval_minutes} minute(s) "
-            "until today's application cap is reached or you stop it (Ctrl+C)."
+            "Loop mode: searching and applying back-to-back until today's application cap is "
+            f"reached, pausing {args.loop_interval_minutes} minute(s) between cycles only when a "
+            "cycle applies to nothing, or you stop it (Ctrl+C)."
         )
         try:
             while True:
@@ -263,8 +264,18 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 if page.is_closed():
                     print("Browser window was closed - stopping.")
                     break
-                print(f"Sleeping {args.loop_interval_minutes} minute(s) before the next search...")
-                time.sleep(args.loop_interval_minutes * 60)
+                if applied == 0:
+                    # Nothing applied this cycle (no eligible postings found,
+                    # or the search itself failed) - back off rather than
+                    # re-hammering LinkedIn's search immediately. When the
+                    # cycle DID apply to something, there's a real cap
+                    # remaining and likely more eligible postings right
+                    # behind it, so the next cycle starts right away instead
+                    # of idling for loop_interval_minutes for no reason.
+                    print(f"Nothing to apply to this cycle - sleeping {args.loop_interval_minutes} minute(s)...")
+                    time.sleep(args.loop_interval_minutes * 60)
+                else:
+                    print("Applications remaining today - searching again immediately...")
         except KeyboardInterrupt:
             print("\nStopped.")
 
@@ -330,11 +341,13 @@ def _run_apply_cycle(
     include_external: bool,
 ) -> tuple[int, int]:
     """One search -> score -> tailor -> apply pass over a fresh batch of
-    postings. Called once for a plain `job-bot run`, or repeatedly (with a
-    sleep between calls) for `--loop` - re-running search() each cycle is
-    what lets loop mode pick up postings that appeared after the previous
-    cycle, not just the ones visible at process start. Returns (applied,
-    failed) for that cycle only, not a running total across cycles.
+    postings. Called once for a plain `job-bot run`, or repeatedly for
+    `--loop` (back-to-back with no sleep as long as each cycle keeps
+    applying to something; only a cycle that applies to nothing pauses
+    before the next one) - re-running search() each cycle is what lets loop
+    mode pick up postings that appeared after the previous cycle, not just
+    the ones visible at process start. Returns (applied, failed) for that
+    cycle only, not a running total across cycles.
     """
     try:
         postings = adapter.search(
@@ -977,16 +990,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Keep running all day instead of stopping after one search batch: re-searches and "
-            "applies in cycles (every --loop-interval-minutes) until today's application cap is "
-            "reached or you stop it with Ctrl+C. --max-apps then caps applications per cycle, not "
-            "for the whole day - the daily cap is what bounds the day as a whole."
+            "applies in cycles, back-to-back as long as postings keep turning up, until today's "
+            "application cap is reached or you stop it with Ctrl+C. --loop-interval-minutes only "
+            "paces the cycles where nothing was applied. --max-apps then caps applications per "
+            "cycle, not for the whole day - the daily cap is what bounds the day as a whole."
         ),
     )
     run_p.add_argument(
         "--loop-interval-minutes",
         type=int,
         default=20,
-        help="Minutes to wait between search cycles in --loop mode (default: 20).",
+        help=(
+            "Minutes to wait before retrying in --loop mode, but only after a cycle that applied "
+            "to nothing (default: 20) - a cycle that did apply to something starts the next one "
+            "immediately."
+        ),
     )
     run_p.add_argument("--provider", choices=["claude", "ollama"], default=None)
     run_p.add_argument("--model", default=None)
