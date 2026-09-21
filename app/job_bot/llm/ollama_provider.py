@@ -28,10 +28,31 @@ MAX_GENERATION_ATTEMPTS = 3
 # uninterrupted run of them.
 _TRAILING_BLANK_LINE_PADDING = re.compile(r"(?:\\n){3,}$")
 
-# An unescaped '"' - i.e. not immediately preceded by a backslash - used to
-# count how many quote characters delimit real JSON string boundaries
-# rather than being part of an escaped \" inside one.
-_UNESCAPED_QUOTE = re.compile(r'(?<!\\)"')
+def _count_unescaped_quotes(text: str) -> int:
+    """Counts '"' characters that delimit real JSON string boundaries,
+    not escaped \\" ones inside a string.
+
+    A quote is escaped only when it's preceded by an ODD number of
+    consecutive backslashes (an unpaired one that escapes the quote) - an
+    EVEN run is itself a complete sequence of escaped literal backslashes
+    (\\\\, \\\\\\\\, ...) that leaves the quote after it unescaped. A naive
+    "is the single preceding character a backslash" check gets this wrong
+    for any even run of 2+ (e.g. a string value ending in a literal
+    backslash, encoded as \\\\ right before the closing quote) - it
+    miscounts that quote as escaped and skips it, throwing off the parity
+    this function's caller relies on to tell whether a string is still
+    open.
+    """
+    count = 0
+    backslash_run = 0
+    for ch in text:
+        if ch == "\\":
+            backslash_run += 1
+            continue
+        if ch == '"' and backslash_run % 2 == 0:
+            count += 1
+        backslash_run = 0
+    return count
 
 
 def _repair_truncated_json_string(content: str) -> str | None:
@@ -71,7 +92,7 @@ def _repair_truncated_json_string(content: str) -> str | None:
     trimmed = content[: match.start()]
     if not trimmed or trimmed.endswith("\\"):
         return None
-    if len(_UNESCAPED_QUOTE.findall(trimmed)) % 2 == 0:
+    if _count_unescaped_quotes(trimmed) % 2 == 0:
         return None
     open_braces = trimmed.count("{") - trimmed.count("}")
     if open_braces != 1:

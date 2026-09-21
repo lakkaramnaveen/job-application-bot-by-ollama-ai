@@ -279,6 +279,23 @@ def test_repair_truncated_json_string_declines_without_enough_padding():
     assert _repair_truncated_json_string('{"body": "Dear Hiring Manager.\\n\\n') is None
 
 
+def test_repair_truncated_json_string_handles_an_escaped_backslash_before_a_quote():
+    """Real bug: a naive "quote preceded by exactly one backslash is
+    escaped" check miscounts when an EVEN run of backslashes (a real,
+    complete escaped-backslash pair, e.g. a string value ending in a
+    literal backslash encoded as \\\\) sits right before a quote - that
+    quote is actually unescaped, but the naive check saw a backslash
+    immediately before it and wrongly skipped it, flipping the computed
+    parity and making this repair wrongly decline a genuinely repairable
+    truncated response.
+    """
+    truncated = '{"a": "C:\\\\", "b": "hello' + "\\n" * 4
+
+    repaired = _repair_truncated_json_string(truncated)
+
+    assert repaired == '{"a": "C:\\\\", "b": "hello"}'
+
+
 def test_repair_truncated_json_string_declines_more_than_one_open_object():
     """Every schema this project uses is a flat, single-level object (see
     models/schemas.py) - a second unclosed '{' is structurally different
