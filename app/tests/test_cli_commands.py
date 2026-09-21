@@ -482,6 +482,34 @@ def test_doctor_passes_resume_check_once_the_file_exists(tmp_path, capsys):
     assert "[OK] Resume file" in capsys.readouterr().out
 
 
+def test_doctor_flags_a_present_but_unparseable_resume(tmp_path, capsys):
+    """Real failure this guards against: a resume file that exists (passing
+    the old exists()-only check) but can't actually be parsed - here an
+    empty resume.txt (see resume/parser.py) - used to only surface once
+    `job-bot run` was already underway, well past `doctor` giving it a
+    clean bill of health.
+    """
+    settings = make_settings(tmp_path)
+    settings.resume_path.write_text("", encoding="utf-8")
+
+    cmd_doctor(settings)
+
+    out = capsys.readouterr().out
+    assert "[!!] Resume file" in out
+    assert "No extractable text found" in out
+
+
+def test_doctor_flags_a_resume_with_an_unsupported_extension(tmp_path, capsys):
+    settings = make_settings(tmp_path, resume_path=tmp_path / "resume.rtf")
+    settings.resume_path.write_text("resume", encoding="utf-8")
+
+    cmd_doctor(settings)
+
+    out = capsys.readouterr().out
+    assert "[!!] Resume file" in out
+    assert "Unsupported resume format" in out
+
+
 def test_doctor_flags_missing_anthropic_api_key(tmp_path, capsys):
     settings = make_settings(tmp_path, anthropic_api_key=None)
 

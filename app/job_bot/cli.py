@@ -52,7 +52,7 @@ from job_bot.llm.ollama_provider import OllamaProviderError, quit_ollama
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
-from job_bot.resume.parser import ResumeParseError
+from job_bot.resume.parser import ResumeParseError, parse_resume
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
@@ -936,6 +936,22 @@ def cmd_test_provider(settings: Settings) -> None:
     print(result)
 
 
+def _resume_check(settings: Settings) -> tuple[str, bool, str]:
+    """Actually parses the resume, not just checks the file exists - a
+    present-but-corrupted PDF, an unsupported extension, or an empty
+    resume.txt (see resume/parser.py's ResumeParseError cases) previously
+    only surfaced once `job-bot run` was already underway, well past
+    `job-bot doctor` giving it a clean bill of health.
+    """
+    if not settings.resume_path.exists():
+        return ("Resume file readable", False, str(settings.resume_path))
+    try:
+        parse_resume(settings.resume_path)
+    except ResumeParseError as e:
+        return ("Resume file readable", False, str(e))
+    return ("Resume file readable", True, str(settings.resume_path))
+
+
 def cmd_doctor(settings: Settings) -> None:
     """Check local setup for the common ways `job-bot run` fails partway
     through rather than up front - deliberately file/config checks only, no
@@ -945,9 +961,7 @@ def cmd_doctor(settings: Settings) -> None:
     print("job-bot doctor")
     print("-" * 40)
 
-    checks: list[tuple[str, bool, str]] = [
-        ("Resume file", settings.resume_path.exists(), str(settings.resume_path)),
-    ]
+    checks: list[tuple[str, bool, str]] = [_resume_check(settings)]
 
     if settings.llm_provider == "claude":
         checks.append(("Anthropic API key (ANTHROPIC_API_KEY)", bool(settings.anthropic_api_key), ""))
