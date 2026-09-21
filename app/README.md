@@ -406,6 +406,7 @@ job-bot status <job_id>                 # no status - print the job's record and
 job-bot export                          # all tracked jobs as CSV, to stdout
 job-bot export --status applied --out applied.csv
 job-bot export --format json --out applied.json    # same rows/columns, as JSON
+job-bot export --search "Acme"                      # title/company match, like the dashboard's search box
 ```
 
 `<job_id>` is the LinkedIn job id, printed by `job-bot run` and visible in

@@ -364,7 +364,7 @@ def test_export_to_stdout_is_valid_csv_with_all_jobs(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2", match_score=60)
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status=None, out=None, format="csv"))
+    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="csv"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job1", "job2"]
@@ -379,7 +379,24 @@ def test_export_filters_by_status(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status="applied", out=None, format="csv"))
+    cmd_export(settings, argparse.Namespace(status="applied", search=None, out=None, format="csv"))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert [r["job_id"] for r in rows] == ["job2"]
+
+
+def test_export_filters_by_search(tmp_path, capsys):
+    """--search matches the dashboard's own search box (Tracker.list_jobs'
+    `search`) - the dashboard's /api/export.csv already respected it, but
+    the CLI command had no equivalent way to export a search result
+    instead of a full status-filtered dump.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
+
+    cmd_export(settings, argparse.Namespace(status=None, search="Frontend", out=None, format="csv"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job2"]
@@ -391,7 +408,7 @@ def test_export_to_file_writes_csv_and_reports_count(tmp_path, capsys):
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     out_path = tmp_path / "export.csv"
 
-    cmd_export(settings, argparse.Namespace(status=None, out=out_path, format="csv"))
+    cmd_export(settings, argparse.Namespace(status=None, search=None, out=out_path, format="csv"))
 
     assert f"Exported 1 job(s) to {out_path}" in capsys.readouterr().out
     rows = list(csv.DictReader(out_path.open(encoding="utf-8")))
@@ -402,7 +419,7 @@ def test_export_with_no_jobs_writes_header_only(tmp_path, capsys):
     settings = make_settings(tmp_path)
     Tracker(settings.db_path)
 
-    cmd_export(settings, argparse.Namespace(status=None, out=None, format="csv"))
+    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="csv"))
 
     lines = capsys.readouterr().out.strip("\r\n").splitlines()
     assert len(lines) == 1
@@ -416,7 +433,7 @@ def test_export_json_to_stdout_is_a_json_array_with_all_jobs(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2", match_score=60)
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status=None, out=None, format="json"))
+    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="json"))
 
     rows = json.loads(capsys.readouterr().out)
     assert [r["job_id"] for r in rows] == ["job1", "job2"]
@@ -431,7 +448,7 @@ def test_export_json_filters_by_status(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status="applied", out=None, format="json"))
+    cmd_export(settings, argparse.Namespace(status="applied", search=None, out=None, format="json"))
 
     rows = json.loads(capsys.readouterr().out)
     assert [r["job_id"] for r in rows] == ["job2"]
@@ -443,7 +460,7 @@ def test_export_json_to_file_writes_json_and_reports_count(tmp_path, capsys):
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     out_path = tmp_path / "export.json"
 
-    cmd_export(settings, argparse.Namespace(status=None, out=out_path, format="json"))
+    cmd_export(settings, argparse.Namespace(status=None, search=None, out=out_path, format="json"))
 
     assert f"Exported 1 job(s) to {out_path}" in capsys.readouterr().out
     rows = json.loads(out_path.read_text(encoding="utf-8"))
@@ -454,7 +471,7 @@ def test_export_json_with_no_jobs_writes_empty_array(tmp_path, capsys):
     settings = make_settings(tmp_path)
     Tracker(settings.db_path)
 
-    cmd_export(settings, argparse.Namespace(status=None, out=None, format="json"))
+    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="json"))
 
     assert json.loads(capsys.readouterr().out) == []
 
