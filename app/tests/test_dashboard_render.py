@@ -37,6 +37,18 @@ def test_render_rows_html_escapes_company_name_to_prevent_xss():
     assert "&lt;script&gt;" in html
 
 
+def test_render_rows_html_includes_a_blacklist_button_per_row():
+    html = render_rows_html([make_job()])
+    assert 'class="blacklist-button" data-job-id="job1"' in html
+    assert "Never apply to Acme Corp again" in html
+
+
+def test_render_rows_html_escapes_company_name_in_the_blacklist_button_title():
+    malicious = make_job(company='Acme"><script>alert(1)</script>')
+    html = render_rows_html([malicious])
+    assert "<script>alert(1)</script>" not in html
+
+
 def test_render_rows_html_escapes_title_and_url():
     malicious = make_job(title='"><img src=x onerror=alert(1)>', url='javascript:alert(1)"')
     html = render_rows_html([malicious])

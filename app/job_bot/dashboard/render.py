@@ -166,6 +166,8 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
             "<td class=\"actions\">"
             f"{_status_select(job_id, str(job.get('status', '')))}"
             f'<button type="button" class="qa-button" data-job-id="{safe_job_id}">Q&amp;A</button>'
+            f'<button type="button" class="blacklist-button" data-job-id="{safe_job_id}" '
+            f'title="Never apply to {company} again">Blacklist</button>'
             "</td>"
             "</tr>"
         )
@@ -264,10 +266,11 @@ def render_page_html(
   td.actions {{ display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }}
   .status-select {{ font-size: 0.8rem; padding: 0.25rem 0.4rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg); }}
-  .qa-button {{ font-size: 0.8rem; padding: 0.25rem 0.6rem; border-radius: 4px;
+  .qa-button, .blacklist-button {{ font-size: 0.8rem; padding: 0.25rem 0.6rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg);
               cursor: pointer; }}
   .qa-button:hover {{ background: var(--header-bg); }}
+  .blacklist-button:hover {{ border-color: #ef4444; color: #ef4444; }}
   .export-link {{ font-size: 0.85rem; padding: 0.4rem 0.75rem; border-radius: 6px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg);
               text-decoration: none; margin-left: auto; }}
@@ -456,6 +459,22 @@ document.getElementById('rows').addEventListener('click', async (e) => {{
   }}
 }});
 document.getElementById('qaClose').addEventListener('click', () => qaDialog.close());
+
+document.getElementById('rows').addEventListener('click', async (e) => {{
+  if (!e.target.classList.contains('blacklist-button')) return;
+  const jobId = e.target.dataset.jobId;
+  try {{
+    const res = await fetch(`/api/jobs/${{encodeURIComponent(jobId)}}/blacklist`, {{ method: 'POST' }});
+    if (res.ok) {{
+      const body = await res.json();
+      alert(`Blacklisted ${{body.company}} - job-bot run will always skip it from now on.`);
+    }} else {{
+      alert('Could not blacklist: ' + (await res.text()));
+    }}
+  }} catch (err) {{
+    alert('Could not blacklist (network error).');
+  }}
+}});
 
 // The periodic refresh below replaces the whole <tbody>, which would
 // otherwise yank a status <select> out from under a user mid-interaction

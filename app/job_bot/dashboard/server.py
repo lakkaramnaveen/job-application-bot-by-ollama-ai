@@ -2,12 +2,13 @@
 localhost only (never 0.0.0.0) since it serves your application data with
 no access control. See render.py for the HTML/escaping logic this wraps.
 
-The dashboard also accepts one state-changing request (POST status update).
-Because the server has no auth, any page open in the same browser could in
-principle try to trigger it (a "drive-by localhost" request) - _is_same_origin
-plus the browser's own CORS preflight (triggered by the required JSON
-Content-Type) are what stand in for auth here. See _is_same_origin and
-cmd_status_update below.
+The dashboard also accepts two state-changing requests: POST status update
+and POST blacklist. Because the server has no auth, any page open in the
+same browser could in principle try to trigger one (a "drive-by localhost"
+request) - _is_same_origin (both endpoints) plus the browser's own CORS
+preflight (triggered by the status endpoint's required JSON Content-Type)
+are what stand in for auth here. See _is_same_origin, _handle_status_update,
+and _handle_blacklist below.
 """
 
 import io
@@ -26,6 +27,7 @@ from job_bot.dashboard.render import (
     render_rows_html,
     render_stats_html,
 )
+from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import (
     InvalidSort,
     InvalidStatus,
@@ -60,7 +62,7 @@ def _parse_list_params(query: dict[str, list[str]]) -> dict:
     return {"status": status or None, "search": search or None, "sort": sort, "direction": direction, "page": page}
 
 
-def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
+def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
         def _send(self, status: HTTPStatus | int, content_type: str, body: bytes, headers: dict | None = None) -> None:
             self.send_response(status)
@@ -136,6 +138,8 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:  # noqa: N802 - required name for BaseHTTPRequestHandler
             if (job_id := self._job_id_from_path("/api/jobs/", "/status")) is not None:
                 self._handle_status_update(Tracker(db_path), job_id)
+            elif (job_id := self._job_id_from_path("/api/jobs/", "/blacklist")) is not None:
+                self._handle_blacklist(Tracker(db_path), job_id)
             else:
                 self._send_text(404, "Not found")
 
@@ -269,14 +273,33 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
                 return
             self._send_json(200, {"ok": True, "job_id": job_id, "status": new_status})
 
+        def _handle_blacklist(self, tracker: Tracker, job_id: str) -> None:
+            """Blacklists this job's company (safety/blacklist.py) - the
+            same effect `job-bot blacklist add "<company>"` has from the
+            CLI, one click away from a row instead of leaving the
+            dashboard. Only ever adds to the blacklist; doesn't touch this
+            or any other job's own tracked status, exactly like the CLI
+            command it mirrors.
+            """
+            if not self._is_same_origin():
+                self._send_text(403, "Cross-origin request rejected")
+                return
+            job = tracker.get_job(job_id)
+            if job is None:
+                self._send_text(404, f"No tracked job with id {job_id!r}.")
+                return
+            company = job["company"]
+            CompanyBlacklist(blacklist_path).add(company)
+            self._send_json(200, {"ok": True, "job_id": job_id, "company": company})
+
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             pass  # quiet by default; the CLI prints the one line that matters
 
     return DashboardHandler
 
 
-def run_dashboard(db_path: Path, port: int = 8765, open_browser: bool = True) -> None:
-    handler = make_handler(db_path)
+def run_dashboard(db_path: Path, blacklist_path: Path, port: int = 8765, open_browser: bool = True) -> None:
+    handler = make_handler(db_path, blacklist_path)
     server = ThreadingHTTPServer((DASHBOARD_HOST, port), handler)
     url = f"http://{DASHBOARD_HOST}:{server.server_port}/"
     print(f"Dashboard running at {url} (Ctrl+C to stop)")

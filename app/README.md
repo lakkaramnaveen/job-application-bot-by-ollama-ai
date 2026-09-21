@@ -497,15 +497,18 @@ seen, and lets you:
 - **Sort** by newest/oldest, recently applied, fit score, company, or title.
 - **Update a job's status inline** from the row - no need to drop to
   `job-bot status <job_id> <status>` for a quick correction.
+- **Blacklist a job's company** with one click - the same effect
+  `job-bot blacklist add "<company>"` has from the command line.
 - **View a job's Q&A history** (every application-question answer the bot
   gave, and what it was based on) in a modal, without querying the DB by hand.
 - **Export CSV or JSON** for whatever's currently filtered/searched, not just
   the visible page - the same output `job-bot export` (`--format csv`/`json`)
   produces on the command line.
 
-The dashboard has no login (it's a local tool over your own data), so the one
-state-changing endpoint (the inline status update) only accepts same-origin
-requests - see `job_bot/dashboard/server.py`'s module docstring. It follows
+The dashboard has no login (it's a local tool over your own data), so both
+state-changing endpoints (the inline status update, and blacklisting a
+company) only accept same-origin requests - see
+`job_bot/dashboard/server.py`'s module docstring. It follows
 your OS/browser's light or dark theme automatically, and the table scrolls
 independently of the page on a narrow window so the status/Q&A controls on
 the right stay reachable.

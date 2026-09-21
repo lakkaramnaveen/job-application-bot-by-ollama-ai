@@ -9,12 +9,19 @@ from urllib.parse import urlsplit
 import pytest
 
 from job_bot.dashboard.server import make_handler, run_dashboard
+from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import Tracker
 
 
 @pytest.fixture
 def live_server(tmp_path):
     db_path = tmp_path / "db.sqlite3"
+    # Read by test_blacklist_endpoint tests via tmp_path directly (the same
+    # tmp_path instance this fixture and the test function both receive) -
+    # not exposed on live_server's own return value, which stays a plain
+    # URL string so the many existing f"{live_server}/..." call sites in
+    # this file don't all need to change shape for one feature.
+    blacklist_path = tmp_path / "blacklist.json"
     tracker = Tracker(db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://example.com/job1", match_score=80)
     tracker.mark_applied("job1")
@@ -22,7 +29,7 @@ def live_server(tmp_path):
     # encodeURIComponent(job_id) round-tripping through the server.
     tracker.upsert_job("job 2", "Frontend Engineer", "Acme Corp", "https://example.com/job2")
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db_path, blacklist_path))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -352,6 +359,49 @@ def test_post_status_decodes_percent_encoded_job_id(live_server):
     assert data == {"ok": True, "job_id": "job 2", "status": "applied"}
 
 
+def _post(url: str, *, same_origin: bool = True):
+    """Same as _post_json above, but for the blacklist endpoint - which
+    takes no request body at all, so a JSON Content-Type/payload would be
+    misleading here.
+    """
+    headers = {}
+    if same_origin:
+        split = urlsplit(url)
+        headers["Origin"] = f"{split.scheme}://{split.netloc}"
+    req = urllib.request.Request(url, method="POST", headers=headers)
+    return urllib.request.urlopen(req)
+
+
+def test_post_blacklist_adds_the_jobs_company(live_server, tmp_path):
+    resp = _post(f"{live_server}/api/jobs/job1/blacklist")
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "job_id": "job1", "company": "Acme Corp"}
+    assert CompanyBlacklist(tmp_path / "blacklist.json").is_blocked("Acme Corp")
+
+
+def test_post_blacklist_rejects_a_cross_origin_request(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post(f"{live_server}/api/jobs/job1/blacklist", same_origin=False)
+    assert exc_info.value.code == 403
+
+
+def test_post_blacklist_on_unknown_job_id_returns_404(live_server, tmp_path):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post(f"{live_server}/api/jobs/does-not-exist/blacklist")
+    assert exc_info.value.code == 404
+    assert not CompanyBlacklist(tmp_path / "blacklist.json").is_blocked("Acme Corp")
+
+
+def test_post_blacklist_decodes_percent_encoded_job_id(live_server):
+    resp = _post(f"{live_server}/api/jobs/job%202/blacklist")
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "job_id": "job 2", "company": "Acme Corp"}
+
+
 def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatch):
     """run_dashboard() is the CLI's actual entry point (`job-bot dashboard`)
     - the rest of this file exercises the request handlers directly via
@@ -370,7 +420,7 @@ def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatc
 
     monkeypatch.setattr(ThreadingHTTPServer, "serve_forever", fake_serve_forever)
 
-    run_dashboard(tmp_path / "db.sqlite3", port=0, open_browser=True)
+    run_dashboard(tmp_path / "db.sqlite3", tmp_path / "blacklist.json", port=0, open_browser=True)
 
     assert len(opened_urls) == 1
     assert opened_urls[0].startswith("http://127.0.0.1:")
