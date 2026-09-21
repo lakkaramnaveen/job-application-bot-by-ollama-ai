@@ -26,7 +26,13 @@ from job_bot.dashboard.render import (
     render_rows_html,
     render_stats_html,
 )
-from job_bot.tracker.db import InvalidSort, InvalidStatus, Tracker, write_export_csv
+from job_bot.tracker.db import (
+    InvalidSort,
+    InvalidStatus,
+    Tracker,
+    write_export_csv,
+    write_export_json,
+)
 
 DASHBOARD_HOST = "127.0.0.1"
 
@@ -116,7 +122,9 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
             elif parsed.path == "/api/stats":
                 self._handle_stats(tracker, parse_qs(parsed.query))
             elif parsed.path == "/api/export.csv":
-                self._handle_export_csv(tracker, parse_qs(parsed.query))
+                self._handle_export(tracker, parse_qs(parsed.query), fmt="csv")
+            elif parsed.path == "/api/export.json":
+                self._handle_export(tracker, parse_qs(parsed.query), fmt="json")
             elif parsed.path == "/api/jobs":
                 jobs = tracker.list_jobs()
                 self._send(200, "application/json", json.dumps(jobs, default=str).encode("utf-8"))
@@ -169,24 +177,30 @@ def make_handler(db_path: Path) -> type[BaseHTTPRequestHandler]:
             body = render_stats_html(counts, params["status"] or "").encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
-        def _handle_export_csv(self, tracker: Tracker, query: dict[str, list[str]]) -> None:
-            """Same CSV shape as `job-bot export` (see tracker/db.py's
-            write_export_csv, shared by both) - respects the dashboard's
-            current status filter and search box, but always exports every
-            matching job, not just the currently-visible page.
+        def _handle_export(self, tracker: Tracker, query: dict[str, list[str]], *, fmt: str) -> None:
+            """Same CSV/JSON shape as `job-bot export --format ...` (see
+            tracker/db.py's write_export_csv/write_export_json, shared by
+            both) - respects the dashboard's current status filter and
+            search box, but always exports every matching job, not just the
+            currently-visible page.
             """
             params = _parse_list_params(query)
             jobs = tracker.list_jobs(
                 status=params["status"], search=params["search"], sort="first_seen_at", direction="asc"
             )
             buffer = io.StringIO()
-            write_export_csv(buffer, jobs)
+            if fmt == "json":
+                write_export_json(buffer, jobs)
+                content_type = "application/json"
+            else:
+                write_export_csv(buffer, jobs)
+                content_type = "text/csv; charset=utf-8"
             body = buffer.getvalue().encode("utf-8")
             self._send(
                 200,
-                "text/csv; charset=utf-8",
+                content_type,
                 body,
-                headers={"Content-Disposition": 'attachment; filename="job_bot_export.csv"'},
+                headers={"Content-Disposition": f'attachment; filename="job_bot_export.{fmt}"'},
             )
 
         def _handle_rows(self, tracker: Tracker, query: dict[str, list[str]]) -> None:

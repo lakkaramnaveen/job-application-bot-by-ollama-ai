@@ -193,6 +193,13 @@ def test_render_page_html_includes_export_csv_link():
     assert "exportCsv').href" in html  # kept in sync with filters by refresh()
 
 
+def test_render_page_html_includes_export_json_link():
+    html = render_page_html([make_job()])
+    assert 'id="exportJson"' in html
+    assert 'href="/api/export.json"' in html
+    assert "exportJson').href" in html  # kept in sync with filters by refresh()
+
+
 def test_render_stats_html_shows_all_pill_with_summed_total():
     html = render_stats_html({"applied": 2, "seen": 3}, selected_status="")
     assert "All <span class=\"count\">5</span>" in html

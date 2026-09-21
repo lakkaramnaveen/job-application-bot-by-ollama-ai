@@ -308,6 +308,7 @@ def render_page_html(
     {_options_html(SORT_OPTIONS, sort_value)}
   </select>
   <a id="exportCsv" class="export-link" href="/api/export.csv">Export CSV</a>
+  <a id="exportJson" class="export-link" href="/api/export.json">Export JSON</a>
 </form>
 
 <div class="table-wrap">
@@ -360,6 +361,7 @@ function buildQuery() {{
 async function refresh() {{
   const query = buildQuery();
   document.getElementById('exportCsv').href = '/api/export.csv?' + query;
+  document.getElementById('exportJson').href = '/api/export.json?' + query;
   try {{
     const res = await fetch('/api/rows?' + query);
     if (!res.ok) return;

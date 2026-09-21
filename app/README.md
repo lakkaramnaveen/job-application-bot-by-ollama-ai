@@ -496,8 +496,9 @@ seen, and lets you:
   `job-bot status <job_id> <status>` for a quick correction.
 - **View a job's Q&A history** (every application-question answer the bot
   gave, and what it was based on) in a modal, without querying the DB by hand.
-- **Export CSV** for whatever's currently filtered/searched, not just the
-  visible page - the same file `job-bot export` produces on the command line.
+- **Export CSV or JSON** for whatever's currently filtered/searched, not just
+  the visible page - the same output `job-bot export` (`--format csv`/`json`)
+  produces on the command line.
 
 The dashboard has no login (it's a local tool over your own data), so the one
 state-changing endpoint (the inline status update) only accepts same-origin

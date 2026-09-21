@@ -74,6 +74,26 @@ def test_export_csv_respects_the_search_box(live_server):
     assert "job1," not in body
 
 
+def test_export_json_downloads_every_matching_job(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/export.json") as resp:
+        assert resp.headers["Content-Type"] == "application/json"
+        assert "attachment" in resp.headers["Content-Disposition"]
+        rows = json.loads(resp.read().decode("utf-8"))
+    assert {r["job_id"] for r in rows} == {"job1", "job 2"}
+
+
+def test_export_json_respects_the_status_filter(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/export.json?status=applied") as resp:
+        rows = json.loads(resp.read().decode("utf-8"))
+    assert [r["job_id"] for r in rows] == ["job1"]
+
+
+def test_export_json_respects_the_search_box(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/export.json?q=Frontend") as resp:
+        rows = json.loads(resp.read().decode("utf-8"))
+    assert [r["job_id"] for r in rows] == ["job 2"]
+
+
 def test_api_jobs_returns_json(live_server):
     with urllib.request.urlopen(f"{live_server}/api/jobs") as resp:
         assert resp.headers["Content-Type"] == "application/json"
