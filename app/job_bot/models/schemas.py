@@ -135,6 +135,25 @@ def _reject_leaked_reasoning(value: object) -> object:
     return value
 
 
+def _reject_leaked_reasoning_in_list(value: object) -> object:
+    """Same check as _reject_leaked_reasoning() above, applied per item of
+    a list field - see TailoredResume.bullet_points below, which (unlike
+    its sibling `summary` field from the very same generation call) had no
+    schema-level backstop against the same reasoning-leak pattern, despite
+    being free-text, full-sentence model output of the same shape and
+    reused the same way: written to the user-facing tailored-resume
+    reference file (generation/artifacts.py's write_tailored_resume()) and
+    fed back as a few-shot example for future generations via
+    Tracker.best_resume_examples() - the exact compounding risk
+    _REASONING_LEAK_MARKERS above was introduced to close for
+    ApplicationAnswer.answer.
+    """
+    if isinstance(value, list):
+        for item in value:
+            _reject_leaked_reasoning(item)
+    return value
+
+
 class TailoredResume(BaseModel):
     """A resume rewritten/reordered to emphasize fit for one specific job."""
 
@@ -145,6 +164,9 @@ class TailoredResume(BaseModel):
     bullet_points: list[str] = Field(description="Tailored, ATS-friendly experience bullet points")
 
     _reject_leaked_reasoning_summary = field_validator("summary", mode="before")(_reject_leaked_reasoning)
+    _reject_leaked_reasoning_bullets = field_validator("bullet_points", mode="before")(
+        _reject_leaked_reasoning_in_list
+    )
 
 
 class CoverLetter(BaseModel):

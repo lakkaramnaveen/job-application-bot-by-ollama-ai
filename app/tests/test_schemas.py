@@ -174,6 +174,29 @@ def test_tailored_resume_summary_accepts_a_genuine_summary():
     assert resume.summary == genuine
 
 
+def test_tailored_resume_bullet_points_rejects_leaked_reasoning():
+    """Same bug class as test_tailored_resume_summary_rejects_leaked_reasoning
+    above, for bullet_points instead of summary - both come from the same
+    generation call, but bullet_points had no schema-level backstop at all
+    before this test, despite being reused as a few-shot example for future
+    tailoring calls (Tracker.best_resume_examples()), the same compounding
+    risk this marker list was introduced to close for
+    ApplicationAnswer.answer.
+    """
+    contaminated = [
+        "Shipped the new checkout flow",
+        "Let me check if this bullet preserves the original metric before finalizing it.",
+    ]
+    with pytest.raises(ValidationError, match="leaked reasoning"):
+        TailoredResume(summary="Genuine summary.", highlighted_skills=["Java"], bullet_points=contaminated)
+
+
+def test_tailored_resume_bullet_points_accepts_genuine_bullets():
+    genuine = ["Reduced API latency by 40% through query optimization", "Led a team of 4 engineers"]
+    resume = TailoredResume(summary="Genuine summary.", highlighted_skills=["Java"], bullet_points=genuine)
+    assert resume.bullet_points == genuine
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
