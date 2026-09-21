@@ -116,7 +116,10 @@ model (qwen3, deepseek-r1, ...), `ollama_provider.py` already passes
 `think: false` on every call - only the final structured answer, not the
 model's internal reasoning trace, ever mattered here, and skipping it cuts
 latency roughly 10x on a thinking model with no quality loss to the answer
-itself.
+itself. See `docs/qwen_notes.md` for the specific failure patterns found
+and fixed while running `qwen3:30b` against real applications (reasoning
+leaking into an answer field, truncated JSON padding, etc.) and how each
+one was addressed.
 
 Switch per run without touching `.env`:
 ```bash
