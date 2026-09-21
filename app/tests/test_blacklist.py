@@ -72,12 +72,30 @@ def test_remove_returns_false_when_not_present(tmp_path):
     assert blacklist.remove("Never Added Inc") is False
 
 
-def test_list_companies_returns_sorted_normalized_names(tmp_path):
+def test_list_companies_returns_sorted_display_names(tmp_path):
+    """Real bug this guards against: list_companies() (and `job-bot
+    blacklist list`) used to return the normalized/casefolded form used
+    internally for matching - a company added as "Acme Corp" showed up as
+    "acme corp" forever. The name as the user actually typed it must be
+    preserved for display, while matching (is_blocked/remove) still goes
+    through the normalized form so casing/whitespace differences don't
+    matter for those.
+    """
     blacklist = CompanyBlacklist(tmp_path / "blacklist.json")
     blacklist.add("Zebra Corp")
     blacklist.add("Acme Corp")
 
-    assert blacklist.list_companies() == ["acme corp", "zebra corp"]
+    assert blacklist.list_companies() == ["Acme Corp", "Zebra Corp"]
+
+
+def test_list_companies_persists_display_casing_across_reload(tmp_path):
+    path = tmp_path / "blacklist.json"
+    blacklist = CompanyBlacklist(path)
+    blacklist.add("Acme Corp")
+
+    reloaded = CompanyBlacklist(path)
+
+    assert reloaded.list_companies() == ["Acme Corp"]
 
 
 def test_is_blocked_collapses_internal_whitespace_like_gmail_sync_does(tmp_path):

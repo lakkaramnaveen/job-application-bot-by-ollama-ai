@@ -296,7 +296,7 @@ def test_blacklist_add_list_remove_round_trip(tmp_path, capsys):
     assert "Added to blacklist: Acme Corp" in capsys.readouterr().out
 
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
-    assert "acme corp" in capsys.readouterr().out  # blacklist entries are stored normalized
+    assert "Acme Corp" in capsys.readouterr().out  # display casing preserved, not normalized
 
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="remove", company="Acme Corp"))
     assert "Removed from blacklist: Acme Corp" in capsys.readouterr().out

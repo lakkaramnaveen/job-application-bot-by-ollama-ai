@@ -7,22 +7,32 @@ from job_bot.text_utils import normalize_company_name
 class CompanyBlacklist:
     """Companies to never apply to. Defaults to an empty list plus whatever the
     user configures (e.g. past employers) in company_blacklist.json.
+
+    Keyed internally by normalize_company_name() so is_blocked()/add()/
+    remove() agree with gmail_sync.py on which spellings mean the same
+    company, but the *display* casing the user actually typed is kept
+    alongside each key (not the normalized/casefolded form) - list_companies()
+    (and `job-bot blacklist list`) previously showed every company permanently
+    lowercased ("acme corp"), which is what got stored as the dict key,
+    because that key was also the only copy of the name kept.
     """
 
     def __init__(self, blacklist_path: Path):
         self._path = blacklist_path
-        self._companies = self._load()
+        self._companies = self._load()  # normalized name -> display name
 
-    def _load(self) -> set[str]:
+    def _load(self) -> dict[str, str]:
         if not self._path.exists():
-            return set()
+            return {}
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            return set()
+            return {}
         if not isinstance(data, list):
-            return set()
-        return {self._normalize(c) for c in data if isinstance(c, str)}
+            return {}
+        return {
+            self._normalize(c): c.strip() for c in data if isinstance(c, str) and c.strip()
+        }
 
     @staticmethod
     def _normalize(name: str) -> str:
@@ -32,7 +42,7 @@ class CompanyBlacklist:
         return self._normalize(company_name) in self._companies
 
     def add(self, company_name: str) -> None:
-        self._companies.add(self._normalize(company_name))
+        self._companies[self._normalize(company_name)] = company_name.strip()
         self._save()
 
     def remove(self, company_name: str) -> bool:
@@ -42,13 +52,13 @@ class CompanyBlacklist:
         normalized = self._normalize(company_name)
         if normalized not in self._companies:
             return False
-        self._companies.discard(normalized)
+        del self._companies[normalized]
         self._save()
         return True
 
     def list_companies(self) -> list[str]:
-        return sorted(self._companies)
+        return sorted(self._companies.values(), key=str.casefold)
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(sorted(self._companies), indent=2), encoding="utf-8")
+        self._path.write_text(json.dumps(self.list_companies(), indent=2), encoding="utf-8")
