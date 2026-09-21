@@ -404,6 +404,7 @@ job-bot report                          # counts of tracked jobs by status
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response
 job-bot export                          # all tracked jobs as CSV, to stdout
 job-bot export --status applied --out applied.csv
+job-bot export --format json --out applied.json    # same rows/columns, as JSON
 ```
 
 `<job_id>` is the LinkedIn job id, printed by `job-bot run` and visible in

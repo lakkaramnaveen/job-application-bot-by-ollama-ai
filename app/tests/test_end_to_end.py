@@ -318,7 +318,7 @@ def test_run_then_report_and_export_reflect_the_same_state(settings, wired_run, 
     assert "Outcomes by match score:" in report_out
     assert "90-100" in report_out  # the applied job's bucket
 
-    cmd_export(settings, run_args(status="applied", out=None))
+    cmd_export(settings, run_args(status="applied", out=None, format="csv"))
     csv_out = capsys.readouterr().out
     assert APPLICABLE_JOB_ID in csv_out
     assert "https://www.linkedin.com/jobs/view/901/?refId=e2e" in csv_out

@@ -7,6 +7,7 @@ blacklist file, or stdout/a file.
 import argparse
 import csv
 import io
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -322,7 +323,7 @@ def test_export_to_stdout_is_valid_csv_with_all_jobs(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2", match_score=60)
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status=None, out=None))
+    cmd_export(settings, argparse.Namespace(status=None, out=None, format="csv"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job1", "job2"]
@@ -337,7 +338,7 @@ def test_export_filters_by_status(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status="applied", out=None))
+    cmd_export(settings, argparse.Namespace(status="applied", out=None, format="csv"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job2"]
@@ -349,7 +350,7 @@ def test_export_to_file_writes_csv_and_reports_count(tmp_path, capsys):
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     out_path = tmp_path / "export.csv"
 
-    cmd_export(settings, argparse.Namespace(status=None, out=out_path))
+    cmd_export(settings, argparse.Namespace(status=None, out=out_path, format="csv"))
 
     assert f"Exported 1 job(s) to {out_path}" in capsys.readouterr().out
     rows = list(csv.DictReader(out_path.open(encoding="utf-8")))
@@ -360,11 +361,61 @@ def test_export_with_no_jobs_writes_header_only(tmp_path, capsys):
     settings = make_settings(tmp_path)
     Tracker(settings.db_path)
 
-    cmd_export(settings, argparse.Namespace(status=None, out=None))
+    cmd_export(settings, argparse.Namespace(status=None, out=None, format="csv"))
 
     lines = capsys.readouterr().out.strip("\r\n").splitlines()
     assert len(lines) == 1
     assert lines[0].split(",")[0] == "job_id"
+
+
+def test_export_json_to_stdout_is_a_json_array_with_all_jobs(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1", match_score=80)
+    tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2", match_score=60)
+    tracker.mark_applied("job2")
+
+    cmd_export(settings, argparse.Namespace(status=None, out=None, format="json"))
+
+    rows = json.loads(capsys.readouterr().out)
+    assert [r["job_id"] for r in rows] == ["job1", "job2"]
+    assert rows[1]["status"] == "applied"
+    assert rows[1]["applied_at"]
+
+
+def test_export_json_filters_by_status(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
+    tracker.mark_applied("job2")
+
+    cmd_export(settings, argparse.Namespace(status="applied", out=None, format="json"))
+
+    rows = json.loads(capsys.readouterr().out)
+    assert [r["job_id"] for r in rows] == ["job2"]
+
+
+def test_export_json_to_file_writes_json_and_reports_count(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    out_path = tmp_path / "export.json"
+
+    cmd_export(settings, argparse.Namespace(status=None, out=out_path, format="json"))
+
+    assert f"Exported 1 job(s) to {out_path}" in capsys.readouterr().out
+    rows = json.loads(out_path.read_text(encoding="utf-8"))
+    assert rows[0]["job_id"] == "job1"
+
+
+def test_export_json_with_no_jobs_writes_empty_array(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path)
+
+    cmd_export(settings, argparse.Namespace(status=None, out=None, format="json"))
+
+    assert json.loads(capsys.readouterr().out) == []
 
 
 # --- doctor ---

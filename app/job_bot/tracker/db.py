@@ -73,6 +73,17 @@ def write_export_csv(stream: TextIO, jobs: list[dict[str, Any]]) -> None:
     writer.writerows(jobs)
 
 
+def write_export_json(stream: TextIO, jobs: list[dict[str, Any]]) -> None:
+    """Same rows and column set as write_export_csv (EXPORT_FIELDS, same
+    order), just JSON instead of CSV - for a script that wants to consume
+    the export without parsing CSV, or a value (like a URL with a comma
+    in a query string) that's easier to read unescaped.
+    """
+    rows = [{field: job.get(field) for field in EXPORT_FIELDS} for job in jobs]
+    json.dump(rows, stream, indent=2)
+    stream.write("\n")
+
+
 class Tracker:
     """SQLite-backed record of jobs seen and applications submitted."""
 

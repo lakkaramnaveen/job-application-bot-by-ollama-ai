@@ -59,7 +59,13 @@ from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.safety.confirm import SubmitConfirmer
 from job_bot.safety.rate_limiter import DailyCapReached, RateLimiter
-from job_bot.tracker.db import TRACKER_STATUSES, InvalidStatus, Tracker, write_export_csv
+from job_bot.tracker.db import (
+    TRACKER_STATUSES,
+    InvalidStatus,
+    Tracker,
+    write_export_csv,
+    write_export_json,
+)
 
 EXPECTED_ERRORS = (
     ClaudeProviderError,
@@ -799,20 +805,21 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
-    """Dump tracked jobs as CSV - to a file with `--out`, or stdout so it
-    pipes straight into another tool.
+    """Dump tracked jobs as CSV or JSON (`--format`) - to a file with
+    `--out`, or stdout so it pipes straight into another tool.
     """
     tracker = Tracker(settings.db_path)
     jobs = tracker.list_jobs(status=args.status, sort="first_seen_at", direction="asc")
+    write = write_export_json if args.format == "json" else write_export_csv
 
     if args.out:
         # newline="" so csv's own \r\n line terminator isn't doubled up by
-        # universal-newline text-mode translation on write.
+        # universal-newline text-mode translation on write; harmless for json.
         with args.out.open("w", newline="", encoding="utf-8") as f:
-            write_export_csv(f, jobs)
+            write(f, jobs)
         print(f"Exported {len(jobs)} job(s) to {args.out}")
     else:
-        write_export_csv(sys.stdout, jobs)
+        write(sys.stdout, jobs)
 
 
 def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
@@ -1103,8 +1110,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--by-score", action="store_true", help="Break outcomes down by match-score bucket."
     )
 
-    export_p = sub.add_parser("export", help="Export tracked jobs as CSV.")
+    export_p = sub.add_parser("export", help="Export tracked jobs as CSV or JSON.")
     export_p.add_argument("--status", choices=sorted(TRACKER_STATUSES), default=None)
+    export_p.add_argument("--format", choices=["csv", "json"], default="csv")
     export_p.add_argument(
         "--out", type=Path, default=None, help="Write to this file instead of stdout."
     )
