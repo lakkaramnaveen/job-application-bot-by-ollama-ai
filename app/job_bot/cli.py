@@ -971,6 +971,46 @@ def _print_score_breakdown(tracker: Tracker) -> None:
         print(row + str(sum(bucket_counts.values())))
 
 
+# Printed first, in this fixed order rather than sorted alphabetically, so
+# the common/expected case (pass) always reads first and the two verdicts
+# most worth a second look (flag, fail) come right after it - "not scored"
+# (Tracker.upsert_job() jobs, or ones tracked before this column existed;
+# see Tracker.record_score()) last since it's not an eligibility verdict at
+# all. Any other value found - there shouldn't be one, but eligibility is
+# free-text on disk, not a DB-enforced enum - is appended after these four,
+# so a future bug or a hand-edited row is still visible rather than lost.
+_ELIGIBILITY_VERDICT_ORDER = ("pass", "flag", "fail", "not scored")
+
+
+def _eligibility_breakdown(tracker: Tracker) -> dict[str, int]:
+    """eligibility verdict -> count, for `job-bot report --by-eligibility` -
+    how many tracked jobs were let through, flagged as ambiguous, or
+    categorically disqualified by the eligibility gate (matching/scorer.py),
+    versus never having been scored at all. Distinct from --by-score: a
+    fail/flag verdict and a plain low score both end up status=skipped, so
+    the score breakdown alone can't tell a citizenship-requirement
+    rejection apart from a job that was simply a weak fit.
+    """
+    counts: dict[str, int] = {}
+    for job in tracker.list_jobs():
+        verdict = job.get("eligibility") or "not scored"
+        counts[verdict] = counts.get(verdict, 0) + 1
+    return counts
+
+
+def _print_eligibility_breakdown(tracker: Tracker) -> None:
+    breakdown = _eligibility_breakdown(tracker)
+    if not breakdown:
+        return
+
+    print("\nOutcomes by eligibility verdict:")
+    width = max(len(verdict) for verdict in breakdown)
+    ordered = [v for v in _ELIGIBILITY_VERDICT_ORDER if v in breakdown]
+    ordered += sorted(v for v in breakdown if v not in _ELIGIBILITY_VERDICT_ORDER)
+    for verdict in ordered:
+        print(f"{verdict:<{width}}  {breakdown[verdict]}")
+
+
 def _stale_applications(tracker: Tracker, days: int) -> list[dict]:
     cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     return [
@@ -981,13 +1021,16 @@ def _stale_applications(tracker: Tracker, days: int) -> list[dict]:
 
 
 def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
-    """Print status counts, plus two optional sections: `--stale-days`
-    (applications with no reply worth a manual follow-up) and `--by-score`
+    """Print status counts, plus three optional sections: `--stale-days`
+    (applications with no reply worth a manual follow-up), `--by-score`
     (how match score correlates with actual outcomes, to sanity-check
-    whether the LLM scorer's judgment tracks reality). `--format json`
-    prints the same data as one JSON object instead - for a script or cron
-    job that wants to alert on e.g. a growing stale-applications count
-    without scraping the human-readable text layout.
+    whether the LLM scorer's judgment tracks reality), and
+    `--by-eligibility` (how many jobs were let through, flagged, or
+    categorically disqualified by the eligibility gate - see
+    _eligibility_breakdown). `--format json` prints the same data as one
+    JSON object instead - for a script or cron job that wants to alert on
+    e.g. a growing stale-applications count without scraping the
+    human-readable text layout.
     """
     tracker = Tracker(settings.db_path)
     counts = tracker.status_counts()
@@ -1011,6 +1054,8 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
         }
         if args.by_score:
             payload["by_score"] = _score_breakdown(tracker)
+        if args.by_eligibility:
+            payload["by_eligibility"] = _eligibility_breakdown(tracker)
         print(json.dumps(payload, indent=2))
         return
 
@@ -1029,6 +1074,9 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
 
     if args.by_score:
         _print_score_breakdown(tracker)
+
+    if args.by_eligibility:
+        _print_eligibility_breakdown(tracker)
 
 
 def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
@@ -1465,6 +1513,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report_p.add_argument(
         "--by-score", action="store_true", help="Break outcomes down by match-score bucket."
+    )
+    report_p.add_argument(
+        "--by-eligibility",
+        action="store_true",
+        help="Break outcomes down by eligibility-gate verdict (pass/flag/fail/not scored).",
     )
     report_p.add_argument(
         "--format", choices=["text", "json"], default="text", help="Print as one JSON object instead."

@@ -92,7 +92,7 @@ def make_settings(tmp_path, **overrides) -> Settings:
 
 
 def report_args(**overrides) -> argparse.Namespace:
-    defaults = dict(stale_days=None, by_score=False, format="text")
+    defaults = dict(stale_days=None, by_score=False, by_eligibility=False, format="text")
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -573,6 +573,65 @@ def test_report_by_score_prints_nothing_when_no_job_has_been_scored(tmp_path, ca
     cmd_report(settings, report_args(by_score=True))
 
     assert "Outcomes by match score:" not in capsys.readouterr().out
+
+
+def test_report_by_eligibility_breaks_down_outcomes_by_verdict(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme", "https://x/1", score=90, should_apply=True, eligibility="pass"
+    )
+    tracker.record_score(
+        "job2", "Frontend Engineer", "Beta", "https://x/2", score=20, should_apply=False, eligibility="fail"
+    )
+    tracker.record_score(
+        "job3", "DevOps Engineer", "Gamma", "https://x/3", score=70, should_apply=True, eligibility="flag"
+    )
+    tracker.upsert_job("job4", "Unscored Role", "Delta", "https://x/4")  # never scored at all
+
+    cmd_report(settings, report_args(by_eligibility=True))
+
+    out = capsys.readouterr().out
+    assert "Outcomes by eligibility verdict:" in out
+    lines = [line for line in out.splitlines() if line.strip()]
+    # pass, then flag, then fail, then not scored - not alphabetical.
+    verdict_lines = [line for line in lines if line.split()[0] in ("pass", "flag", "fail", "not")]
+    assert [line.split()[0] for line in verdict_lines] == ["pass", "flag", "fail", "not"]
+    assert "pass" in out and "1" in out
+    assert "fail" in out
+    assert "flag" in out
+    assert "not scored" in out
+
+
+def test_report_by_eligibility_prints_nothing_when_no_job_is_tracked(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path)  # create the (empty) DB
+
+    cmd_report(settings, report_args(by_eligibility=True))
+
+    assert "Outcomes by eligibility verdict:" not in capsys.readouterr().out
+
+
+def test_report_format_json_includes_by_eligibility_when_requested(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme", "https://x/1", score=90, should_apply=True, eligibility="pass"
+    )
+
+    cmd_report(settings, report_args(by_eligibility=True, format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["by_eligibility"] == {"pass": 1}
+
+
+def test_report_format_json_omits_by_eligibility_when_not_requested(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path)  # create the (empty) DB
+
+    cmd_report(settings, report_args(format="json"))
+
+    assert "by_eligibility" not in json.loads(capsys.readouterr().out)
 
 
 def test_score_bucket_label_falls_back_for_an_out_of_range_score():

@@ -407,6 +407,7 @@ to observe what happens after you submit. Record what you hear back by hand:
 job-bot report                          # counts of tracked jobs by status
 job-bot report --stale-days 7           # also flag applications with no reply after 7 days (default: STALE_AFTER_DAYS)
 job-bot report --by-score --format json # same data as one JSON object, for a script or cron job
+job-bot report --by-eligibility         # counts by eligibility-gate verdict (pass/flag/fail/not scored)
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response
 job-bot status <job_id>                 # no status - print the job's record, its match reasoning and eligibility verdict (if scored), tailored resume (if any), and Q&A history instead
 job-bot status <job_id> --format json   # same view as one JSON object, for a script watching one specific application
