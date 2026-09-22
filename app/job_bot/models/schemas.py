@@ -44,42 +44,6 @@ def _normalize_percent_as_fraction(value: object) -> object:
 # wording and risking the two drifting out of sync.
 EligibilityVerdict = Literal["pass", "fail", "flag"]
 
-
-class JobMatchScore(BaseModel):
-    """LLM's assessment of how well a candidate's resume fits a job posting.
-
-    Eligibility is evaluated as a gate, separate from the fit dimensions:
-    scorer.score_job_match() forces should_apply=False whenever eligibility
-    is "fail", regardless of what the model itself set should_apply to - a
-    categorical exclusion (e.g. "must be a US citizen") is not something a
-    high fit score should be able to override.
-    """
-
-    eligibility: EligibilityVerdict = Field(
-        description=(
-            "'fail' if the posting clearly violates a categorical eligibility "
-            "rule given in the system prompt (citizenship/permanent-residency/"
-            "clearance always; seniority/years-of-experience or W2-only "
-            "employment too, if the system prompt asks for those checks). "
-            "'flag' if any such rule is silent or genuinely ambiguous rather "
-            "than clearly stated either way. 'pass' otherwise."
-        )
-    )
-    eligibility_note: str = Field(
-        default="",
-        description="The specific posting wording driving the eligibility verdict, or empty if none found",
-    )
-    technical_fit: int = Field(ge=0, le=100, description="How well required/preferred skills match")
-    experience_fit: int = Field(ge=0, le=100, description="How well work history matches what's sought")
-    culture_fit: int = Field(
-        ge=0, le=100, description="Likely culture/working-style fit, from posting tone/values"
-    )
-    score: int = Field(ge=0, le=100, description="Overall fit score, 0 (no match) to 100 (perfect match)")
-    reasoning: str = Field(description="Brief explanation of the score")
-    should_apply: bool = Field(description="Whether this job clears the bar to apply to")
-    missing_qualifications: list[str] = Field(default_factory=list)
-
-
 # Substrings unique enough to a local reasoning model's internal chain-of-
 # thought that real, submittable content would essentially never contain
 # them - seen live, qwen3:30b, in two separate real failures:
@@ -152,6 +116,62 @@ def _reject_leaked_reasoning_in_list(value: object) -> object:
         for item in value:
             _reject_leaked_reasoning(item)
     return value
+
+
+class JobMatchScore(BaseModel):
+    """LLM's assessment of how well a candidate's resume fits a job posting.
+
+    Eligibility is evaluated as a gate, separate from the fit dimensions:
+    scorer.score_job_match() forces should_apply=False whenever eligibility
+    is "fail", regardless of what the model itself set should_apply to - a
+    categorical exclusion (e.g. "must be a US citizen") is not something a
+    high fit score should be able to override.
+    """
+
+    eligibility: EligibilityVerdict = Field(
+        description=(
+            "'fail' if the posting clearly violates a categorical eligibility "
+            "rule given in the system prompt (citizenship/permanent-residency/"
+            "clearance always; seniority/years-of-experience or W2-only "
+            "employment too, if the system prompt asks for those checks). "
+            "'flag' if any such rule is silent or genuinely ambiguous rather "
+            "than clearly stated either way. 'pass' otherwise."
+        )
+    )
+    eligibility_note: str = Field(
+        default="",
+        description="The specific posting wording driving the eligibility verdict, or empty if none found",
+    )
+    technical_fit: int = Field(ge=0, le=100, description="How well required/preferred skills match")
+    experience_fit: int = Field(ge=0, le=100, description="How well work history matches what's sought")
+    culture_fit: int = Field(
+        ge=0, le=100, description="Likely culture/working-style fit, from posting tone/values"
+    )
+    score: int = Field(ge=0, le=100, description="Overall fit score, 0 (no match) to 100 (perfect match)")
+    reasoning: str = Field(description="Brief explanation of the score")
+    should_apply: bool = Field(description="Whether this job clears the bar to apply to")
+    missing_qualifications: list[str] = Field(default_factory=list)
+
+    # reasoning/eligibility_note were pure internal/discarded values when
+    # this class was first written - not worth this guard, since nothing
+    # ever showed them to anyone. That changed: both are now real,
+    # user-facing output (`job-bot status <job_id>`, --format json, the
+    # dashboard's score tooltip, `job-bot report --by-score`/
+    # --by-eligibility - see 568ccd5/ef9d6d3), so a leaked reasoning trace
+    # in either would now show up directly in front of the user instead of
+    # vanishing unnoticed. _REASONING_LEAK_MARKERS' phrases are narrow,
+    # self-referential process-narration ("let me carefully...", "I need
+    # to answer...") rather than organic explanatory language, so this
+    # doesn't meaningfully risk false-positiving on a genuine "why this
+    # score" explanation - the same reasoning that already justified
+    # extending this guard to TailoredResume.bullet_points/
+    # highlighted_skills once those became real output too.
+    _reject_leaked_reasoning_note = field_validator("eligibility_note", mode="before")(
+        _reject_leaked_reasoning
+    )
+    _reject_leaked_reasoning_explanation = field_validator("reasoning", mode="before")(
+        _reject_leaked_reasoning
+    )
 
 
 class TailoredResume(BaseModel):

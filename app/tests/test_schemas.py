@@ -40,6 +40,38 @@ def test_job_match_score_rejects_invalid_eligibility_value():
         make_job_match_score(eligibility="maybe")
 
 
+def test_job_match_score_reasoning_rejects_leaked_reasoning():
+    """reasoning/eligibility_note were pure internal/discarded values when
+    this class was first written, not worth this guard - that changed:
+    both are now real, user-facing output (`job-bot status <job_id>`,
+    --format json, the dashboard's score tooltip), so a leaked reasoning
+    trace in either would now show up directly in front of the user.
+    """
+    contaminated = (
+        "Let me carefully check the resume for the required skills before scoring this candidate."
+    )
+    with pytest.raises(ValidationError, match="leaked reasoning"):
+        make_job_match_score(reasoning=contaminated)
+
+
+def test_job_match_score_reasoning_accepts_genuine_explanation():
+    genuine = "Strong Python and AWS overlap with the posting's core requirements."
+    score = make_job_match_score(reasoning=genuine)
+    assert score.reasoning == genuine
+
+
+def test_job_match_score_eligibility_note_rejects_leaked_reasoning():
+    contaminated = "Let me check if the posting mentions a citizenship requirement anywhere."
+    with pytest.raises(ValidationError, match="leaked reasoning"):
+        make_job_match_score(eligibility="flag", eligibility_note=contaminated)
+
+
+def test_job_match_score_eligibility_note_accepts_genuine_quote():
+    genuine = "Must be a U.S. citizen due to federal contract requirements."
+    score = make_job_match_score(eligibility="fail", eligibility_note=genuine)
+    assert score.eligibility_note == genuine
+
+
 def test_eligibility_field_description_covers_all_active_eligibility_rules():
     """This description reaches the model as part of the JSON schema sent
     alongside scorer.py's system prompt (see ollama_provider.py's `format`)
