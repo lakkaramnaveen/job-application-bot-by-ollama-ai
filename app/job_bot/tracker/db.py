@@ -349,12 +349,17 @@ class Tracker:
         return dict(rows)
 
     @staticmethod
-    def _where_clause(status: str | None, search: str | None) -> tuple[str, list[Any]]:
+    def _where_clause(
+        status: str | None, search: str | None, eligibility: str | None = None
+    ) -> tuple[str, list[Any]]:
         clauses: list[str] = []
         params: list[Any] = []
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
+        if eligibility is not None:
+            clauses.append("eligibility = ?")
+            params.append(eligibility)
         if search:
             # Escape LIKE wildcards in user input so e.g. a search for "50%"
             # matches literally rather than acting as a wildcard.
@@ -380,16 +385,17 @@ class Tracker:
         self,
         status: str | None = None,
         search: str | None = None,
+        eligibility: str | None = None,
         sort: str = "first_seen_at",
         direction: str = "desc",
         limit: int | None = None,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Tracked jobs, optionally filtered by status and/or a title/company/
-        notes/match_reasoning/eligibility_note substring search, sorted, and
-        paginated. Used by the dashboard and by gmail_sync's company
-        matching (which relies on the no-filter default returning every
-        tracked job).
+        """Tracked jobs, optionally filtered by status, eligibility verdict
+        (pass/fail/flag), and/or a title/company/notes/match_reasoning/
+        eligibility_note substring search, sorted, and paginated. Used by
+        the dashboard and by gmail_sync's company matching (which relies on
+        the no-filter default returning every tracked job).
 
         `sort` must be one of SORTABLE_COLUMNS and `direction` one of
         "asc"/"desc" - both are validated here (raising InvalidSort) rather
@@ -400,7 +406,7 @@ class Tracker:
         if direction not in ("asc", "desc"):
             raise InvalidSort(f"Unknown sort direction {direction!r}. Valid: asc, desc")
 
-        where, params = self._where_clause(status, search)
+        where, params = self._where_clause(status, search, eligibility)
         query = (
             f"SELECT * FROM jobs {where} "
             f"ORDER BY {sort} {direction.upper()}, job_id {direction.upper()}"
@@ -414,8 +420,10 @@ class Tracker:
             rows = conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
-    def count_jobs(self, status: str | None = None, search: str | None = None) -> int:
-        where, params = self._where_clause(status, search)
+    def count_jobs(
+        self, status: str | None = None, search: str | None = None, eligibility: str | None = None
+    ) -> int:
+        where, params = self._where_clause(status, search, eligibility)
         with self._transaction() as conn:
             row = conn.execute(f"SELECT COUNT(*) FROM jobs {where}", params).fetchone()
         return int(row[0])

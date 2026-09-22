@@ -495,6 +495,25 @@ def test_list_jobs_filters_by_status(tmp_path):
     assert [j["job_id"] for j in applied] == ["1"]
 
 
+def test_list_jobs_filters_by_eligibility(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=20, should_apply=False, eligibility="fail")
+    tracker.record_score("2", "Designer", "Acme", "https://example.com/2", score=90, should_apply=True, eligibility="pass")
+
+    failed = tracker.list_jobs(eligibility="fail")
+
+    assert [j["job_id"] for j in failed] == ["1"]
+
+
+def test_count_jobs_filters_by_eligibility(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=20, should_apply=False, eligibility="fail")
+    tracker.record_score("2", "Designer", "Acme", "https://example.com/2", score=90, should_apply=True, eligibility="pass")
+
+    assert tracker.count_jobs(eligibility="fail") == 1
+    assert tracker.count_jobs(eligibility="pass") == 1
+
+
 def test_list_jobs_search_matches_title_or_company_case_insensitively(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")

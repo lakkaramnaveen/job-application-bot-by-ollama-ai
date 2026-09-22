@@ -121,6 +121,12 @@ def gmail_sync_args(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def export_args(**overrides) -> argparse.Namespace:
+    defaults = dict(status=None, search=None, eligibility=None, out=None, format="csv")
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
 def _backdate_applied_at(db_path, job_id: str, when: datetime) -> None:
     """Directly rewrite applied_at, since mark_applied() always stamps
     "now" - tests that need a stale application have to backdate it after
@@ -895,7 +901,7 @@ def test_export_to_stdout_is_valid_csv_with_all_jobs(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2", match_score=60)
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="csv"))
+    cmd_export(settings, export_args(status=None, search=None, out=None, format="csv"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job1", "job2"]
@@ -914,7 +920,7 @@ def test_export_csv_includes_notes(tmp_path, capsys):
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     tracker.set_note("job1", "Recruiter mentioned $150k base.")
 
-    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="csv"))
+    cmd_export(settings, export_args(status=None, search=None, out=None, format="csv"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert rows[0]["notes"] == "Recruiter mentioned $150k base."
@@ -927,10 +933,30 @@ def test_export_filters_by_status(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status="applied", search=None, out=None, format="csv"))
+    cmd_export(settings, export_args(status="applied", search=None, out=None, format="csv"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job2"]
+
+
+def test_export_filters_by_eligibility(tmp_path, capsys):
+    """--eligibility is the exact counterpart to --status, for pulling
+    every job with a given eligibility-gate verdict without guessing a
+    search term that happens to match all of them.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme", "https://x/1", score=20, should_apply=False, eligibility="fail"
+    )
+    tracker.record_score(
+        "job2", "Frontend Engineer", "Beta", "https://x/2", score=90, should_apply=True, eligibility="pass"
+    )
+
+    cmd_export(settings, export_args(eligibility="fail"))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert [r["job_id"] for r in rows] == ["job1"]
 
 
 def test_export_filters_by_search(tmp_path, capsys):
@@ -944,7 +970,7 @@ def test_export_filters_by_search(tmp_path, capsys):
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
 
-    cmd_export(settings, argparse.Namespace(status=None, search="Frontend", out=None, format="csv"))
+    cmd_export(settings, export_args(status=None, search="Frontend", out=None, format="csv"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job2"]
@@ -957,7 +983,7 @@ def test_export_search_also_matches_notes(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
     tracker.set_note("job1", "Referred by Jane.")
 
-    cmd_export(settings, argparse.Namespace(status=None, search="Jane", out=None, format="csv"))
+    cmd_export(settings, export_args(status=None, search="Jane", out=None, format="csv"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job1"]
@@ -969,7 +995,7 @@ def test_export_to_file_writes_csv_and_reports_count(tmp_path, capsys):
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     out_path = tmp_path / "export.csv"
 
-    cmd_export(settings, argparse.Namespace(status=None, search=None, out=out_path, format="csv"))
+    cmd_export(settings, export_args(status=None, search=None, out=out_path, format="csv"))
 
     assert f"Exported 1 job(s) to {out_path}" in capsys.readouterr().out
     rows = list(csv.DictReader(out_path.open(encoding="utf-8")))
@@ -980,7 +1006,7 @@ def test_export_with_no_jobs_writes_header_only(tmp_path, capsys):
     settings = make_settings(tmp_path)
     Tracker(settings.db_path)
 
-    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="csv"))
+    cmd_export(settings, export_args(status=None, search=None, out=None, format="csv"))
 
     lines = capsys.readouterr().out.strip("\r\n").splitlines()
     assert len(lines) == 1
@@ -994,7 +1020,7 @@ def test_export_json_to_stdout_is_a_json_array_with_all_jobs(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2", match_score=60)
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="json"))
+    cmd_export(settings, export_args(status=None, search=None, out=None, format="json"))
 
     rows = json.loads(capsys.readouterr().out)
     assert [r["job_id"] for r in rows] == ["job1", "job2"]
@@ -1008,7 +1034,7 @@ def test_export_json_includes_notes(tmp_path, capsys):
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     tracker.set_note("job1", "Recruiter mentioned $150k base.")
 
-    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="json"))
+    cmd_export(settings, export_args(status=None, search=None, out=None, format="json"))
 
     rows = json.loads(capsys.readouterr().out)
     assert rows[0]["notes"] == "Recruiter mentioned $150k base."
@@ -1021,7 +1047,7 @@ def test_export_json_filters_by_status(tmp_path, capsys):
     tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
     tracker.mark_applied("job2")
 
-    cmd_export(settings, argparse.Namespace(status="applied", search=None, out=None, format="json"))
+    cmd_export(settings, export_args(status="applied", search=None, out=None, format="json"))
 
     rows = json.loads(capsys.readouterr().out)
     assert [r["job_id"] for r in rows] == ["job2"]
@@ -1033,7 +1059,7 @@ def test_export_json_to_file_writes_json_and_reports_count(tmp_path, capsys):
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     out_path = tmp_path / "export.json"
 
-    cmd_export(settings, argparse.Namespace(status=None, search=None, out=out_path, format="json"))
+    cmd_export(settings, export_args(status=None, search=None, out=out_path, format="json"))
 
     assert f"Exported 1 job(s) to {out_path}" in capsys.readouterr().out
     rows = json.loads(out_path.read_text(encoding="utf-8"))
@@ -1044,7 +1070,7 @@ def test_export_json_with_no_jobs_writes_empty_array(tmp_path, capsys):
     settings = make_settings(tmp_path)
     Tracker(settings.db_path)
 
-    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="json"))
+    cmd_export(settings, export_args(status=None, search=None, out=None, format="json"))
 
     assert json.loads(capsys.readouterr().out) == []
 

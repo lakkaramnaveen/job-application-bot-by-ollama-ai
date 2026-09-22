@@ -15,6 +15,7 @@ that an applied job is recorded once and never re-applied to on a second
 run, and that an email arriving later moves that same row forward.
 """
 
+import argparse
 import csv
 import io
 import json
@@ -320,7 +321,10 @@ def test_run_then_report_and_export_reflect_the_same_state(settings, wired_run, 
     assert "Outcomes by match score:" in report_out
     assert "90-100" in report_out  # the applied job's bucket
 
-    cmd_export(settings, run_args(status="applied", search=None, out=None, format="csv"))
+    cmd_export(
+        settings,
+        argparse.Namespace(status="applied", search=None, eligibility=None, out=None, format="csv"),
+    )
     csv_out = capsys.readouterr().out
     # Checked via the job_id column specifically, not a raw substring search
     # over the whole CSV blob - LOW_SCORE_JOB_ID ("902") is short enough

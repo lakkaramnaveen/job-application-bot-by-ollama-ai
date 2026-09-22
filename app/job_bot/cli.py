@@ -1105,11 +1105,18 @@ def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
     a title/company/notes/match_reasoning/eligibility_note substring
     match) - the dashboard's /api/export.csv/.json already respected it,
     but the CLI command had no equivalent way to export a search result
-    instead of a full status-filtered dump.
+    instead of a full status-filtered dump. `--eligibility` is the exact
+    counterpart to `--status`, for pulling e.g. every job the eligibility
+    gate categorically disqualified without guessing a search term that
+    happens to match all of them.
     """
     tracker = Tracker(settings.db_path)
     jobs = tracker.list_jobs(
-        status=args.status, search=args.search, sort="first_seen_at", direction="asc"
+        status=args.status,
+        search=args.search,
+        eligibility=args.eligibility,
+        sort="first_seen_at",
+        direction="asc",
     )
     write = write_export_json if args.format == "json" else write_export_csv
 
@@ -1633,6 +1640,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     export_p = sub.add_parser("export", help="Export tracked jobs as CSV or JSON.")
     export_p.add_argument("--status", choices=sorted(TRACKER_STATUSES), default=None)
+    export_p.add_argument(
+        "--eligibility",
+        choices=["pass", "fail", "flag"],
+        default=None,
+        help="Only export jobs with this eligibility-gate verdict.",
+    )
     export_p.add_argument(
         "--search",
         default=None,
