@@ -144,6 +144,46 @@ def test_api_rows_supports_search(live_server):
     assert "No jobs tracked yet" in body
 
 
+def test_api_rows_supports_eligibility_filter(live_server, tmp_path):
+    # Same tmp_path instance the live_server fixture used internally to
+    # build its own db_path (see the fixture's own comment on the same
+    # trick for blacklist_path) - lets this reach the same database
+    # without live_server needing to expose db_path itself.
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.record_score(
+        "job3", "DevOps Engineer", "Acme Corp", "https://example.com/job3", score=20,
+        should_apply=False, eligibility="fail",
+    )
+
+    with urllib.request.urlopen(f"{live_server}/api/rows?eligibility=fail") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "DevOps Engineer" in body
+    assert "Backend Engineer" not in body
+
+
+def test_export_csv_respects_the_eligibility_filter(live_server, tmp_path):
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.record_score(
+        "job3", "DevOps Engineer", "Acme Corp", "https://example.com/job3", score=20,
+        should_apply=False, eligibility="fail",
+    )
+
+    with urllib.request.urlopen(f"{live_server}/api/export.csv?eligibility=fail") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "job3," in body
+    assert "job1," not in body
+    assert "job 2," not in body
+
+
+def test_index_page_reflects_the_eligibility_filter_in_the_select(live_server):
+    with urllib.request.urlopen(f"{live_server}/?eligibility=fail") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert '<option value="fail" selected>' in body
+
+
 def test_api_rows_search_also_matches_notes(live_server):
     _post_json(f"{live_server}/api/jobs/job1/note", {"note": "Referred by Jane."})
 

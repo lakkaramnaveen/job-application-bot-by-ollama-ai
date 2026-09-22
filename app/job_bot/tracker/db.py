@@ -336,14 +336,14 @@ class Tracker:
             row = conn.execute("SELECT applied_at FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         return bool(row) and row[0] is not None
 
-    def status_counts(self, search: str | None = None) -> dict[str, int]:
-        """Per-status row counts, optionally scoped to a search term (the
-        dashboard's stat pills use this so they reflect the current search
-        box rather than always showing whole-database totals) - never scoped
-        to a status filter itself, since that would hide every other pill's
-        true count.
+    def status_counts(self, search: str | None = None, eligibility: str | None = None) -> dict[str, int]:
+        """Per-status row counts, optionally scoped to a search term and/or
+        eligibility verdict (the dashboard's stat pills use this so they
+        reflect the current search box/eligibility filter rather than
+        always showing whole-database totals) - never scoped to a status
+        filter itself, since that would hide every other pill's true count.
         """
-        where, params = self._where_clause(None, search)
+        where, params = self._where_clause(None, search, eligibility)
         with self._transaction() as conn:
             rows = conn.execute(f"SELECT status, COUNT(*) FROM jobs {where} GROUP BY status", params).fetchall()
         return dict(rows)

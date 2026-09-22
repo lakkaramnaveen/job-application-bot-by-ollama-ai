@@ -322,6 +322,17 @@ def test_render_page_html_includes_filter_and_sort_controls():
     assert '<option value="company:asc" selected>' in html
 
 
+def test_render_page_html_includes_the_eligibility_filter_control():
+    html = render_page_html([make_job()], eligibility="fail")
+    assert 'id="eligibility"' in html
+    assert '<option value="fail" selected>' in html
+
+
+def test_render_page_html_eligibility_filter_defaults_to_any():
+    html = render_page_html([make_job()])
+    assert '<option value="" selected>Any eligibility</option>' in html
+
+
 def test_render_page_html_includes_pager():
     html = render_page_html([make_job()], total=100, page=2, page_size=25)
     assert 'id="prevPage"' in html

@@ -255,6 +255,7 @@ def render_page_html(
     page: int = 1,
     page_size: int = PAGE_SIZE,
     status: str = "",
+    eligibility: str = "",
     search: str = "",
     sort: str = "first_seen_at",
     direction: str = "desc",
@@ -264,6 +265,12 @@ def render_page_html(
     rows_html = render_rows_html(jobs)
     stats_html = render_stats_html(counts or {}, status)
     status_options = [("", "All statuses"), *((s, s.replace("_", " ")) for s in sorted(TRACKER_STATUSES))]
+    eligibility_options = [
+        ("", "Any eligibility"),
+        ("pass", "Eligibility: pass"),
+        ("flag", "Eligibility: flag"),
+        ("fail", "Eligibility: fail"),
+    ]
     sort_value = f"{sort}:{direction}"
 
     return f"""<!doctype html>
@@ -374,6 +381,9 @@ def render_page_html(
   <select id="status" name="status">
     {_options_html(status_options, status)}
   </select>
+  <select id="eligibility" name="eligibility">
+    {_options_html(eligibility_options, eligibility)}
+  </select>
   <select id="sort" name="sort">
     {_options_html(SORT_OPTIONS, sort_value)}
   </select>
@@ -428,6 +438,7 @@ def render_page_html(
 const state = {{
   q: document.getElementById('q').value,
   status: document.getElementById('status').value,
+  eligibility: document.getElementById('eligibility').value,
   sort: document.getElementById('sort').value.split(':')[0],
   dir: document.getElementById('sort').value.split(':')[1],
   page: {page},
@@ -438,6 +449,7 @@ function buildQuery() {{
   const params = new URLSearchParams();
   if (state.q) params.set('q', state.q);
   if (state.status) params.set('status', state.status);
+  if (state.eligibility) params.set('eligibility', state.eligibility);
   params.set('sort', state.sort);
   params.set('dir', state.dir);
   params.set('page', String(state.page));
@@ -480,6 +492,11 @@ document.getElementById('q').addEventListener('input', (e) => {{
 }});
 document.getElementById('status').addEventListener('change', (e) => {{
   state.status = e.target.value;
+  state.page = 1;
+  refresh();
+}});
+document.getElementById('eligibility').addEventListener('change', (e) => {{
+  state.eligibility = e.target.value;
   state.page = 1;
   refresh();
 }});

@@ -54,6 +54,7 @@ def _parse_list_params(query: dict[str, list[str]]) -> dict:
     handlers' filter/sort/page behavior identical.
     """
     status = (query.get("status", [""])[0] or "").strip()
+    eligibility = (query.get("eligibility", [""])[0] or "").strip()
     search = (query.get("q", [""])[0] or "").strip()
     sort = (query.get("sort", [_DEFAULT_SORT])[0] or _DEFAULT_SORT).strip()
     direction = (query.get("dir", [_DEFAULT_DIRECTION])[0] or _DEFAULT_DIRECTION).strip()
@@ -61,7 +62,14 @@ def _parse_list_params(query: dict[str, list[str]]) -> dict:
         page = max(1, int(query.get("page", ["1"])[0]))
     except ValueError:
         page = 1
-    return {"status": status or None, "search": search or None, "sort": sort, "direction": direction, "page": page}
+    return {
+        "status": status or None,
+        "eligibility": eligibility or None,
+        "search": search or None,
+        "sort": sort,
+        "direction": direction,
+        "page": page,
+    }
 
 
 def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHandler]:
@@ -156,10 +164,13 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
         def _handle_index(self, tracker: Tracker, query: dict[str, list[str]]) -> None:
             params = _parse_list_params(query)
             try:
-                total = tracker.count_jobs(status=params["status"], search=params["search"])
+                total = tracker.count_jobs(
+                    status=params["status"], search=params["search"], eligibility=params["eligibility"]
+                )
                 jobs = tracker.list_jobs(
                     status=params["status"],
                     search=params["search"],
+                    eligibility=params["eligibility"],
                     sort=params["sort"],
                     direction=params["direction"],
                     limit=PAGE_SIZE,
@@ -167,9 +178,15 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
                 )
             except InvalidSort:
                 params["sort"], params["direction"] = _DEFAULT_SORT, _DEFAULT_DIRECTION
-                total = tracker.count_jobs(status=params["status"], search=params["search"])
+                total = tracker.count_jobs(
+                    status=params["status"], search=params["search"], eligibility=params["eligibility"]
+                )
                 jobs = tracker.list_jobs(
-                    status=params["status"], search=params["search"], limit=PAGE_SIZE, offset=0
+                    status=params["status"],
+                    search=params["search"],
+                    eligibility=params["eligibility"],
+                    limit=PAGE_SIZE,
+                    offset=0,
                 )
                 params["page"] = 1
             body = render_page_html(
@@ -178,29 +195,34 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
                 page=params["page"],
                 page_size=PAGE_SIZE,
                 status=params["status"] or "",
+                eligibility=params["eligibility"] or "",
                 search=params["search"] or "",
                 sort=params["sort"],
                 direction=params["direction"],
-                counts=tracker.status_counts(search=params["search"]),
+                counts=tracker.status_counts(search=params["search"], eligibility=params["eligibility"]),
             ).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
         def _handle_stats(self, tracker: Tracker, query: dict[str, list[str]]) -> None:
             params = _parse_list_params(query)
-            counts = tracker.status_counts(search=params["search"])
+            counts = tracker.status_counts(search=params["search"], eligibility=params["eligibility"])
             body = render_stats_html(counts, params["status"] or "").encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
         def _handle_export(self, tracker: Tracker, query: dict[str, list[str]], *, fmt: str) -> None:
             """Same CSV/JSON shape as `job-bot export --format ...` (see
             tracker/db.py's write_export_csv/write_export_json, shared by
-            both) - respects the dashboard's current status filter and
-            search box, but always exports every matching job, not just the
-            currently-visible page.
+            both) - respects the dashboard's current status/eligibility
+            filters and search box, but always exports every matching job,
+            not just the currently-visible page.
             """
             params = _parse_list_params(query)
             jobs = tracker.list_jobs(
-                status=params["status"], search=params["search"], sort="first_seen_at", direction="asc"
+                status=params["status"],
+                search=params["search"],
+                eligibility=params["eligibility"],
+                sort="first_seen_at",
+                direction="asc",
             )
             buffer = io.StringIO()
             if fmt == "json":
@@ -220,10 +242,13 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
         def _handle_rows(self, tracker: Tracker, query: dict[str, list[str]]) -> None:
             params = _parse_list_params(query)
             try:
-                total = tracker.count_jobs(status=params["status"], search=params["search"])
+                total = tracker.count_jobs(
+                    status=params["status"], search=params["search"], eligibility=params["eligibility"]
+                )
                 jobs = tracker.list_jobs(
                     status=params["status"],
                     search=params["search"],
+                    eligibility=params["eligibility"],
                     sort=params["sort"],
                     direction=params["direction"],
                     limit=PAGE_SIZE,
