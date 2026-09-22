@@ -65,6 +65,7 @@ EXPORT_FIELDS = (
     "applied_at",
     "url",
     "notes",
+    "match_reasoning",
 )
 
 
@@ -144,6 +145,8 @@ class Tracker:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
             if "notes" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN notes TEXT")
+            if "match_reasoning" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN match_reasoning TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS qa_history (
@@ -185,7 +188,14 @@ class Tracker:
             )
 
     def record_score(
-        self, job_id: str, title: str, company: str, url: str, score: int, should_apply: bool
+        self,
+        job_id: str,
+        title: str,
+        company: str,
+        url: str,
+        score: int,
+        should_apply: bool,
+        reasoning: str = "",
     ) -> None:
         """Upsert a job together with its LLM match score and the resulting
         seen/skipped status, in one transaction - as opposed to an
@@ -195,17 +205,28 @@ class Tracker:
         relies on that atomicity: on a later run, a tracked job with
         status="seen" and a non-null match_score is trusted to mean "already
         scored, and the LLM said apply" without needing to re-check should_apply.
+
+        `reasoning` is JobMatchScore.reasoning (models/schemas.py) - the
+        LLM's own brief explanation of the score, previously computed on
+        every single job and then thrown away the moment this call
+        returned, leaving no way to see *why* a job got the score/skip
+        decision it did short of re-running it. Optional and defaulted so
+        every existing caller (and every db.sqlite3 already on disk, via
+        the same PRAGMA table_info migration notes uses) keeps working.
         """
         status = "seen" if should_apply else "skipped"
         now = datetime.now(UTC).isoformat()
         with self._transaction() as conn:
             conn.execute(
                 """
-                INSERT INTO jobs (job_id, title, company, url, match_score, status, first_seen_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(job_id) DO UPDATE SET match_score = excluded.match_score, status = excluded.status
+                INSERT INTO jobs (job_id, title, company, url, match_score, status, match_reasoning, first_seen_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    match_score = excluded.match_score,
+                    status = excluded.status,
+                    match_reasoning = excluded.match_reasoning
                 """,
-                (job_id, title, company, url, score, status, now),
+                (job_id, title, company, url, score, status, reasoning, now),
             )
 
     def mark_applied(self, job_id: str) -> None:

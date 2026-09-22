@@ -450,7 +450,13 @@ def _run_apply_cycle(
         # to False regardless of score.
         should_apply = match.should_apply and match.score >= min_score
         tracker.record_score(
-            posting.job_id, posting.title, posting.company, posting.url, match.score, should_apply
+            posting.job_id,
+            posting.title,
+            posting.company,
+            posting.url,
+            match.score,
+            should_apply,
+            reasoning=match.reasoning,
         )
         audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
         return should_apply
@@ -721,9 +727,11 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
     change, so either or both can be given in one call.
 
     With no <status> and no --note given, prints the job's current tracked
-    record, note (if any), and answered-question history instead of
-    changing anything - a quick, CLI-only way to check one application
-    (e.g. before deciding what status to set) without opening the
+    record, the LLM's own match reasoning (if it was scored, not just
+    upserted - see Tracker.record_score()), note (if any), and
+    answered-question history instead of changing anything - a quick,
+    CLI-only way to check one application (e.g. before deciding what
+    status to set, or to see *why* a job was skipped) without opening the
     dashboard.
     """
     tracker = Tracker(settings.db_path)
@@ -743,6 +751,8 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
             # job-bot run's own blacklist check only ever runs at search
             # time, never retroactively against what's already tracked.
             print(f"\n[!!] {job['company']} is on your blacklist.")
+        if job.get("match_reasoning"):
+            print(f"\nMatch reasoning: {job['match_reasoning']}")
         if job.get("notes"):
             print(f"\nNote: {job['notes']}")
         generation = tracker.get_resume_generation(args.job_id)

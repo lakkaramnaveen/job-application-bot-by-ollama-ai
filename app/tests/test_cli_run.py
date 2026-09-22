@@ -268,6 +268,27 @@ def test_run_passes_settings_max_years_experience_and_require_w2_to_the_scorer(t
     assert "Corp-to-Corp" in system
 
 
+def test_run_persists_the_scorers_reasoning_to_the_tracker(tmp_path, monkeypatch):
+    """cmd_run must actually thread JobMatchScore.reasoning through to
+    Tracker.record_score() - the field existing on the schema, or
+    record_score() knowing how to store it (see test_tracker.py), proves
+    neither the LLM's answer nor the storage works end to end without this
+    wiring, the same class of gap test_run_passes_settings_max_years_
+    experience_and_require_w2_to_the_scorer above guards for a different
+    field.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args())
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.get_job(JOB.job_id)["match_reasoning"] == "Great fit"
+
+
 def test_run_max_years_experience_flag_overrides_settings(tmp_path, monkeypatch):
     provider = FakeProvider()
     monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)

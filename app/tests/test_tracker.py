@@ -87,6 +87,81 @@ def test_record_score_on_existing_job_updates_score_and_status(tmp_path):
     assert job["match_score"] == 90
 
 
+def test_record_score_persists_the_llms_reasoning(tmp_path):
+    """reasoning (JobMatchScore.reasoning, models/schemas.py) is otherwise
+    computed on every single job and thrown away the moment record_score()
+    returns - persisting it is what lets `job-bot status <job_id>` show
+    *why* a job got the score/skip decision it did.
+    """
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_score(
+        "1", "Engineer", "Acme", "https://example.com/1", score=85, should_apply=True, reasoning="Great fit"
+    )
+
+    assert tracker.get_job("1")["match_reasoning"] == "Great fit"
+
+
+def test_record_score_defaults_reasoning_to_empty_string(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=85, should_apply=True)
+
+    assert tracker.get_job("1")["match_reasoning"] == ""
+
+
+def test_record_score_updates_reasoning_on_an_existing_job(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_score(
+        "1", "Engineer", "Acme", "https://example.com/1", score=20, should_apply=False, reasoning="Weak fit"
+    )
+
+    tracker.record_score(
+        "1", "Engineer", "Acme", "https://example.com/1", score=90, should_apply=True, reasoning="Great fit"
+    )
+
+    assert tracker.get_job("1")["match_reasoning"] == "Great fit"
+
+
+def test_match_reasoning_column_is_added_to_a_database_created_before_this_feature(tmp_path):
+    """Same migration shape as test_notes_column_is_added_to_a_database_
+    created_before_this_feature: an existing db.sqlite3 from before
+    match_reasoning existed must get the column added (not recreated) the
+    next time a Tracker is constructed against it, with existing rows kept.
+    """
+    db_path = tmp_path / "pre_existing.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE jobs (
+            job_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            company TEXT NOT NULL,
+            url TEXT NOT NULL,
+            match_score INTEGER,
+            status TEXT NOT NULL DEFAULT 'seen',
+            first_seen_at TEXT NOT NULL,
+            applied_at TEXT,
+            notes TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO jobs (job_id, title, company, url, match_score, status, first_seen_at) "
+        "VALUES ('1', 'Engineer', 'Acme', 'https://example.com/1', 85, 'seen', '2024-01-01T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    tracker = Tracker(db_path)
+
+    job = tracker.get_job("1")
+    assert job["title"] == "Engineer"
+    assert job["match_reasoning"] is None
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=90, should_apply=True, reasoning="ok")
+    assert tracker.get_job("1")["match_reasoning"] == "ok"
+
+
 def test_update_status_accepts_valid_outcome_status(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")

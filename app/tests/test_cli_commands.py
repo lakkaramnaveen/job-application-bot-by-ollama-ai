@@ -274,6 +274,28 @@ def test_status_with_no_status_arg_omits_note_section_when_none_set(tmp_path, ca
     assert "Note:" not in capsys.readouterr().out
 
 
+def test_status_with_no_status_arg_shows_match_reasoning_when_present(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme", "https://x/1", score=85, should_apply=True, reasoning="Great fit"
+    )
+
+    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+
+    assert "Match reasoning: Great fit" in capsys.readouterr().out
+
+
+def test_status_with_no_status_arg_omits_match_reasoning_section_when_never_scored(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+
+    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+
+    assert "Match reasoning:" not in capsys.readouterr().out
+
+
 def test_status_with_no_status_arg_warns_when_the_company_is_blacklisted(tmp_path, capsys):
     """Real gap this guards against: a job tracked/applied to before its
     company was blacklisted (or blacklisted afterward for an unrelated
