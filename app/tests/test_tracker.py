@@ -514,6 +514,35 @@ def test_count_jobs_filters_by_eligibility(tmp_path):
     assert tracker.count_jobs(eligibility="pass") == 1
 
 
+def test_list_jobs_combines_status_eligibility_and_search_with_and_not_or(tmp_path):
+    """status/eligibility/search were each tested individually above, but
+    never together - _where_clause() joins all three with AND, so this
+    confirms a job matching only one or two of the three (not all three)
+    is correctly excluded, not just that each filter works in isolation.
+    """
+    tracker = make_tracker(tmp_path)
+    # Matches all three filters below.
+    tracker.record_score(
+        "1", "Backend Engineer", "Acme", "https://example.com/1", score=20, should_apply=False,
+        eligibility="fail", eligibility_note="Requires US citizenship.",
+    )
+    # Right status and search text, wrong eligibility.
+    tracker.record_score(
+        "2", "Backend Engineer", "Acme", "https://example.com/2", score=85, should_apply=True,
+        eligibility="pass", eligibility_note="",
+    )
+    tracker.update_status("2", "skipped")
+    # Right status and eligibility, search text doesn't match.
+    tracker.record_score(
+        "3", "Designer", "Beta", "https://example.com/3", score=20, should_apply=False,
+        eligibility="fail", eligibility_note="Requires an active clearance.",
+    )
+
+    results = tracker.list_jobs(status="skipped", eligibility="fail", search="citizenship")
+
+    assert [j["job_id"] for j in results] == ["1"]
+
+
 def test_list_jobs_search_matches_title_or_company_case_insensitively(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
