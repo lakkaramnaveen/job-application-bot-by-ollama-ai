@@ -269,13 +269,13 @@ def test_run_passes_settings_max_years_experience_and_require_w2_to_the_scorer(t
 
 
 def test_run_persists_the_scorers_reasoning_to_the_tracker(tmp_path, monkeypatch):
-    """cmd_run must actually thread JobMatchScore.reasoning through to
-    Tracker.record_score() - the field existing on the schema, or
-    record_score() knowing how to store it (see test_tracker.py), proves
-    neither the LLM's answer nor the storage works end to end without this
-    wiring, the same class of gap test_run_passes_settings_max_years_
-    experience_and_require_w2_to_the_scorer above guards for a different
-    field.
+    """cmd_run must actually thread JobMatchScore.reasoning and the
+    eligibility verdict/note through to Tracker.record_score() - the
+    fields existing on the schema, or record_score() knowing how to store
+    them (see test_tracker.py), proves neither the LLM's answer nor the
+    storage works end to end without this wiring, the same class of gap
+    test_run_passes_settings_max_years_experience_and_require_w2_to_the_
+    scorer above guards for a different field.
     """
     provider = FakeProvider()
     monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
@@ -285,8 +285,9 @@ def test_run_persists_the_scorers_reasoning_to_the_tracker(tmp_path, monkeypatch
     settings = make_settings(tmp_path)
     cmd_run(settings, make_args())
 
-    tracker = Tracker(settings.db_path)
-    assert tracker.get_job(JOB.job_id)["match_reasoning"] == "Great fit"
+    job = Tracker(settings.db_path).get_job(JOB.job_id)
+    assert job["match_reasoning"] == "Great fit"
+    assert job["eligibility"] == "pass"
 
 
 def test_run_max_years_experience_flag_overrides_settings(tmp_path, monkeypatch):

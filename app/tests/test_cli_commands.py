@@ -186,7 +186,15 @@ def test_status_with_no_status_arg_and_format_json_prints_the_full_record(tmp_pa
     settings = make_settings(tmp_path)
     tracker = Tracker(settings.db_path)
     tracker.record_score(
-        "job1", "Backend Engineer", "Acme", "https://x/1", score=85, should_apply=True, reasoning="Great fit"
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=85,
+        should_apply=True,
+        reasoning="Great fit",
+        eligibility="pass",
+        eligibility_note="",
     )
     tracker.set_note("job1", "Referred by Jane.")
     tracker.record_qa("job1", "Years of Python?", "5")
@@ -201,6 +209,7 @@ def test_status_with_no_status_arg_and_format_json_prints_the_full_record(tmp_pa
     assert payload["status"] == "seen"
     assert payload["match_score"] == 85
     assert payload["match_reasoning"] == "Great fit"
+    assert payload["eligibility"] == "pass"
     assert payload["notes"] == "Referred by Jane."
     assert payload["is_blacklisted"] is False
     assert len(payload["qa_history"]) == 1
@@ -381,6 +390,60 @@ def test_status_with_no_status_arg_omits_match_reasoning_section_when_never_scor
     cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     assert "Match reasoning:" not in capsys.readouterr().out
+
+
+def test_status_with_no_status_arg_flags_a_failed_eligibility_verdict(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=20,
+        should_apply=False,
+        eligibility="fail",
+        eligibility_note="Requires active US security clearance.",
+    )
+
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
+
+    out = capsys.readouterr().out
+    assert "[!!] Eligibility: fail - Requires active US security clearance." in out
+
+
+def test_status_with_no_status_arg_flags_a_flagged_eligibility_verdict(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme", "https://x/1", score=70, should_apply=True, eligibility="flag"
+    )
+
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
+
+    assert "[!!] Eligibility: flag" in capsys.readouterr().out
+
+
+def test_status_with_no_status_arg_omits_eligibility_warning_when_eligibility_passes(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme", "https://x/1", score=85, should_apply=True, eligibility="pass"
+    )
+
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
+
+    assert "Eligibility:" not in capsys.readouterr().out
+
+
+def test_status_with_no_status_arg_omits_eligibility_warning_when_never_scored(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
+
+    assert "Eligibility:" not in capsys.readouterr().out
 
 
 def test_status_with_no_status_arg_warns_when_the_company_is_blacklisted(tmp_path, capsys):

@@ -457,6 +457,8 @@ def _run_apply_cycle(
             match.score,
             should_apply,
             reasoning=match.reasoning,
+            eligibility=match.eligibility,
+            eligibility_note=match.eligibility_note,
         )
         audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
         return should_apply
@@ -727,10 +729,10 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
     change, so either or both can be given in one call.
 
     With no <status> and no --note given, prints the job's current tracked
-    record, the LLM's own match reasoning (if it was scored, not just
-    upserted - see Tracker.record_score()), note (if any), and
-    answered-question history instead of changing anything - a quick,
-    CLI-only way to check one application (e.g. before deciding what
+    record, the LLM's own match reasoning and eligibility-gate verdict (if
+    it was scored, not just upserted - see Tracker.record_score()), note
+    (if any), and answered-question history instead of changing anything -
+    a quick, CLI-only way to check one application (e.g. before deciding what
     status to set, or to see *why* a job was skipped) without opening the
     dashboard. `--format json` prints that same view as one JSON object
     instead - every other read-oriented command here (doctor/report/
@@ -772,6 +774,15 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
             # job-bot run's own blacklist check only ever runs at search
             # time, never retroactively against what's already tracked.
             print(f"\n[!!] {job['company']} is on your blacklist.")
+        if job.get("eligibility") in ("fail", "flag"):
+            # Distinguishes a categorical eligibility-gate rejection (e.g.
+            # a citizenship requirement the resume doesn't meet) from a
+            # plain low score - status=skipped alone can't tell the two
+            # apart. "flag" specifically means the model itself was
+            # uncertain (a silent/ambiguous rule), worth a second look by
+            # the human rather than a quiet skip.
+            note = f" - {job['eligibility_note']}" if job.get("eligibility_note") else ""
+            print(f"\n[!!] Eligibility: {job['eligibility']}{note}")
         if job.get("match_reasoning"):
             print(f"\nMatch reasoning: {job['match_reasoning']}")
         if job.get("notes"):

@@ -66,6 +66,8 @@ EXPORT_FIELDS = (
     "url",
     "notes",
     "match_reasoning",
+    "eligibility",
+    "eligibility_note",
 )
 
 
@@ -147,6 +149,10 @@ class Tracker:
                 conn.execute("ALTER TABLE jobs ADD COLUMN notes TEXT")
             if "match_reasoning" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN match_reasoning TEXT")
+            if "eligibility" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN eligibility TEXT")
+            if "eligibility_note" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN eligibility_note TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS qa_history (
@@ -196,6 +202,8 @@ class Tracker:
         score: int,
         should_apply: bool,
         reasoning: str = "",
+        eligibility: str = "",
+        eligibility_note: str = "",
     ) -> None:
         """Upsert a job together with its LLM match score and the resulting
         seen/skipped status, in one transaction - as opposed to an
@@ -210,23 +218,40 @@ class Tracker:
         LLM's own brief explanation of the score, previously computed on
         every single job and then thrown away the moment this call
         returned, leaving no way to see *why* a job got the score/skip
-        decision it did short of re-running it. Optional and defaulted so
-        every existing caller (and every db.sqlite3 already on disk, via
-        the same PRAGMA table_info migration notes uses) keeps working.
+        decision it did short of re-running it.
+
+        `eligibility` ("pass"/"fail"/"flag") and `eligibility_note` (the
+        specific posting wording driving that verdict) are the other half
+        of JobMatchScore that used to vanish the same way - status=skipped
+        alone can't distinguish a categorical eligibility-gate rejection
+        (e.g. a citizenship requirement the resume doesn't meet) from a
+        plain low score, and "flag" specifically means the model itself
+        was uncertain (a silent/ambiguous rule) rather than confidently
+        passing or failing it - worth a second look by the human, not just
+        a quiet skip.
+
+        All three are optional and defaulted so every existing caller (and
+        every db.sqlite3 already on disk, via the same PRAGMA table_info
+        migration notes uses) keeps working.
         """
         status = "seen" if should_apply else "skipped"
         now = datetime.now(UTC).isoformat()
         with self._transaction() as conn:
             conn.execute(
                 """
-                INSERT INTO jobs (job_id, title, company, url, match_score, status, match_reasoning, first_seen_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO jobs (
+                    job_id, title, company, url, match_score, status,
+                    match_reasoning, eligibility, eligibility_note, first_seen_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     match_score = excluded.match_score,
                     status = excluded.status,
-                    match_reasoning = excluded.match_reasoning
+                    match_reasoning = excluded.match_reasoning,
+                    eligibility = excluded.eligibility,
+                    eligibility_note = excluded.eligibility_note
                 """,
-                (job_id, title, company, url, score, status, reasoning, now),
+                (job_id, title, company, url, score, status, reasoning, eligibility, eligibility_note, now),
             )
 
     def mark_applied(self, job_id: str) -> None:

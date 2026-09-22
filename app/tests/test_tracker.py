@@ -162,6 +162,83 @@ def test_match_reasoning_column_is_added_to_a_database_created_before_this_featu
     assert tracker.get_job("1")["match_reasoning"] == "ok"
 
 
+def test_record_score_persists_the_eligibility_verdict_and_note(tmp_path):
+    """eligibility/eligibility_note (JobMatchScore, models/schemas.py) are
+    the other half of what record_score() used to discard - status=skipped
+    alone can't distinguish a categorical eligibility-gate rejection from a
+    plain low score, and reasoning alone doesn't carry the specific quoted
+    posting language driving an eligibility verdict.
+    """
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_score(
+        "1",
+        "Engineer",
+        "Acme",
+        "https://example.com/1",
+        score=20,
+        should_apply=False,
+        eligibility="fail",
+        eligibility_note="Requires active US security clearance.",
+    )
+
+    job = tracker.get_job("1")
+    assert job["eligibility"] == "fail"
+    assert job["eligibility_note"] == "Requires active US security clearance."
+
+
+def test_record_score_defaults_eligibility_and_note_to_empty_string(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=85, should_apply=True)
+
+    job = tracker.get_job("1")
+    assert job["eligibility"] == ""
+    assert job["eligibility_note"] == ""
+
+
+def test_eligibility_columns_are_added_to_a_database_created_before_this_feature(tmp_path):
+    """Same migration shape as test_match_reasoning_column_is_added_to_a_
+    database_created_before_this_feature above, for the two eligibility
+    columns added alongside it.
+    """
+    db_path = tmp_path / "pre_existing.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE jobs (
+            job_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            company TEXT NOT NULL,
+            url TEXT NOT NULL,
+            match_score INTEGER,
+            status TEXT NOT NULL DEFAULT 'seen',
+            first_seen_at TEXT NOT NULL,
+            applied_at TEXT,
+            notes TEXT,
+            match_reasoning TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO jobs (job_id, title, company, url, match_score, status, first_seen_at) "
+        "VALUES ('1', 'Engineer', 'Acme', 'https://example.com/1', 85, 'seen', '2024-01-01T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    tracker = Tracker(db_path)
+
+    job = tracker.get_job("1")
+    assert job["title"] == "Engineer"
+    assert job["eligibility"] is None
+    assert job["eligibility_note"] is None
+    tracker.record_score(
+        "1", "Engineer", "Acme", "https://example.com/1", score=90, should_apply=True, eligibility="pass"
+    )
+    assert tracker.get_job("1")["eligibility"] == "pass"
+
+
 def test_update_status_accepts_valid_outcome_status(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
