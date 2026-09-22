@@ -374,3 +374,41 @@ def test_best_resume_examples_falls_back_to_recency_with_no_outcomes(tmp_path):
 def test_best_resume_examples_empty_when_nothing_recorded(tmp_path):
     tracker = make_tracker(tmp_path)
     assert tracker.best_resume_examples() == []
+
+
+def test_get_resume_generation_returns_the_recorded_generation(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_resume_generation(
+        "1", "Engineer", "Acme", "A tailored summary.", ["Python", "AWS"], ["Did a thing."]
+    )
+
+    generation = tracker.get_resume_generation("1")
+
+    assert generation["job_id"] == "1"
+    assert generation["summary"] == "A tailored summary."
+    assert generation["skills"] == ["Python", "AWS"]
+    assert generation["bullets"] == ["Did a thing."]
+
+
+def test_get_resume_generation_returns_none_when_never_generated(tmp_path):
+    tracker = make_tracker(tmp_path)
+    assert tracker.get_resume_generation("never-generated") is None
+
+
+def test_get_resume_generation_returns_the_most_recent_of_several(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_resume_generation("1", "Engineer", "Acme", "First generation.", [], [])
+    tracker.record_resume_generation("1", "Engineer", "Acme", "Second, more recent generation.", [], [])
+
+    generation = tracker.get_resume_generation("1")
+
+    assert generation["summary"] == "Second, more recent generation."
+
+
+def test_get_resume_generation_only_returns_this_jobs_own_generation(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_resume_generation("1", "Engineer", "Acme", "For job 1.", [], [])
+    tracker.record_resume_generation("2", "Designer", "Beta", "For job 2.", [], [])
+
+    assert tracker.get_resume_generation("1")["summary"] == "For job 1."
+    assert tracker.get_resume_generation("2")["summary"] == "For job 2."

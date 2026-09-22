@@ -160,6 +160,32 @@ def test_status_with_no_status_arg_includes_qa_history(tmp_path, capsys):
     assert "5" in out
 
 
+def test_status_with_no_status_arg_includes_the_tailored_resume_generation(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.record_resume_generation(
+        "job1", "Backend Engineer", "Acme", "A tailored summary.", ["Python", "AWS"], ["Did a thing."]
+    )
+
+    cmd_status(settings, argparse.Namespace(job_id="job1", status=None))
+
+    out = capsys.readouterr().out
+    assert "Tailored resume generated" in out
+    assert "A tailored summary." in out
+    assert "Python, AWS" in out
+
+
+def test_status_with_no_status_arg_omits_resume_generation_section_when_never_generated(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+
+    cmd_status(settings, argparse.Namespace(job_id="job1", status=None))
+
+    assert "Tailored resume generated" not in capsys.readouterr().out
+
+
 def test_status_with_no_status_arg_on_unknown_job_id_exits_with_error(tmp_path, capsys):
     settings = make_settings(tmp_path)
     Tracker(settings.db_path)  # create the (empty) DB

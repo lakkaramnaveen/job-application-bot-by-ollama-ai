@@ -408,6 +408,40 @@ class Tracker:
                 (job_id, title, company, summary, json.dumps(skills), json.dumps(bullets), now),
             )
 
+    def get_resume_generation(self, job_id: str) -> dict[str, Any] | None:
+        """The most recent tailor_resume() output recorded for this job (a
+        job is normally only ever scored/tailored once, but takes the
+        latest if record_resume_generation() was somehow called more than
+        once), or None if it was never tailored at all - e.g. the job
+        never cleared min_score, or a fresh install with no run history
+        yet. Same dict shape as best_resume_examples()' entries. Used by
+        `job-bot status <job_id>` (no <status>) to show what was actually
+        generated and submitted for one specific application.
+        """
+        with self._transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT job_id, title, company, summary, skills_json, bullets_json, created_at
+                FROM resume_generations
+                WHERE job_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "job_id": row["job_id"],
+            "title": row["title"],
+            "company": row["company"],
+            "summary": row["summary"],
+            "skills": json.loads(row["skills_json"]),
+            "bullets": json.loads(row["bullets_json"]),
+            "created_at": row["created_at"],
+        }
+
     def best_resume_examples(self, limit: int = 3) -> list[dict[str, Any]]:
         """Up to `limit` past tailored-resume generations to use as few-shot
         style/quality reference for a new one, ranked with generations tied

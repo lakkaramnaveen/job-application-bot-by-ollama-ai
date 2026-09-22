@@ -733,6 +733,11 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
         width = max(len(field) for field in _STATUS_VIEW_FIELDS)
         for field in _STATUS_VIEW_FIELDS:
             print(f"{field:<{width}}  {job.get(field)}")
+        generation = tracker.get_resume_generation(args.job_id)
+        if generation:
+            print(f"\nTailored resume generated {generation['created_at']}:")
+            print(f"  Summary: {generation['summary']}")
+            print(f"  Skills:  {', '.join(generation['skills'])}")
         qa = tracker.list_qa(args.job_id)
         if qa:
             print(f"\nQ&A history ({len(qa)}):")
