@@ -115,6 +115,12 @@ def status_args(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def gmail_sync_args(**overrides) -> argparse.Namespace:
+    defaults = dict(days=None, max_emails=50, dry_run=False, format="text")
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
 def _backdate_applied_at(db_path, job_id: str, when: datetime) -> None:
     """Directly rewrite applied_at, since mark_applied() always stamps
     "now" - tests that need a stale application have to backdate it after
@@ -1446,9 +1452,8 @@ def test_gmail_sync_prints_scanned_count_with_no_emails(tmp_path, monkeypatch, c
     settings = make_settings(tmp_path)
     monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
     monkeypatch.setattr("job_bot.cli.GmailClient", FakeGmailClientForCli)
-    args = argparse.Namespace(days=None, max_emails=50, dry_run=False)
 
-    cmd_gmail_sync(settings, args)
+    cmd_gmail_sync(settings, gmail_sync_args())
 
     assert "Scanned 0 email(s)." in capsys.readouterr().out
 
@@ -1466,9 +1471,8 @@ def test_gmail_sync_prints_updates_low_confidence_and_unmatched_sections(tmp_pat
         skipped_low_confidence=2,
     )
     monkeypatch.setattr("job_bot.cli.sync_gmail", lambda *a, **kw: fake_result)
-    args = argparse.Namespace(days=None, max_emails=50, dry_run=False)
 
-    cmd_gmail_sync(settings, args)
+    cmd_gmail_sync(settings, gmail_sync_args())
 
     out = capsys.readouterr().out
     assert "Scanned 5 email(s)." in out
@@ -1486,11 +1490,52 @@ def test_gmail_sync_dry_run_prefixes_updates_as_would_update(tmp_path, monkeypat
     monkeypatch.setattr("job_bot.cli.GmailClient", FakeGmailClientForCli)
     fake_result = GmailSyncResult(total_emails=1, updated=[("job1", "Acme", "offer")])
     monkeypatch.setattr("job_bot.cli.sync_gmail", lambda *a, **kw: fake_result)
-    args = argparse.Namespace(days=None, max_emails=50, dry_run=True)
 
-    cmd_gmail_sync(settings, args)
+    cmd_gmail_sync(settings, gmail_sync_args(dry_run=True))
 
     assert "[dry-run] Would update: Acme (job1) -> offer" in capsys.readouterr().out
+
+
+def test_gmail_sync_format_json_prints_the_full_result(tmp_path, monkeypatch, capsys):
+    from job_bot.integrations.gmail_sync import GmailSyncResult
+
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
+    monkeypatch.setattr("job_bot.cli.GmailClient", FakeGmailClientForCli)
+    fake_result = GmailSyncResult(
+        total_emails=5,
+        updated=[("job1", "Acme", "interviewing")],
+        unmatched_subjects=["Re: your application"],
+        skipped_low_confidence=2,
+    )
+    monkeypatch.setattr("job_bot.cli.sync_gmail", lambda *a, **kw: fake_result)
+
+    cmd_gmail_sync(settings, gmail_sync_args(format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "dry_run": False,
+        "total_emails": 5,
+        "updated": [{"job_id": "job1", "company": "Acme", "new_status": "interviewing"}],
+        "skipped_low_confidence": 2,
+        "unmatched_subjects": ["Re: your application"],
+    }
+
+
+def test_gmail_sync_format_json_reflects_dry_run(tmp_path, monkeypatch, capsys):
+    from job_bot.integrations.gmail_sync import GmailSyncResult
+
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
+    monkeypatch.setattr("job_bot.cli.GmailClient", FakeGmailClientForCli)
+    fake_result = GmailSyncResult(total_emails=1, updated=[("job1", "Acme", "offer")])
+    monkeypatch.setattr("job_bot.cli.sync_gmail", lambda *a, **kw: fake_result)
+
+    cmd_gmail_sync(settings, gmail_sync_args(dry_run=True, format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["dry_run"] is True
+    assert payload["updated"] == [{"job_id": "job1", "company": "Acme", "new_status": "offer"}]
 
 
 def test_dashboard_passes_port_and_open_browser_through(tmp_path, monkeypatch):

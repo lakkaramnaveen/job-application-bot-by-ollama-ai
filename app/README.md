@@ -570,6 +570,7 @@ follow-up nudges (see Tracking outcomes above).
 job-bot gmail-sync --dry-run     # see what would change, writes nothing
 job-bot gmail-sync               # first run opens a browser for the Google OAuth consent screen
 job-bot gmail-sync --days 30 --max-emails 100
+job-bot gmail-sync --dry-run --format json   # same result as one JSON object, e.g. for a monitoring script
 ```
 
 The first run opens a browser tab for you to grant **read-only** access

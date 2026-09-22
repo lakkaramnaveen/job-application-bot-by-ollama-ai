@@ -1060,6 +1060,14 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
     """Read recent Gmail, classify each message, and advance the matching
     tracked job's status - see gmail_sync.py's module docstring for the
     exact never-guess/never-downgrade rules this delegates to.
+
+    `--format json` prints the same GmailSyncResult as one JSON object
+    instead - every other command that hands back a structured result
+    (report/export/doctor/faq/review-answers/status) already has this; a
+    monitoring script running this on a schedule (e.g. `--dry-run --format
+    json` to alert on what *would* change without applying it, or without
+    --dry-run to log what actually did) otherwise has to scrape the
+    human-formatted text.
     """
     provider = get_provider(settings)
     gmail_client = GmailClient(settings.gmail_credentials_path, settings.gmail_token_path)
@@ -1076,6 +1084,20 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
         dry_run=args.dry_run,
         audit=audit,
     )
+
+    if args.format == "json":
+        payload = {
+            "dry_run": args.dry_run,
+            "total_emails": result.total_emails,
+            "updated": [
+                {"job_id": job_id, "company": company, "new_status": new_status}
+                for job_id, company, new_status in result.updated
+            ],
+            "skipped_low_confidence": result.skipped_low_confidence,
+            "unmatched_subjects": result.unmatched_subjects,
+        }
+        print(json.dumps(payload, indent=2))
+        return
 
     print(f"Scanned {result.total_emails} email(s).")
     for job_id, company, new_status in result.updated:
@@ -1471,6 +1493,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     gmail_p.add_argument("--provider", choices=["claude", "ollama"], default=None)
     gmail_p.add_argument("--model", default=None)
+    gmail_p.add_argument(
+        "--format", choices=["text", "json"], default="text", help="Print the result as one JSON object instead."
+    )
 
     dashboard_p = sub.add_parser("dashboard", help="Serve a live one-page view of the tracker at localhost.")
     dashboard_p.add_argument("--port", type=int, default=None, help="default: from .env (8765)")
