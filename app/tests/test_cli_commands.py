@@ -1185,6 +1185,55 @@ def test_doctor_flags_a_faq_file_that_is_not_a_json_object(tmp_path, capsys):
     assert "must be a JSON object" in out
 
 
+def test_doctor_passes_answer_gaps_check_when_no_answer_gaps_file_exists(tmp_path, capsys):
+    settings = make_settings(tmp_path)  # answer_gaps_path points at a file that was never created
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Answer-gaps file valid" in capsys.readouterr().out
+
+
+def test_doctor_passes_answer_gaps_check_with_a_real_answer_gaps_file(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.answer_gaps_path.write_text(
+        '{"Are you comfortable commuting?": {"count": 3}}', encoding="utf-8"
+    )
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Answer-gaps file valid" in capsys.readouterr().out
+
+
+def test_doctor_flags_a_corrupted_answer_gaps_file(tmp_path, capsys):
+    """Real failure this guards against: AnswerGapStore._load()
+    (safety/answer_gaps.py) silently falls back to an empty store on
+    invalid JSON rather than raising - the very next unanswered question
+    job-bot run hits would call record(), which loads (getting {}),
+    mutates, and saves the whole file - silently overwriting it with just
+    that one new entry and permanently losing every previously recorded
+    gap `job-bot review-answers` had queued up.
+    """
+    settings = make_settings(tmp_path)
+    settings.answer_gaps_path.write_text("not valid json {{{", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Answer-gaps file valid" in out
+    assert "not valid JSON" in out
+
+
+def test_doctor_flags_an_answer_gaps_file_that_is_not_a_json_object(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.answer_gaps_path.write_text("[1, 2, 3]", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Answer-gaps file valid" in out
+    assert "must be a JSON object" in out
+
+
 def test_doctor_flags_missing_anthropic_api_key(tmp_path, capsys):
     settings = make_settings(tmp_path, anthropic_api_key=None)
 

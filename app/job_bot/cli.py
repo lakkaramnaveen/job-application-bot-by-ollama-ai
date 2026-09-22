@@ -1311,6 +1311,35 @@ def _faq_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, True, "")
 
 
+def _answer_gaps_check(settings: Settings) -> tuple[str, bool, str]:
+    """Same corruption-hides-as-empty risk _blacklist_check/_faq_check
+    guard against, for ANSWER_GAPS_PATH - AnswerGapStore._load()
+    (safety/answer_gaps.py) also falls back to {} on invalid JSON. Not
+    just a lost-cache inconvenience like FAQ_PATH: AnswerGapStore.record()
+    loads, mutates, then saves the whole file on every single unanswered
+    question `job-bot run` hits - the very next occurrence after
+    corruption would silently overwrite the file with just that one new
+    entry, permanently losing every previously recorded gap `job-bot
+    review-answers` had queued up to review.
+    """
+    label = "Answer-gaps file valid (optional)"
+    if not settings.answer_gaps_path.exists():
+        return (label, True, "")
+    try:
+        data = json.loads(settings.answer_gaps_path.read_text(encoding="utf-8"))
+    except OSError as e:
+        return (label, False, f"{settings.answer_gaps_path}: {e}")
+    except json.JSONDecodeError as e:
+        return (label, False, f"{settings.answer_gaps_path}: not valid JSON ({e})")
+    if not isinstance(data, dict):
+        return (
+            label,
+            False,
+            f'{settings.answer_gaps_path}: must be a JSON object of {{"question": {{...}}}} entries',
+        )
+    return (label, True, "")
+
+
 def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     """Check local setup for the common ways `job-bot run` fails partway
     through rather than up front - deliberately file/config checks only, no
@@ -1324,6 +1353,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         _resume_check(settings),
         _blacklist_check(settings),
         _faq_check(settings),
+        _answer_gaps_check(settings),
     ]
 
     if settings.llm_provider == "claude":
