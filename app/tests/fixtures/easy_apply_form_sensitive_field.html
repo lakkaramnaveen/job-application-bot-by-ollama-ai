@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply form with an employer-attached SSN question</title></head>
+<!--
+  Easy Apply's "Additional Questions" step is not entirely LinkedIn-curated
+  - employers attach their own custom screening questions to it, free-text
+  and rendered identically to any other compound question (see the
+  required_field fixture's own comment: type="text", not a special widget).
+  This mirrors that: a real name field next to a required field asking for
+  a Social Security Number, exactly as an employer-authored custom
+  question could render.
+-->
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="full-name">Full name</label>
+    <input id="full-name" type="text" required />
+
+    <label for="ssn">Please provide your Social Security Number for a background check</label>
+    <input id="ssn" type="text" required />
+
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+</body>
+</html>

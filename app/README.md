@@ -344,8 +344,11 @@ might be willing to answer:**
   would have chosen themselves).
 - Fill a field asking for a Social Security number, passport number,
   driver's license number, or a bank/credit card/routing number - see
-  `SENSITIVE_FIELD_MARKERS`. A required field matching this list is treated
-  as unanswerable, the same as one the LLM genuinely couldn't answer.
+  `SENSITIVE_FIELD_MARKERS` (`browser/base_adapter.py`, shared with the
+  standard Easy Apply path too - employers attach their own custom
+  screening questions to Easy Apply, not just to external forms). A
+  required field matching this list is treated as unanswerable, the same
+  as one the LLM genuinely couldn't answer.
 - Check a consent/agreement checkbox or select a radio option on the user's
   behalf at all - both are left untouched; a *required* one left unanswered
   stops the application rather than guessing or silently submitting without it.

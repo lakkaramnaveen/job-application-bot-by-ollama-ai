@@ -16,7 +16,7 @@ answer_question might be willing to produce: solve or bypass a CAPTCHA,
 create an account or enter a password, or fill a field asking for a
 government ID/SSN, passport, or financial account number. Each of those is
 detected and stops the application cleanly - see CaptchaEncountered,
-AccountCreationRequired, and SENSITIVE_FIELD_MARKERS below.
+AccountCreationRequired, and base_adapter.SENSITIVE_FIELD_MARKERS.
 """
 
 import re
@@ -25,31 +25,10 @@ from collections.abc import Callable
 
 from playwright.sync_api import Locator, Page
 
+from job_bot.browser.base_adapter import SENSITIVE_FIELD_MARKERS
+
 ACTION_DELAY_SECONDS = 1.0
 MAX_STEPS = 10
-
-# Label/placeholder substrings that mean "never fill this field, no matter
-# what answer_question might return for it" - these ask for exactly the
-# categories this project will never enter into a form. A required field
-# matching this list is therefore always left blank, which the required-
-# field check below turns into a clear, specific error rather than either
-# silently skipping it (risking an incomplete submission the caller
-# wouldn't know about) or guessing.
-SENSITIVE_FIELD_MARKERS = (
-    "social security",
-    "ssn",
-    "passport number",
-    "driver's license number",
-    "driver license number",
-    "national id",
-    "bank account",
-    "routing number",
-    "credit card",
-    "debit card",
-    "cvv",
-    "tax id",
-    "ein",
-)
 
 # Structural, low-false-positive DOM markers for the major CAPTCHA
 # providers - deliberately not a body-text scan (e.g. matching on the word

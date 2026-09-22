@@ -33,6 +33,7 @@ SELECT_NO_PLACEHOLDER_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_select_no_placeholder.html"
 )
 REQUIRED_FIELD_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_required_field.html"
+SENSITIVE_FIELD_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_sensitive_field.html"
 RESUME_ALREADY_SELECTED_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_resume_already_selected.html"
 )
@@ -304,6 +305,38 @@ def test_unanswered_required_field_fails_fast_with_a_specific_message(playwright
     # Failed on the first pass through the loop - the unanswerable question
     # was asked once, not up to max_steps (20) times.
     assert questions_asked.count("How many years with any two of Golang, Java, Node.js, or Python?") == 1
+
+
+def test_never_fills_a_field_asking_for_an_ssn_and_fails_on_it_being_required(playwright_page):
+    """Real gap this guards against: SENSITIVE_FIELD_MARKERS (now shared
+    with external_apply_adapter.py via base_adapter.py) only ever protected
+    the experimental external-apply path. Easy Apply's own question set
+    isn't entirely LinkedIn-curated - employers attach their own custom
+    screening questions to it too - so a required SSN-shaped question here
+    was previously sent straight to answer_question() like any other field,
+    with whatever it returned typed directly into the form.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{SENSITIVE_FIELD_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+    questions_asked: list[str] = []
+
+    def answer_question(label: str) -> str:
+        questions_asked.append(label)
+        return "123-45-6789"  # even if the LLM were willing to answer, never used
+
+    with pytest.raises(RuntimeError, match="Social Security"):
+        adapter.fill_and_submit(
+            posting,
+            answer_question=answer_question,
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
+
+    assert playwright_page.locator("#ssn").input_value() == ""
+    assert questions_asked == ["Full name"]  # the SSN field was never even asked about
 
 
 def test_unanswered_aria_required_text_field_fails_fast_instead_of_submitting_incomplete(playwright_page):

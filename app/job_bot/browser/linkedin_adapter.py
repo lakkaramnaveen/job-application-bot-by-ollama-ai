@@ -12,6 +12,13 @@ attributes (role, aria-label) over brittle class names. If a run stops
 finding buttons/fields it used to find, this is the first place to look and
 adjust - `python -m job_bot.cli run --dry-run` is the fastest way to verify
 selector changes without submitting anything.
+
+A field asking for a Social Security Number, passport, or financial
+account number is never filled, regardless of what answer_question might
+be willing to produce - see base_adapter.SENSITIVE_FIELD_MARKERS. Easy
+Apply's own question set is LinkedIn-curated, but employers attach their
+own custom screening questions to it too, free-text and no less able to
+ask for one of these than an arbitrary external site's form can.
 """
 
 import logging
@@ -24,7 +31,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from job_bot.browser.base_adapter import JobBoardAdapter, JobPosting
+from job_bot.browser.base_adapter import SENSITIVE_FIELD_MARKERS, JobBoardAdapter, JobPosting
 
 logger = logging.getLogger(__name__)
 
@@ -678,6 +685,15 @@ class LinkedInAdapter(JobBoardAdapter):
             if (text_input.input_value() or "").strip():
                 continue
             label = self._label_for(text_input)
+            # Real gap this closes: Easy Apply forms aren't entirely
+            # LinkedIn-curated - employers attach their own custom
+            # screening questions, free-text and no less able to ask for a
+            # Social Security Number than a field on an arbitrary external
+            # site would (see external_apply_adapter.py, where this same
+            # check originated). Never even ask for these, regardless of
+            # what answer_question might be willing to produce.
+            if label and any(marker in label.casefold() for marker in SENSITIVE_FIELD_MARKERS):
+                continue
             if cover_letter_text and label and self._looks_like_cover_letter_field(label):
                 text_input.fill(cover_letter_text)
                 continue

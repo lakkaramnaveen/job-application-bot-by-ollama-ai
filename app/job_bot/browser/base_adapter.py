@@ -2,6 +2,37 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 
+# Label/placeholder substrings that mean "never fill this field, no matter
+# what answer_question might return for it" - these ask for exactly the
+# categories this project will never enter into a form, on either adapter.
+# Shared here (rather than duplicated per-adapter, the way e.g.
+# _numeric_value()/_best_match_index() are) because this is a safety
+# boundary, not an independent per-site quirk - the two copies silently
+# drifting apart is exactly the failure mode to avoid for a list like this
+# one. Originally external_apply_adapter.py-only (arbitrary third-party
+# employer sites being the obvious risk), until it became clear LinkedIn
+# Easy Apply forms carry the identical risk: employers attach their own
+# custom screening questions to Easy Apply, free-text and no less able to
+# ask for a Social Security Number than a field on an external site would.
+# A required field matching this list is always left blank, which the
+# caller's required-field check turns into a clear, specific error rather
+# than either silently skipping it or guessing.
+SENSITIVE_FIELD_MARKERS = (
+    "social security",
+    "ssn",
+    "passport number",
+    "driver's license number",
+    "driver license number",
+    "national id",
+    "bank account",
+    "routing number",
+    "credit card",
+    "debit card",
+    "cvv",
+    "tax id",
+    "ein",
+)
+
 
 @dataclass
 class JobPosting:
