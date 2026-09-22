@@ -103,6 +103,12 @@ def doctor_args(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def review_answers_args(**overrides) -> argparse.Namespace:
+    defaults = dict(format="text")
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
 def _backdate_applied_at(db_path, job_id: str, when: datetime) -> None:
     """Directly rewrite applied_at, since mark_applied() always stamps
     "now" - tests that need a stale application have to backdate it after
@@ -875,7 +881,7 @@ def test_doctor_json_passed_count_matches_a_fully_healthy_setup(tmp_path, capsys
 def test_review_answers_says_so_when_nothing_to_review(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
-    cmd_review_answers(settings)
+    cmd_review_answers(settings, review_answers_args())
 
     assert "nothing to review" in capsys.readouterr().out
 
@@ -893,7 +899,7 @@ def test_review_answers_saves_a_given_answer_to_faq_and_resolves_the_gap(tmp_pat
     )
     monkeypatch.setattr("builtins.input", lambda prompt: "Yes")
 
-    cmd_review_answers(settings)
+    cmd_review_answers(settings, review_answers_args())
 
     faq = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
     assert faq[question] == "Yes"
@@ -909,7 +915,7 @@ def test_review_answers_leaves_a_skipped_question_as_a_gap(tmp_path, monkeypatch
     )
     monkeypatch.setattr("builtins.input", lambda prompt: "")  # blank = skip
 
-    cmd_review_answers(settings)
+    cmd_review_answers(settings, review_answers_args())
 
     faq = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
     assert question not in faq
@@ -924,7 +930,7 @@ def test_review_answers_orders_most_frequently_seen_first(tmp_path, monkeypatch,
         store.record("Common question", job_id=job_id, company="Acme", title="X")
     monkeypatch.setattr("builtins.input", lambda prompt: "")
 
-    cmd_review_answers(settings)
+    cmd_review_answers(settings, review_answers_args())
 
     out = capsys.readouterr().out
     assert out.index("Common question") < out.index("Rare question")
@@ -941,9 +947,55 @@ def test_review_answers_stops_cleanly_on_keyboard_interrupt_mid_review(tmp_path,
 
     monkeypatch.setattr("builtins.input", raise_interrupt)
 
-    cmd_review_answers(settings)  # must not raise
+    cmd_review_answers(settings, review_answers_args())  # must not raise
 
     assert len(AnswerGapStore(settings.answer_gaps_path).list_unanswered()) == 2
+
+
+def test_review_answers_json_format_lists_gaps_without_prompting(tmp_path, monkeypatch, capsys):
+    """--format json must never call input() - a monitoring script running
+    this unattended (cron, no terminal) needs a plain data dump, not a
+    prompt that would just hit EOF the same way the interactive mode
+    already handles that case.
+    """
+    settings = make_settings(tmp_path)
+    AnswerGapStore(settings.answer_gaps_path).record(
+        "Are you comfortable commuting?", job_id="1", company="Acme", title="Backend Engineer"
+    )
+
+    def fail_if_called(prompt):
+        raise AssertionError("input() must not be called in --format json mode")
+
+    monkeypatch.setattr("builtins.input", fail_if_called)
+
+    cmd_review_answers(settings, review_answers_args(format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload) == 1
+    assert payload[0]["question"] == "Are you comfortable commuting?"
+    assert payload[0]["count"] == 1
+    assert payload[0]["example_company"] == "Acme"
+
+
+def test_review_answers_json_format_orders_most_frequently_seen_first(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = AnswerGapStore(settings.answer_gaps_path)
+    store.record("Rare question", job_id="1", company="Acme", title="X")
+    for job_id in ("2", "3", "4"):
+        store.record("Common question", job_id=job_id, company="Acme", title="X")
+
+    cmd_review_answers(settings, review_answers_args(format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert [entry["question"] for entry in payload] == ["Common question", "Rare question"]
+
+
+def test_review_answers_json_format_on_empty_gaps_is_an_empty_array(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_review_answers(settings, review_answers_args(format="json"))
+
+    assert json.loads(capsys.readouterr().out) == []
 
 
 # --- faq ---

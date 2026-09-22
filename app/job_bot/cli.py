@@ -774,7 +774,7 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
         print(f"{args.job_id} -> {args.status}")
 
 
-def cmd_review_answers(settings: Settings) -> None:
+def cmd_review_answers(settings: Settings, args: argparse.Namespace) -> None:
     """Interactively answer the required questions Easy Apply couldn't
     confidently answer on its own (see safety/answer_gaps.py and
     browser/linkedin_adapter.py's UnansweredRequiredQuestion) - this is
@@ -785,10 +785,24 @@ def cmd_review_answers(settings: Settings) -> None:
     generation/qa_answerer.py), so the same question doesn't keep failing
     the same way. Sorted most-frequently-seen first, since those are the
     ones worth the most to answer.
+
+    `--format json` dumps the same gaps (question/count/example) as one
+    JSON array instead of prompting - for a monitoring script that wants
+    to alert on e.g. a growing unanswered-questions count without an
+    interactive terminal to answer from (input() would just hit EOF and
+    stop immediately anyway, same as a piped/cron invocation of the
+    interactive mode already does).
     """
-    resume_store = ResumeStore(settings.resume_path, settings.faq_path)
     answer_gaps = AnswerGapStore(settings.answer_gaps_path)
     gaps = answer_gaps.list_unanswered()
+
+    if args.format == "json":
+        ordered = sorted(gaps.items(), key=lambda item: item[1].get("count", 0), reverse=True)
+        payload = [{"question": question, **info} for question, info in ordered]
+        print(json.dumps(payload, indent=2))
+        return
+
+    resume_store = ResumeStore(settings.resume_path, settings.faq_path)
     if not gaps:
         print("No unanswered required questions recorded - nothing to review.")
         return
@@ -1319,12 +1333,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--note", default=None, help="Set a free-text note on this job (e.g. salary info from a call)."
     )
 
-    sub.add_parser(
+    review_answers_p = sub.add_parser(
         "review-answers",
         help=(
             "Answer required questions Easy Apply couldn't confidently answer on its own - "
             "saved answers are reused automatically on every future posting that asks the same question."
         ),
+    )
+    review_answers_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Print the unanswered questions as one JSON array instead of prompting for answers.",
     )
 
     faq_p = sub.add_parser(
@@ -1427,7 +1447,7 @@ def main() -> None:
         elif args.command == "status":
             cmd_status(settings, args)
         elif args.command == "review-answers":
-            cmd_review_answers(settings)
+            cmd_review_answers(settings, args)
         elif args.command == "report":
             cmd_report(settings, args)
         elif args.command == "export":
