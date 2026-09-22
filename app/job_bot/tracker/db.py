@@ -64,6 +64,7 @@ EXPORT_FIELDS = (
     "first_seen_at",
     "applied_at",
     "url",
+    "notes",
 )
 
 

@@ -595,6 +595,23 @@ def test_export_to_stdout_is_valid_csv_with_all_jobs(tmp_path, capsys):
     assert rows[1]["applied_at"]
 
 
+def test_export_csv_includes_notes(tmp_path, capsys):
+    """Real gap this guards against: EXPORT_FIELDS didn't include `notes`
+    when that column was added (see Tracker.set_note()), so a job's note
+    was silently excluded from every export - the one place a user would
+    most expect to see everything recorded about a job.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.set_note("job1", "Recruiter mentioned $150k base.")
+
+    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="csv"))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert rows[0]["notes"] == "Recruiter mentioned $150k base."
+
+
 def test_export_filters_by_status(tmp_path, capsys):
     settings = make_settings(tmp_path)
     tracker = Tracker(settings.db_path)
@@ -662,6 +679,18 @@ def test_export_json_to_stdout_is_a_json_array_with_all_jobs(tmp_path, capsys):
     assert [r["job_id"] for r in rows] == ["job1", "job2"]
     assert rows[1]["status"] == "applied"
     assert rows[1]["applied_at"]
+
+
+def test_export_json_includes_notes(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.set_note("job1", "Recruiter mentioned $150k base.")
+
+    cmd_export(settings, argparse.Namespace(status=None, search=None, out=None, format="json"))
+
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["notes"] == "Recruiter mentioned $150k base."
 
 
 def test_export_json_filters_by_status(tmp_path, capsys):
