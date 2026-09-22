@@ -611,6 +611,43 @@ def test_blacklist_import_of_missing_file_exits_with_error(tmp_path, capsys):
     assert "Error" in capsys.readouterr().err
 
 
+def test_blacklist_export_to_stdout_prints_one_company_per_line(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"]))
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="export", out=None))
+
+    out = capsys.readouterr().out
+    assert out == "Acme Corp\nBeta Inc\n"
+
+
+def test_blacklist_export_round_trips_through_import(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"]))
+    capsys.readouterr()
+    export_file = tmp_path / "backup.txt"
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="export", out=export_file))
+    assert f"Exported 2 companies to {export_file}." in capsys.readouterr().out
+
+    other_settings = make_settings(tmp_path, blacklist_path=tmp_path / "other_blacklist.json")
+    cmd_blacklist(other_settings, argparse.Namespace(blacklist_action="import", file=export_file))
+    capsys.readouterr()
+    cmd_blacklist(other_settings, argparse.Namespace(blacklist_action="list", company=None))
+    listed = capsys.readouterr().out
+    assert "Acme Corp" in listed
+    assert "Beta Inc" in listed
+
+
+def test_blacklist_export_of_empty_blacklist_prints_nothing(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="export", out=None))
+
+    assert capsys.readouterr().out == ""
+
+
 # --- export ---
 
 
@@ -1093,6 +1130,42 @@ def test_faq_import_of_non_object_json_exits_with_error(tmp_path, capsys):
 
     assert exc_info.value.code == 1
     assert "must contain a JSON object" in capsys.readouterr().err
+
+
+def test_faq_export_to_stdout_prints_valid_json(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Willing to relocate?", "No")
+
+    cmd_faq(settings, argparse.Namespace(faq_action="export", out=None))
+
+    printed = json.loads(capsys.readouterr().out)
+    assert printed == {"Willing to relocate?": "No"}
+
+
+def test_faq_export_round_trips_through_import(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Willing to relocate?", "No")
+    store.save_faq_answer("Years of Python experience?", "5")
+    export_file = tmp_path / "backup.json"
+
+    cmd_faq(settings, argparse.Namespace(faq_action="export", out=export_file))
+    assert f"Exported 2 FAQ answer(s) to {export_file}." in capsys.readouterr().out
+
+    other_settings = make_settings(tmp_path, faq_path=tmp_path / "other_faq.json")
+    cmd_faq(other_settings, argparse.Namespace(faq_action="import", file=export_file))
+    capsys.readouterr()
+    answers = ResumeStore(other_settings.resume_path, other_settings.faq_path).faq_answers()
+    assert answers == {"Willing to relocate?": "No", "Years of Python experience?": "5"}
+
+
+def test_faq_export_of_empty_cache_prints_empty_object(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_faq(settings, argparse.Namespace(faq_action="export", out=None))
+
+    assert json.loads(capsys.readouterr().out) == {}
 
 
 # --- main() ---

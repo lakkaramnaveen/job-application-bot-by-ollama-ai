@@ -833,14 +833,15 @@ def cmd_review_answers(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
-    """view/remove/import cached FAQ answers - see resume/store.py's
+    """view/remove/import/export cached FAQ answers - see resume/store.py's
     save_faq_answer()/faq_answers(). `job-bot review-answers` is the only
     way to *add* one one-at-a-time (it's tied to reviewing an actual
     unanswered question), but neither it nor anything else could view
-    what's already cached, remove a wrong one, or restore/share a whole
+    what's already cached, remove a wrong one, or back up/share a whole
     set short of hand-editing FAQ_PATH's JSON directly - this gives the
-    FAQ cache the same view/remove/import shape `job-bot blacklist`
-    already has.
+    FAQ cache the same view/remove/import/export shape `job-bot blacklist`
+    already has. export's output is exactly what import reads back, so
+    the two round-trip (e.g. to move a cache to another install).
     """
     resume_store = ResumeStore(settings.resume_path, settings.faq_path)
     if args.faq_action == "list":
@@ -876,6 +877,14 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
         for question, answer in data.items():
             resume_store.save_faq_answer(str(question), str(answer))
         print(f"Imported {len(data)} FAQ answer(s) from {args.file}.")
+    elif args.faq_action == "export":
+        answers = resume_store.faq_answers()
+        text = json.dumps(answers, indent=2, ensure_ascii=False) + "\n"
+        if args.out is not None:
+            args.out.write_text(text, encoding="utf-8")
+            print(f"Exported {len(answers)} FAQ answer(s) to {args.out}.")
+        else:
+            sys.stdout.write(text)
 
 
 # Score buckets for `job-bot report --by-score`'s outcome breakdown, widest
@@ -1041,11 +1050,13 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
-    """add/remove/list/import companies `job-bot run` will always skip -
-    see build_parser()'s `blacklist` subparser for the four actions.
-    add/remove each take one or more company names (nargs="+"), so
-    blacklisting several past employers at once doesn't need a separate
-    invocation per company.
+    """add/remove/list/import/export companies `job-bot run` will always
+    skip - see build_parser()'s `blacklist` subparser for the five
+    actions. add/remove each take one or more company names (nargs="+"),
+    so blacklisting several past employers at once doesn't need a
+    separate invocation per company. export's output is exactly what
+    import reads back (one company per line), so the two round-trip
+    (e.g. to move a blacklist to another install).
     """
     blacklist = CompanyBlacklist(settings.blacklist_path)
     if args.blacklist_action == "add":
@@ -1079,6 +1090,16 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
         for company in companies:
             blacklist.add(company)
         print(f"Imported {len(companies)} compan{'y' if len(companies) == 1 else 'ies'} from {args.file}.")
+    elif args.blacklist_action == "export":
+        companies = blacklist.list_companies()
+        text = "".join(f"{company}\n" for company in companies)
+        if args.out is not None:
+            args.out.write_text(text, encoding="utf-8")
+            print(
+                f"Exported {len(companies)} compan{'y' if len(companies) == 1 else 'ies'} to {args.out}."
+            )
+        else:
+            sys.stdout.write(text)
 
 
 def cmd_dashboard(settings: Settings, args: argparse.Namespace) -> None:
@@ -1348,7 +1369,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     faq_p = sub.add_parser(
-        "faq", help="View, remove, or import cached FAQ answers (see `job-bot review-answers`)."
+        "faq", help="View, remove, import, or export cached FAQ answers (see `job-bot review-answers`)."
     )
     faq_sub = faq_p.add_subparsers(dest="faq_action", required=True)
     faq_sub.add_parser("list", help="Print every cached question/answer pair.")
@@ -1359,6 +1380,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     faq_import_p.add_argument(
         "file", type=Path, help='JSON object of {"question": "answer"} pairs - the same shape FAQ_PATH is.'
+    )
+    faq_export_p = faq_sub.add_parser(
+        "export", help="Write cached FAQ answers out as JSON (the same shape `faq import` reads back)."
+    )
+    faq_export_p.add_argument(
+        "--out", type=Path, default=None, help="Write to this file instead of stdout."
     )
 
     report_p = sub.add_parser("report", help="Print a count of tracked jobs by status.")
@@ -1415,6 +1442,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_p.add_argument(
         "file", type=Path, help="Plain text file, one company per line. Blank and '#'-comment lines skipped."
+    )
+    blacklist_export_p = blacklist_sub.add_parser(
+        "export", help="Write the blacklist out as text, one company per line (the same shape `import` reads)."
+    )
+    blacklist_export_p.add_argument(
+        "--out", type=Path, default=None, help="Write to this file instead of stdout."
     )
 
     return parser

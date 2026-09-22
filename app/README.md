@@ -432,6 +432,7 @@ more you use it, without ever caching a low-confidence guess.
 job-bot faq list                          # every cached question/answer pair
 job-bot faq remove "Years of Python experience?"   # e.g. to fix a wrong one
 job-bot faq import faq_backup.json        # merge in a backup, or another install's FAQ_PATH
+job-bot faq export --out faq_backup.json  # write the cache out as JSON; omit --out to print to stdout
 ```
 
 ## Learning from questions it couldn't answer
@@ -480,6 +481,7 @@ job-bot blacklist add "Company A" "Company B" "Company C"   # add several at onc
 job-bot blacklist remove "Company Name"
 job-bot blacklist list
 job-bot blacklist import past_employers.txt   # one company per line; blank/'#'-comment lines skipped
+job-bot blacklist export --out backup.txt     # write it back out the same way; omit --out to print to stdout
 ```
 
 Backed by `BLACKLIST_PATH` (default `data/company_blacklist.json`); matching
