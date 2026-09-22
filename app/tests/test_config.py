@@ -120,3 +120,27 @@ def test_security_md_states_the_correct_hard_daily_application_ceiling():
     """
     security_text = (Path(__file__).resolve().parent.parent / "SECURITY.md").read_text(encoding="utf-8")
     assert f"HARD_DAILY_APPLICATION_CEILING` ({HARD_DAILY_APPLICATION_CEILING})" in security_text
+
+
+def test_security_md_documents_the_sensitive_field_marker_regression_tests():
+    """Real gap this guards against: SECURITY.md's threat model enumerates
+    every other LinkedIn-adapter safety guarantee (resume-file targeting,
+    never-guess radio/select) with its regression test named inline, but
+    had no bullet at all for SENSITIVE_FIELD_MARKERS - a real, shipped
+    guarantee (never fill a field asking for an SSN/passport/bank account,
+    on both the standard and experimental apply paths) simply missing from
+    the one doc a security-conscious reader would check for exactly this.
+    Also confirms the two regression tests it names by dotted path still
+    exist, so a future rename of either goes stale in the doc loudly
+    rather than silently.
+    """
+    security_text = (Path(__file__).resolve().parent.parent / "SECURITY.md").read_text(encoding="utf-8")
+    assert "SENSITIVE_FIELD_MARKERS" in security_text
+
+    for module, test_name in (
+        ("test_linkedin_adapter", "test_never_fills_a_field_asking_for_an_ssn_and_fails_on_it_being_required"),
+        ("test_external_apply_adapter", "test_never_fills_a_field_asking_for_an_ssn_and_fails_on_it_being_required"),
+    ):
+        assert f"tests/{module}.py::{test_name}" in security_text
+        source = (Path(__file__).resolve().parent / f"{module}.py").read_text(encoding="utf-8")
+        assert f"def {test_name}(" in source
