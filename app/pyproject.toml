@@ -47,7 +47,7 @@ source = ["job_bot"]
 
 [tool.coverage.report]
 show_missing = true
-# A floor well below the current ~87%, meant to catch a real regression
+# A floor well below the current ~89%, meant to catch a real regression
 # (a large new untested module, a test file accidentally skipped) rather
 # than to chase 100% - a lot of the uncovered code is Playwright-driven
 # browser interaction and the CLI's own argparse/main() wiring, which
