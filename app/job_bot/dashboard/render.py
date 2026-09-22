@@ -155,6 +155,9 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
         status = str(job.get("status", ""))
         applied_at = html.escape(str(job.get("applied_at") or "-"))
         safe_job_id = html.escape(job_id, quote=True)
+        has_note = bool(job.get("notes"))
+        note_class = "note-button has-note" if has_note else "note-button"
+        note_title = "Edit note" if has_note else "Add a note"
         rows.append(
             "<tr>"
             f"<td>{title_cell}</td>"
@@ -166,6 +169,8 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
             "<td class=\"actions\">"
             f"{_status_select(job_id, str(job.get('status', '')))}"
             f'<button type="button" class="qa-button" data-job-id="{safe_job_id}">Q&amp;A</button>'
+            f'<button type="button" class="{note_class}" data-job-id="{safe_job_id}" '
+            f'title="{note_title}">Note</button>'
             f'<button type="button" class="blacklist-button" data-job-id="{safe_job_id}" '
             f'title="Never apply to {company} again">Blacklist</button>'
             "</td>"
@@ -287,11 +292,13 @@ def render_page_html(
   td.actions {{ display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }}
   .status-select {{ font-size: 0.8rem; padding: 0.25rem 0.4rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg); }}
-  .qa-button, .blacklist-button {{ font-size: 0.8rem; padding: 0.25rem 0.6rem; border-radius: 4px;
+  .qa-button, .blacklist-button, .note-button {{ font-size: 0.8rem; padding: 0.25rem 0.6rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg);
               cursor: pointer; }}
   .qa-button:hover {{ background: var(--header-bg); }}
   .blacklist-button:hover {{ border-color: #ef4444; color: #ef4444; }}
+  .note-button:hover {{ background: var(--header-bg); }}
+  .note-button.has-note {{ border-color: #3b82f6; color: #3b82f6; }}
   .export-link {{ font-size: 0.85rem; padding: 0.4rem 0.75rem; border-radius: 6px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg);
               text-decoration: none; margin-left: auto; }}
@@ -309,8 +316,14 @@ def render_page_html(
   dialog::backdrop {{ background: var(--backdrop); }}
   .qa-list dt {{ font-weight: 600; margin-top: 0.75rem; }}
   .qa-list dd {{ margin: 0.25rem 0 0; color: var(--fg); }}
-  #qaClose, #blacklistClose {{ margin-top: 1rem; font-size: 0.85rem; padding: 0.35rem 0.8rem; border-radius: 6px;
-              border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}
+  #qaClose, #blacklistClose, #noteSave, #noteCancel {{ margin-top: 1rem; font-size: 0.85rem;
+              padding: 0.35rem 0.8rem; border-radius: 6px; border: 1px solid var(--border);
+              background: var(--surface); color: var(--fg); cursor: pointer; }}
+  #noteSave {{ background: #3b82f6; border-color: #3b82f6; color: #fff; }}
+  .dialog-actions {{ display: flex; gap: 0.5rem; }}
+  #noteTextarea {{ width: 100%; box-sizing: border-box; font: inherit; padding: 0.5rem;
+              border-radius: 6px; border: 1px solid var(--border); background: var(--surface);
+              color: var(--fg); resize: vertical; }}
   .blacklist-list {{ list-style: none; margin: 0; padding: 0; }}
   .blacklist-list li {{ display: flex; justify-content: space-between; align-items: center;
               gap: 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
@@ -370,6 +383,15 @@ def render_page_html(
   <h2>Blacklisted companies</h2>
   <div id="blacklistContent"></div>
   <button type="button" id="blacklistClose">Close</button>
+</dialog>
+
+<dialog id="noteDialog">
+  <h2>Note</h2>
+  <textarea id="noteTextarea" rows="6" placeholder="Salary info, referral, anything worth remembering..."></textarea>
+  <div class="dialog-actions">
+    <button type="button" id="noteSave">Save</button>
+    <button type="button" id="noteCancel">Cancel</button>
+  </div>
 </dialog>
 
 <script>
@@ -494,6 +516,42 @@ document.getElementById('rows').addEventListener('click', async (e) => {{
   }}
 }});
 document.getElementById('qaClose').addEventListener('click', () => qaDialog.close());
+
+const noteDialog = document.getElementById('noteDialog');
+const noteTextarea = document.getElementById('noteTextarea');
+let noteJobId = null;
+document.getElementById('rows').addEventListener('click', async (e) => {{
+  if (!e.target.classList.contains('note-button')) return;
+  noteJobId = e.target.dataset.jobId;
+  noteTextarea.value = 'Loading...';
+  noteDialog.showModal();
+  try {{
+    const res = await fetch(`/api/jobs/${{encodeURIComponent(noteJobId)}}/note`);
+    noteTextarea.value = res.ok ? (await res.json()).note : '';
+  }} catch (err) {{
+    noteTextarea.value = '';
+  }}
+  noteTextarea.focus();
+}});
+document.getElementById('noteCancel').addEventListener('click', () => noteDialog.close());
+document.getElementById('noteSave').addEventListener('click', async () => {{
+  try {{
+    const res = await fetch(`/api/jobs/${{encodeURIComponent(noteJobId)}}/note`, {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ note: noteTextarea.value }}),
+    }});
+    if (!res.ok) {{
+      alert('Could not save note: ' + (await res.text()));
+      return;
+    }}
+  }} catch (err) {{
+    alert('Could not save note (network error).');
+    return;
+  }}
+  noteDialog.close();
+  refresh();
+}});
 
 document.getElementById('rows').addEventListener('click', async (e) => {{
   if (!e.target.classList.contains('blacklist-button')) return;

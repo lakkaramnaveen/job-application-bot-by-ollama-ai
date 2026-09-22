@@ -55,6 +55,24 @@ def test_render_rows_html_escapes_company_name_in_the_blacklist_button_title():
     assert "<script>alert(1)</script>" not in html
 
 
+def test_render_rows_html_includes_a_note_button_per_row():
+    html = render_rows_html([make_job()])
+    assert 'class="note-button" data-job-id="job1"' in html
+
+
+def test_render_rows_html_marks_the_note_button_when_a_note_exists():
+    html = render_rows_html([make_job(notes="Referred by Jane.")])
+    assert 'class="note-button has-note"' in html
+    assert 'title="Edit note"' in html
+
+
+def test_render_rows_html_note_button_has_no_has_note_class_when_unset():
+    html = render_rows_html([make_job(notes=None)])
+    assert 'class="note-button"' in html
+    assert "has-note" not in html
+    assert 'title="Add a note"' in html
+
+
 def test_render_rows_html_escapes_title_and_url():
     malicious = make_job(title='"><img src=x onerror=alert(1)>', url='javascript:alert(1)"')
     html = render_rows_html([malicious])
@@ -201,6 +219,13 @@ def test_render_page_html_includes_the_manage_blacklist_button_and_dialog():
     assert 'id="manageBlacklist"' in html
     assert 'id="blacklistDialog"' in html
     assert 'id="blacklistContent"' in html
+
+
+def test_render_page_html_includes_the_note_dialog():
+    html = render_page_html([make_job()])
+    assert 'id="noteDialog"' in html
+    assert 'id="noteTextarea"' in html
+    assert 'id="noteSave"' in html
 
 
 def test_render_page_html_does_not_leak_search_term_into_script_context():

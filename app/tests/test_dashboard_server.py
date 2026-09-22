@@ -402,6 +402,60 @@ def test_post_blacklist_decodes_percent_encoded_job_id(live_server):
     assert data == {"ok": True, "job_id": "job 2", "company": "Acme Corp"}
 
 
+def test_get_note_returns_empty_string_when_none_set(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/jobs/job1/note") as resp:
+        assert resp.headers["Content-Type"] == "application/json"
+        data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"note": ""}
+
+
+def test_get_note_on_unknown_job_id_returns_404(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(f"{live_server}/api/jobs/does-not-exist/note")
+    assert exc_info.value.code == 404
+
+
+def test_post_note_sets_and_get_note_reflects_it(live_server):
+    resp = _post_json(f"{live_server}/api/jobs/job1/note", {"note": "Recruiter said $150k base."})
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "job_id": "job1", "note": "Recruiter said $150k base."}
+
+    with urllib.request.urlopen(f"{live_server}/api/jobs/job1/note") as resp:
+        assert json.loads(resp.read().decode("utf-8")) == {"note": "Recruiter said $150k base."}
+
+
+def test_post_note_can_clear_an_existing_note(live_server):
+    _post_json(f"{live_server}/api/jobs/job1/note", {"note": "First."})
+
+    resp = _post_json(f"{live_server}/api/jobs/job1/note", {"note": ""})
+
+    assert resp.status == 200
+    with urllib.request.urlopen(f"{live_server}/api/jobs/job1/note") as resp:
+        assert json.loads(resp.read().decode("utf-8")) == {"note": ""}
+
+
+def test_post_note_rejects_a_cross_origin_request(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/jobs/job1/note", {"note": "x"}, same_origin=False)
+    assert exc_info.value.code == 403
+
+
+def test_post_note_on_unknown_job_id_returns_404(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/jobs/does-not-exist/note", {"note": "x"})
+    assert exc_info.value.code == 404
+
+
+def test_post_note_decodes_percent_encoded_job_id(live_server):
+    resp = _post_json(f"{live_server}/api/jobs/job%202/note", {"note": "x"})
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "job_id": "job 2", "note": "x"}
+
+
 def test_get_blacklist_is_empty_by_default(live_server):
     with urllib.request.urlopen(f"{live_server}/api/blacklist") as resp:
         assert resp.headers["Content-Type"].startswith("text/html")

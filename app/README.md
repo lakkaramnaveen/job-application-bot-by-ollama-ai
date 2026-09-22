@@ -508,6 +508,9 @@ seen, and lets you:
 - **Sort** by newest/oldest, recently applied, fit score, company, or title.
 - **Update a job's status inline** from the row - no need to drop to
   `job-bot status <job_id> <status>` for a quick correction.
+- **Edit a job's note** in a modal - the same note `job-bot status <job_id>
+  --note "..."` sets from the command line (the Note button is highlighted
+  when a note is already set).
 - **Blacklist a job's company** with one click - the same effect
   `job-bot blacklist add "<company>"` has from the command line.
 - **Manage the blacklist** (view and remove entries) from a modal, without
@@ -518,10 +521,11 @@ seen, and lets you:
   the visible page - the same output `job-bot export` (`--format csv`/`json`)
   produces on the command line.
 
-The dashboard has no login (it's a local tool over your own data), so both
-state-changing endpoints (the inline status update, and blacklisting a
-company) only accept same-origin requests - see
-`job_bot/dashboard/server.py`'s module docstring. It follows
+The dashboard has no login (it's a local tool over your own data), so every
+state-changing endpoint (the inline status update, blacklisting a company,
+removing one from the blacklist, and setting a note) only accepts
+same-origin requests - see `job_bot/dashboard/server.py`'s module
+docstring. It follows
 your OS/browser's light or dark theme automatically, and the table scrolls
 independently of the page on a narrow window so the status/Q&A controls on
 the right stay reachable.

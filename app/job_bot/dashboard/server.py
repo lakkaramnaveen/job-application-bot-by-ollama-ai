@@ -2,14 +2,14 @@
 localhost only (never 0.0.0.0) since it serves your application data with
 no access control. See render.py for the HTML/escaping logic this wraps.
 
-The dashboard also accepts three state-changing requests: POST status
-update, POST blacklist (add), and POST blacklist/remove. Because the
-server has no auth, any page open in the same browser could in principle
-try to trigger one (a "drive-by localhost" request) - _is_same_origin (all
-three) plus the browser's own CORS preflight (triggered by the JSON
-Content-Type the status and blacklist/remove endpoints require) are what
-stand in for auth here. See _is_same_origin, _handle_status_update,
-_handle_blacklist, and _handle_blacklist_remove below.
+The dashboard also accepts four state-changing requests: POST status
+update, POST blacklist (add), POST blacklist/remove, and POST note. Because
+the server has no auth, any page open in the same browser could in
+principle try to trigger one (a "drive-by localhost" request) -
+_is_same_origin (all four) plus the browser's own CORS preflight (triggered
+by the JSON Content-Type each of them requires) are what stand in for auth
+here. See _is_same_origin, _handle_status_update, _handle_blacklist,
+_handle_blacklist_remove, and _handle_note_set below.
 """
 
 import io
@@ -134,6 +134,8 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
                 self._send(200, "application/json", json.dumps(jobs, default=str).encode("utf-8"))
             elif (job_id := self._job_id_from_path("/api/jobs/", "/qa")) is not None:
                 self._handle_qa(tracker, job_id)
+            elif (job_id := self._job_id_from_path("/api/jobs/", "/note")) is not None:
+                self._handle_note_get(tracker, job_id)
             elif parsed.path == "/api/blacklist":
                 self._handle_blacklist_list()
             else:
@@ -144,6 +146,8 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
                 self._handle_status_update(Tracker(db_path), job_id)
             elif (job_id := self._job_id_from_path("/api/jobs/", "/blacklist")) is not None:
                 self._handle_blacklist(Tracker(db_path), job_id)
+            elif (job_id := self._job_id_from_path("/api/jobs/", "/note")) is not None:
+                self._handle_note_set(Tracker(db_path), job_id)
             elif urlparse(self.path).path == "/api/blacklist/remove":
                 self._handle_blacklist_remove()
             else:
@@ -237,6 +241,51 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
                 return
             body = render_qa_html(tracker.list_qa(job_id)).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_note_get(self, tracker: Tracker, job_id: str) -> None:
+            """The job's current note (possibly empty), for the note edit
+            dialog to pre-fill before the user starts typing - read-only,
+            no same-origin check needed (see _handle_status_update's own
+            reasoning: GETs here never change state).
+            """
+            job = tracker.get_job(job_id)
+            if job is None:
+                self._send_text(404, "Job not found")
+                return
+            self._send_json(200, {"note": job.get("notes") or ""})
+
+        def _handle_note_set(self, tracker: Tracker, job_id: str) -> None:
+            if not self._is_same_origin():
+                self._send_text(403, "Cross-origin request rejected")
+                return
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                self._send_text(400, "Content-Type must be application/json")
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._send_text(400, "Invalid Content-Length header")
+                return
+            if length <= 0 or length > MAX_BODY_BYTES:
+                self._send_text(400, "Request body missing or too large")
+                return
+            raw_body = self.rfile.read(length)
+
+            try:
+                payload = json.loads(raw_body)
+                note = payload["note"]
+                if not isinstance(note, str):
+                    raise ValueError("note must be a string")
+            except (json.JSONDecodeError, KeyError, ValueError):
+                self._send_text(400, "Body must be JSON: {\"note\": \"<text>\"}")
+                return
+
+            try:
+                tracker.set_note(job_id, note)
+            except ValueError as e:
+                self._send_text(404, str(e))
+                return
+            self._send_json(200, {"ok": True, "job_id": job_id, "note": note})
 
         def _handle_status_update(self, tracker: Tracker, job_id: str) -> None:
             if not self._is_same_origin():
