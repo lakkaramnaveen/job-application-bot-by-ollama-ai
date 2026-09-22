@@ -313,9 +313,16 @@ class Tracker:
             # Escape LIKE wildcards in user input so e.g. a search for "50%"
             # matches literally rather than acting as a wildcard.
             escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            clauses.append("(title LIKE ? ESCAPE '\\' OR company LIKE ? ESCAPE '\\')")
+            # Also matches `notes` (see Tracker.set_note()), not just
+            # title/company - a note is exactly the kind of free-text
+            # context ("Referred by Jane", "Recruiter said $150k base")
+            # someone would later search for without remembering which
+            # job it was attached to.
+            clauses.append(
+                "(title LIKE ? ESCAPE '\\' OR company LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\')"
+            )
             like = f"%{escaped}%"
-            params.extend([like, like])
+            params.extend([like, like, like])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         return where, params
 
@@ -328,10 +335,10 @@ class Tracker:
         limit: int | None = None,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Tracked jobs, optionally filtered by status and/or a title/company
-        substring search, sorted, and paginated. Used by the dashboard and by
-        gmail_sync's company matching (which relies on the no-filter default
-        returning every tracked job).
+        """Tracked jobs, optionally filtered by status and/or a title/company/
+        notes substring search, sorted, and paginated. Used by the dashboard
+        and by gmail_sync's company matching (which relies on the no-filter
+        default returning every tracked job).
 
         `sort` must be one of SORTABLE_COLUMNS and `direction` one of
         "asc"/"desc" - both are validated here (raising InvalidSort) rather

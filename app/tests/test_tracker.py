@@ -365,6 +365,31 @@ def test_list_jobs_search_escapes_like_wildcards(tmp_path):
     assert [j["job_id"] for j in results] == ["1"]
 
 
+def test_list_jobs_search_also_matches_notes(tmp_path):
+    """Real gap this guards against: a note is exactly the kind of
+    free-text context ("Referred by Jane") someone would later search for
+    without remembering which job it was attached to, but _where_clause()
+    only ever checked title/company.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Designer", "Beta", "https://example.com/2")
+    tracker.set_note("1", "Referred by Jane, mentioned $150k base.")
+
+    results = tracker.list_jobs(search="Jane")
+
+    assert [j["job_id"] for j in results] == ["1"]
+
+
+def test_count_jobs_search_also_matches_notes(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
+    tracker.set_note("1", "Referred by Jane.")
+
+    assert tracker.count_jobs(search="Jane") == 1
+    assert tracker.count_jobs(search="Nobody") == 0
+
+
 def test_list_jobs_sorts_by_match_score(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "A", "Acme", "https://example.com/1", match_score=40)

@@ -410,7 +410,7 @@ job-bot status <job_id> --note "Recruiter mentioned $150k base."   # attach a fr
 job-bot export                          # all tracked jobs as CSV, to stdout
 job-bot export --status applied --out applied.csv
 job-bot export --format json --out applied.json    # same rows/columns, as JSON
-job-bot export --search "Acme"                      # title/company match, like the dashboard's search box
+job-bot export --search "Acme"                      # title/company/notes match, like the dashboard's search box
 ```
 
 `<job_id>` is the LinkedIn job id, printed by `job-bot run` and visible in
@@ -503,8 +503,8 @@ seen, and lets you:
   it instantly - the pill counts update live as statuses change, and only
   scope to whichever statuses currently have a match (plus whatever's
   selected, so you can always click back off it).
-- **Search** by title or company, and **filter** by status (the pills and the
-  status dropdown stay in sync either way).
+- **Search** by title, company, or note text, and **filter** by status (the
+  pills and the status dropdown stay in sync either way).
 - **Sort** by newest/oldest, recently applied, fit score, company, or title.
 - **Update a job's status inline** from the row - no need to drop to
   `job-bot status <job_id> <status>` for a quick correction.

@@ -144,6 +144,16 @@ def test_api_rows_supports_search(live_server):
     assert "No jobs tracked yet" in body
 
 
+def test_api_rows_search_also_matches_notes(live_server):
+    _post_json(f"{live_server}/api/jobs/job1/note", {"note": "Referred by Jane."})
+
+    with urllib.request.urlopen(f"{live_server}/api/rows?q=Jane") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "Backend Engineer" in body
+    assert "Frontend Engineer" not in body
+
+
 def test_api_rows_reports_total_via_header(live_server):
     with urllib.request.urlopen(f"{live_server}/api/rows") as resp:
         assert resp.headers["X-Total-Jobs"] == "2"

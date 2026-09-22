@@ -642,6 +642,19 @@ def test_export_filters_by_search(tmp_path, capsys):
     assert [r["job_id"] for r in rows] == ["job2"]
 
 
+def test_export_search_also_matches_notes(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
+    tracker.set_note("job1", "Referred by Jane.")
+
+    cmd_export(settings, argparse.Namespace(status=None, search="Jane", out=None, format="csv"))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert [r["job_id"] for r in rows] == ["job1"]
+
+
 def test_export_to_file_writes_csv_and_reports_count(tmp_path, capsys):
     settings = make_settings(tmp_path)
     tracker = Tracker(settings.db_path)
