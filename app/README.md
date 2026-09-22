@@ -167,6 +167,7 @@ Edit `.env`:
    run any time something seems off:
    ```bash
    job-bot doctor
+   job-bot doctor --format json   # same checks as one JSON object, for a setup script or health-check cron job
    ```
 3. **Sanity-check your LLM provider** with one real API call (what `doctor`
    above deliberately doesn't do):

@@ -1088,15 +1088,15 @@ def _resume_check(settings: Settings) -> tuple[str, bool, str]:
     return ("Resume file readable", True, str(settings.resume_path))
 
 
-def cmd_doctor(settings: Settings) -> None:
+def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     """Check local setup for the common ways `job-bot run` fails partway
     through rather than up front - deliberately file/config checks only, no
     network calls, so it's fast and safe to run anytime. LLM connectivity
     itself (which does make a real API call) is `job-bot test-provider`'s job.
+    `--format json` prints the same checks as one JSON object instead - for
+    a setup script or health-check cron job that wants to act on pass/fail
+    programmatically rather than parsing the human-readable [OK]/[!!] lines.
     """
-    print("job-bot doctor")
-    print("-" * 40)
-
     checks: list[tuple[str, bool, str]] = [_resume_check(settings)]
 
     if settings.llm_provider == "claude":
@@ -1138,13 +1138,24 @@ def cmd_doctor(settings: Settings) -> None:
         )
     )
 
-    passed = 0
+    passed = sum(ok for _, ok, _ in checks)
+
+    if args.format == "json":
+        payload = {
+            "checks": [{"label": label, "ok": ok, "detail": detail} for label, ok, detail in checks],
+            "passed": passed,
+            "total": len(checks),
+        }
+        print(json.dumps(payload, indent=2))
+        return
+
+    print("job-bot doctor")
+    print("-" * 40)
     for label, ok, detail in checks:
         line = f"[{'OK' if ok else '!!'}] {label}"
         if detail:
             line += f" - {detail}"
         print(line)
-        passed += ok
 
     print("-" * 40)
     print(f"{passed}/{len(checks)} checks passed.")
@@ -1261,8 +1272,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("test-provider", help="Sanity-check the configured LLM provider with one call.")
 
-    sub.add_parser(
+    doctor_p = sub.add_parser(
         "doctor", help="Check local setup (resume, API key, LinkedIn session, Gmail creds) for problems."
+    )
+    doctor_p.add_argument(
+        "--format", choices=["text", "json"], default="text", help="Print as one JSON object instead."
     )
 
     status_p = sub.add_parser(
@@ -1384,7 +1398,7 @@ def main() -> None:
         elif args.command == "test-provider":
             cmd_test_provider(settings)
         elif args.command == "doctor":
-            cmd_doctor(settings)
+            cmd_doctor(settings, args)
         elif args.command == "status":
             cmd_status(settings, args)
         elif args.command == "review-answers":

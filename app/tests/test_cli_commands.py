@@ -94,6 +94,12 @@ def report_args(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def doctor_args(**overrides) -> argparse.Namespace:
+    defaults = dict(format="text")
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
 def _backdate_applied_at(db_path, job_id: str, when: datetime) -> None:
     """Directly rewrite applied_at, since mark_applied() always stamps
     "now" - tests that need a stale application have to backdate it after
@@ -635,7 +641,7 @@ def test_export_json_with_no_jobs_writes_empty_array(tmp_path, capsys):
 def test_doctor_flags_missing_resume_and_passes_api_key_check(tmp_path, capsys):
     settings = make_settings(tmp_path)  # resume_path points at a file that was never created
 
-    cmd_doctor(settings)
+    cmd_doctor(settings, doctor_args())
 
     out = capsys.readouterr().out
     assert "[!!] Resume file" in out
@@ -647,7 +653,7 @@ def test_doctor_passes_resume_check_once_the_file_exists(tmp_path, capsys):
     settings = make_settings(tmp_path)
     settings.resume_path.write_text("resume", encoding="utf-8")
 
-    cmd_doctor(settings)
+    cmd_doctor(settings, doctor_args())
 
     assert "[OK] Resume file" in capsys.readouterr().out
 
@@ -662,7 +668,7 @@ def test_doctor_flags_a_present_but_unparseable_resume(tmp_path, capsys):
     settings = make_settings(tmp_path)
     settings.resume_path.write_text("", encoding="utf-8")
 
-    cmd_doctor(settings)
+    cmd_doctor(settings, doctor_args())
 
     out = capsys.readouterr().out
     assert "[!!] Resume file" in out
@@ -673,7 +679,7 @@ def test_doctor_flags_a_resume_with_an_unsupported_extension(tmp_path, capsys):
     settings = make_settings(tmp_path, resume_path=tmp_path / "resume.rtf")
     settings.resume_path.write_text("resume", encoding="utf-8")
 
-    cmd_doctor(settings)
+    cmd_doctor(settings, doctor_args())
 
     out = capsys.readouterr().out
     assert "[!!] Resume file" in out
@@ -683,7 +689,7 @@ def test_doctor_flags_a_resume_with_an_unsupported_extension(tmp_path, capsys):
 def test_doctor_flags_missing_anthropic_api_key(tmp_path, capsys):
     settings = make_settings(tmp_path, anthropic_api_key=None)
 
-    cmd_doctor(settings)
+    cmd_doctor(settings, doctor_args())
 
     assert "[!!] Anthropic API key" in capsys.readouterr().out
 
@@ -691,7 +697,7 @@ def test_doctor_flags_missing_anthropic_api_key(tmp_path, capsys):
 def test_doctor_checks_ollama_base_url_when_using_ollama(tmp_path, capsys):
     settings = make_settings(tmp_path, llm_provider="ollama", anthropic_api_key=None)
 
-    cmd_doctor(settings)
+    cmd_doctor(settings, doctor_args())
 
     assert "[OK] Ollama base URL configured" in capsys.readouterr().out
 
@@ -699,9 +705,34 @@ def test_doctor_checks_ollama_base_url_when_using_ollama(tmp_path, capsys):
 def test_doctor_flags_daily_cap_above_the_hard_ceiling(tmp_path, capsys):
     settings = make_settings(tmp_path, daily_application_cap=999)
 
-    cmd_doctor(settings)
+    cmd_doctor(settings, doctor_args())
 
     assert "[!!] Daily application cap within hard ceiling" in capsys.readouterr().out
+
+
+def test_doctor_json_reports_each_check_and_the_pass_count(tmp_path, capsys):
+    settings = make_settings(tmp_path)  # resume_path points at a file that was never created
+
+    cmd_doctor(settings, doctor_args(format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    by_label = {c["label"]: c for c in payload["checks"]}
+    assert by_label["Resume file readable"]["ok"] is False
+    assert by_label["Anthropic API key (ANTHROPIC_API_KEY)"]["ok"] is True
+    assert payload["total"] == len(payload["checks"])
+    assert payload["passed"] == sum(c["ok"] for c in payload["checks"])
+
+
+def test_doctor_json_passed_count_matches_a_fully_healthy_setup(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.resume_path.write_text("resume", encoding="utf-8")
+    settings.browser_profile_dir.mkdir(parents=True)
+    (settings.browser_profile_dir / "placeholder").write_text("x")
+
+    cmd_doctor(settings, doctor_args(format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["passed"] == payload["total"] - 1  # Gmail creds (optional) still missing
 
 
 # --- review-answers ---
@@ -918,7 +949,8 @@ def test_main_reports_an_expected_error_and_exits_1(tmp_path, monkeypatch, capsy
     monkeypatch.setattr("job_bot.cli.configure_logging", lambda: None)
     monkeypatch.setattr("sys.argv", ["job-bot", "doctor"])
     monkeypatch.setattr(
-        "job_bot.cli.cmd_doctor", lambda settings: (_ for _ in ()).throw(EXPECTED_ERRORS[0]("bad config"))
+        "job_bot.cli.cmd_doctor",
+        lambda settings, args: (_ for _ in ()).throw(EXPECTED_ERRORS[0]("bad config")),
     )
 
     with pytest.raises(SystemExit) as exc_info:
