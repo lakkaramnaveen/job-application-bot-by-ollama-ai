@@ -164,9 +164,10 @@ Edit `.env`:
 2. **Check your local setup for common problems** - the resume file actually
    parses, an API key/Ollama URL configured, a LinkedIn session saved, the
    blacklist/FAQ/answer-gaps files are valid JSON (not silently treated as empty),
-   Gmail credentials present (if you use gmail-sync), the daily cap sane.
-   File/config checks only, no network call, so it's fast and safe to
-   run any time something seems off:
+   the applications directory is actually writable, Gmail credentials
+   present (if you use gmail-sync), the daily cap sane. File/config checks
+   only, no network call, so it's fast and safe to run any time something
+   seems off:
    ```bash
    job-bot doctor
    job-bot doctor --format json   # same checks as one JSON object, for a setup script or health-check cron job

@@ -1260,6 +1260,48 @@ def test_doctor_flags_an_answer_gaps_file_that_is_not_a_json_object(tmp_path, ca
     assert "must be a JSON object" in out
 
 
+def test_doctor_creates_and_passes_the_applications_dir_check_when_missing(tmp_path, capsys):
+    """Unlike the resume/blacklist/FAQ/answer-gaps checks, APPLICATIONS_DIR
+    not existing yet is the normal case on a fresh install - generate_
+    materials() (cmd_run) creates it on first use via mkdir(parents=True,
+    exist_ok=True), so this check does the same rather than failing on
+    something `job-bot run` itself would just create.
+    """
+    settings = make_settings(tmp_path)
+    assert not settings.applications_dir.exists()
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Applications directory writable" in capsys.readouterr().out
+    assert settings.applications_dir.is_dir()
+
+
+def test_doctor_passes_the_applications_dir_check_when_it_already_exists(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.applications_dir.mkdir(parents=True)
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Applications directory writable" in capsys.readouterr().out
+
+
+def test_doctor_flags_an_applications_dir_that_cannot_be_created(tmp_path, capsys):
+    """Real failure this guards against: a misconfigured APPLICATIONS_DIR
+    (e.g. pointing at a path a regular file already occupies) makes
+    mkdir() raise - previously only surfaced as a confusing prep_error on
+    the first posting worth applying to, well past `job-bot doctor` giving
+    a clean bill of health.
+    """
+    blocking_file = tmp_path / "applications"
+    blocking_file.write_text("not a directory", encoding="utf-8")
+    settings = make_settings(tmp_path, applications_dir=blocking_file / "nested")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Applications directory writable" in out
+
+
 def test_doctor_flags_missing_anthropic_api_key(tmp_path, capsys):
     settings = make_settings(tmp_path, anthropic_api_key=None)
 

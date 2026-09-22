@@ -1360,6 +1360,29 @@ def _answer_gaps_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, True, "")
 
 
+def _applications_dir_check(settings: Settings) -> tuple[str, bool, str]:
+    """generate_materials() (cmd_run) creates a new subdirectory under
+    APPLICATIONS_DIR for every single job that clears the fit gate, and
+    never checked it was actually writable first - a misconfigured path or
+    a permission-denied directory previously only surfaced as a confusing
+    prep_error on the very first posting worth applying to, well past
+    `job-bot doctor` giving a clean bill of health. Actually creates the
+    directory and writes/removes a small probe file, the same "verify, not
+    just check existence" reasoning _resume_check uses (an existing-but-
+    unwritable directory would pass a bare .exists() check and still fail
+    the first real run).
+    """
+    label = "Applications directory writable"
+    try:
+        settings.applications_dir.mkdir(parents=True, exist_ok=True)
+        probe = settings.applications_dir / ".job_bot_doctor_probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as e:
+        return (label, False, f"{settings.applications_dir}: {e}")
+    return (label, True, str(settings.applications_dir))
+
+
 def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     """Check local setup for the common ways `job-bot run` fails partway
     through rather than up front - deliberately file/config checks only, no
@@ -1374,6 +1397,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         _blacklist_check(settings),
         _faq_check(settings),
         _answer_gaps_check(settings),
+        _applications_dir_check(settings),
     ]
 
     if settings.llm_provider == "claude":
