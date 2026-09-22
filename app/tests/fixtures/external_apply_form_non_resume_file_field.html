@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: external application form with a certificate upload field</title></head>
+<!--
+  A single file field on the page, but explicitly labeled for something
+  other than a resume - _upload_resume_if_requested() must recognize this
+  via NON_RESUME_FILE_LABEL_MARKERS (base_adapter.py) and leave it alone,
+  the same way it already does for "cover letter"/"portfolio". "license"
+  and "certificate" specifically: these were present in linkedin_adapter.py's
+  own copy of this marker list from the start, but missing from this
+  adapter's - the real drift this fixture's test guards against.
+-->
+<body>
+  <form>
+    <label for="full-name">Full name</label>
+    <input id="full-name" type="text" />
+
+    <label for="certificate-upload">Upload your teaching certificate</label>
+    <input id="certificate-upload" type="file" />
+
+    <button type="submit">Submit Application</button>
+  </form>
+</body>
+</html>

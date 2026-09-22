@@ -25,7 +25,11 @@ from collections.abc import Callable
 
 from playwright.sync_api import Locator, Page
 
-from job_bot.browser.base_adapter import SENSITIVE_FIELD_MARKERS
+from job_bot.browser.base_adapter import (
+    NON_RESUME_FILE_LABEL_MARKERS,
+    RESUME_FILE_LABEL_MARKERS,
+    SENSITIVE_FIELD_MARKERS,
+)
 
 ACTION_DELAY_SECONDS = 1.0
 MAX_STEPS = 10
@@ -43,9 +47,6 @@ _CAPTCHA_SELECTORS = (
     "div.h-captcha",
     'iframe[src*="challenges.cloudflare.com" i]',
 )
-
-_RESUME_FILE_LABEL_MARKERS = ("resume", "cv")
-_NON_RESUME_FILE_LABEL_MARKERS = ("cover letter", "portfolio", "writing sample", "transcript")
 
 
 class CaptchaEncountered(RuntimeError):
@@ -150,9 +151,9 @@ class ExternalApplyAdapter:
         for file_input in pending:
             label = self._label_for(file_input).casefold()
             if len(pending) > 1:
-                if not any(marker in label for marker in _RESUME_FILE_LABEL_MARKERS):
+                if not any(marker in label for marker in RESUME_FILE_LABEL_MARKERS):
                     continue
-            elif any(marker in label for marker in _NON_RESUME_FILE_LABEL_MARKERS):
+            elif any(marker in label for marker in NON_RESUME_FILE_LABEL_MARKERS):
                 continue
             file_input.set_input_files(resume_path)
             file_input.evaluate("el => el.setAttribute('data-job-bot-uploaded', '1')")

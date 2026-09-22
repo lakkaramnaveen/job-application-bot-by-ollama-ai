@@ -33,6 +33,29 @@ SENSITIVE_FIELD_MARKERS = (
     "ein",
 )
 
+# A resume upload step commonly has more than one file input (resume, cover
+# letter, portfolio, ...) - these decide which one is the actual resume
+# field without ever guessing. Shared here for the exact same reason
+# SENSITIVE_FIELD_MARKERS is: a real drift was found between the two
+# adapters' independent copies before this fix -
+# external_apply_adapter.py's _NON_RESUME_FILE_LABEL_MARKERS was missing
+# "certificate"/"license", both present in linkedin_adapter.py's list from
+# the start. That gap meant a single file field on an external site
+# labeled e.g. "Upload your teaching certificate" was treated as the
+# (unlabeled-for-anything-else) resume field by default and had the
+# user's resume uploaded into it - the exact mistake this allowlist/
+# denylist pair exists to prevent, just silently un-prevented on one of
+# the two adapters.
+RESUME_FILE_LABEL_MARKERS = ("resume", "cv")
+NON_RESUME_FILE_LABEL_MARKERS = (
+    "cover letter",
+    "portfolio",
+    "writing sample",
+    "transcript",
+    "certificate",
+    "license",
+)
+
 
 @dataclass
 class JobPosting:

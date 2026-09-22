@@ -31,7 +31,13 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from job_bot.browser.base_adapter import SENSITIVE_FIELD_MARKERS, JobBoardAdapter, JobPosting
+from job_bot.browser.base_adapter import (
+    NON_RESUME_FILE_LABEL_MARKERS,
+    RESUME_FILE_LABEL_MARKERS,
+    SENSITIVE_FIELD_MARKERS,
+    JobBoardAdapter,
+    JobPosting,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -655,25 +661,15 @@ class LinkedInAdapter(JobBoardAdapter):
             file_input.set_input_files(resume_path)
             file_input.evaluate("el => el.setAttribute('data-job-bot-uploaded', '1')")
 
-    _RESUME_FILE_LABEL_MARKERS = ("resume", "cv")
-    _NON_RESUME_FILE_LABEL_MARKERS = (
-        "cover letter",
-        "portfolio",
-        "writing sample",
-        "transcript",
-        "certificate",
-        "license",
-    )
-
     @classmethod
     def _looks_like_resume_file_field(cls, label: str) -> bool:
         normalized = label.casefold()
-        return any(marker in normalized for marker in cls._RESUME_FILE_LABEL_MARKERS)
+        return any(marker in normalized for marker in RESUME_FILE_LABEL_MARKERS)
 
     @classmethod
     def _looks_like_non_resume_file_field(cls, label: str) -> bool:
         normalized = label.casefold()
-        return any(marker in normalized for marker in cls._NON_RESUME_FILE_LABEL_MARKERS)
+        return any(marker in normalized for marker in NON_RESUME_FILE_LABEL_MARKERS)
 
     def _fill_visible_fields(
         self,

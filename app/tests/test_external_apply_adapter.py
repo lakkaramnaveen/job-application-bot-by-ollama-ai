@@ -25,6 +25,9 @@ MULTI_STEP_FIXTURE = FIXTURES / "external_apply_form_multi_step.html"
 UNRELATED_APPLY_NOW_FIXTURE = FIXTURES / "external_apply_form_unrelated_apply_now_button.html"
 RADIO_DEFAULT_CHECKED_FIXTURE = FIXTURES / "external_apply_form_radio_group_default_checked.html"
 RADIO_UNANSWERED_FIXTURE = FIXTURES / "external_apply_form_radio_group_unanswered.html"
+NON_RESUME_FILE_FIELD_FIXTURE = FIXTURES / "external_apply_form_non_resume_file_field.html"
+MULTIPLE_FILE_FIELDS_FIXTURE = FIXTURES / "external_apply_form_multiple_file_fields.html"
+RESUME_FIXTURE_PATH = FIXTURES / "sample_resume.txt"
 
 
 @pytest.fixture
@@ -157,6 +160,77 @@ def test_never_fills_a_field_asking_for_an_ssn_and_fails_on_it_being_required(pl
 
     assert playwright_page.locator("#ssn").input_value() == ""
     assert questions_asked == ["Full name"]  # the SSN field was never even asked about
+
+
+def test_uploads_the_resume_into_the_single_resume_labeled_file_field(playwright_page):
+    """The resume-upload path itself (_upload_resume_if_requested) had no
+    test at all before this one - every other test in this file passes
+    resume_path=None, so even the correct, happy-path upload was never
+    actually verified to work.
+    """
+    playwright_page.goto(f"file://{FORM_FIXTURE}")
+    adapter = ExternalApplyAdapter(playwright_page)
+
+    adapter.fill_and_submit(
+        answer_question=lambda label: "Jane Doe" if "name" in label.casefold() else "",
+        resume_path=str(RESUME_FIXTURE_PATH),
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    uploaded = playwright_page.evaluate("document.getElementById('resume-upload').files[0]?.name")
+    assert uploaded == RESUME_FIXTURE_PATH.name
+
+
+def test_never_uploads_the_resume_into_a_differently_labeled_file_field(playwright_page):
+    """Real drift bug this guards against: linkedin_adapter.py's
+    NON_RESUME_FILE_LABEL_MARKERS included "certificate"/"license" from the
+    start, but this adapter's own independent copy of the same list didn't
+    - a single file field on an external site labeled e.g. "Upload your
+    teaching certificate" was therefore treated as the resume field by
+    default (the single-field-on-the-page rule: upload unless denylisted)
+    and had the user's resume silently uploaded into it. Fixed by sharing
+    one list (base_adapter.NON_RESUME_FILE_LABEL_MARKERS) between both
+    adapters instead of two independently-maintained copies.
+    """
+    playwright_page.goto(f"file://{NON_RESUME_FILE_FIELD_FIXTURE}")
+    adapter = ExternalApplyAdapter(playwright_page)
+
+    adapter.fill_and_submit(
+        answer_question=lambda label: "",
+        resume_path=str(RESUME_FIXTURE_PATH),
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    uploaded_count = playwright_page.evaluate("document.getElementById('certificate-upload').files.length")
+    assert uploaded_count == 0
+
+
+def test_only_uploads_the_resume_into_the_positively_identified_field_when_several_exist(playwright_page):
+    """With more than one file field on the same step, the rule flips from
+    a denylist to an allowlist (RESUME_FILE_LABEL_MARKERS) - upload only
+    into a field positively identified as the resume field, rather than
+    into whichever field simply isn't on the (necessarily incomplete)
+    denylist. Untested before this - every other test with more than one
+    file field on a fixture still only ever passed resume_path=None.
+    """
+    playwright_page.goto(f"file://{MULTIPLE_FILE_FIELDS_FIXTURE}")
+    adapter = ExternalApplyAdapter(playwright_page)
+
+    adapter.fill_and_submit(
+        answer_question=lambda label: "",
+        resume_path=str(RESUME_FIXTURE_PATH),
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    resume_uploaded = playwright_page.evaluate("document.getElementById('resume-upload').files[0]?.name")
+    assert resume_uploaded == RESUME_FIXTURE_PATH.name
+    certificate_uploaded_count = playwright_page.evaluate(
+        "document.getElementById('certificate-upload').files.length"
+    )
+    assert certificate_uploaded_count == 0
 
 
 def test_stops_when_a_required_field_cannot_be_answered(playwright_page):

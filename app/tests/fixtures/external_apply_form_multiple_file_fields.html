@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: external application form with two file fields</title></head>
+<!--
+  More than one file input on the same step - _upload_resume_if_requested()
+  switches from a denylist (single field: upload unless clearly something
+  else) to an allowlist (multiple fields: only upload into one positively
+  identified as the resume field via RESUME_FILE_LABEL_MARKERS), since
+  defaulting to "upload unless denylisted" here risks landing the resume in
+  whichever of several fields just isn't on the denylist.
+-->
+<body>
+  <form>
+    <label for="full-name">Full name</label>
+    <input id="full-name" type="text" />
+
+    <label for="resume-upload">Resume</label>
+    <input id="resume-upload" type="file" />
+
+    <label for="certificate-upload">Upload your teaching certificate</label>
+    <input id="certificate-upload" type="file" />
+
+    <button type="submit">Submit Application</button>
+  </form>
+</body>
+</html>
