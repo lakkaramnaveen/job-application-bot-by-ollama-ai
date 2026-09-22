@@ -406,6 +406,7 @@ job-bot report --stale-days 7           # also flag applications with no reply a
 job-bot report --by-score --format json # same data as one JSON object, for a script or cron job
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response
 job-bot status <job_id>                 # no status - print the job's record, tailored resume (if any), and Q&A history instead
+job-bot status <job_id> --note "Recruiter mentioned $150k base."   # attach a free-text note (independent of status)
 job-bot export                          # all tracked jobs as CSV, to stdout
 job-bot export --status applied --out applied.csv
 job-bot export --format json --out applied.json    # same rows/columns, as JSON

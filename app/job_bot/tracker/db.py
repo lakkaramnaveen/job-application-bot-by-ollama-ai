@@ -130,6 +130,19 @@ class Tracker:
                 )
                 """
             )
+            # This project's first real schema migration: `notes` was added
+            # to the `jobs` table after CREATE TABLE IF NOT EXISTS above was
+            # already shipping, so an existing db.sqlite3 from before this
+            # change needs the column added, not (re-)created - CREATE
+            # TABLE IF NOT EXISTS is a no-op against a table that already
+            # exists, columns and all. SQLite's ALTER TABLE has no
+            # "ADD COLUMN IF NOT EXISTS" form (confirmed: a syntax error
+            # even on a recent SQLite), so existence is checked via
+            # PRAGMA table_info first - safe to run on every Tracker
+            # construction, since it's then always a no-op after the first.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+            if "notes" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN notes TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS qa_history (
@@ -242,6 +255,21 @@ class Tracker:
                 )
             else:
                 cursor = conn.execute("UPDATE jobs SET status = ? WHERE job_id = ?", (status, job_id))
+            if cursor.rowcount == 0:
+                raise ValueError(f"No tracked job with id {job_id!r}")
+
+    def set_note(self, job_id: str, note: str) -> None:
+        """Attach a free-text note to a job - e.g. salary info a recruiter
+        mentioned on a call, or a reminder of who referred you - the kind
+        of context that doesn't fit any of the structured fields above and
+        would otherwise only live in the user's own head or a separate
+        document. An empty string clears an existing note rather than
+        being rejected, the same "unset by setting blank" convention
+        eligibility_note (models/schemas.py) already uses. Raises
+        ValueError if job_id isn't tracked yet, same as update_status().
+        """
+        with self._transaction() as conn:
+            cursor = conn.execute("UPDATE jobs SET notes = ? WHERE job_id = ?", (note, job_id))
             if cursor.rowcount == 0:
                 raise ValueError(f"No tracked job with id {job_id!r}")
 

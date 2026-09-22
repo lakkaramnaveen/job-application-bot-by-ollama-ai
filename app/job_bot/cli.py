@@ -716,16 +716,19 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
     """Record an outcome the bot has no way to observe on its own -
     `job-bot run` only ever writes seen/applied/skipped; everything past
     that (interviewing, offer, ...) is reported by the user by hand, or by
-    `job-bot gmail-sync` reading a reply email.
+    `job-bot gmail-sync` reading a reply email. `--note` attaches a
+    free-text note (see Tracker.set_note()) - independent of a status
+    change, so either or both can be given in one call.
 
-    With no <status> given, prints the job's current tracked record and
-    answered-question history instead of changing anything - a quick,
-    CLI-only way to check one application (e.g. before deciding what status
-    to set) without opening the dashboard.
+    With no <status> and no --note given, prints the job's current tracked
+    record, note (if any), and answered-question history instead of
+    changing anything - a quick, CLI-only way to check one application
+    (e.g. before deciding what status to set) without opening the
+    dashboard.
     """
     tracker = Tracker(settings.db_path)
 
-    if args.status is None:
+    if args.status is None and args.note is None:
         job = tracker.get_job(args.job_id)
         if job is None:
             print(f"No tracked job with id {args.job_id!r}.", file=sys.stderr)
@@ -733,6 +736,8 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
         width = max(len(field) for field in _STATUS_VIEW_FIELDS)
         for field in _STATUS_VIEW_FIELDS:
             print(f"{field:<{width}}  {job.get(field)}")
+        if job.get("notes"):
+            print(f"\nNote: {job['notes']}")
         generation = tracker.get_resume_generation(args.job_id)
         if generation:
             print(f"\nTailored resume generated {generation['created_at']}:")
@@ -745,12 +750,21 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
                 print(f"  Q: {pair['question']}\n  A: {pair['answer']}\n")
         return
 
-    try:
-        tracker.update_status(args.job_id, args.status)
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-    print(f"{args.job_id} -> {args.status}")
+    if args.note is not None:
+        try:
+            tracker.set_note(args.job_id, args.note)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Note set for {args.job_id}.")
+
+    if args.status is not None:
+        try:
+            tracker.update_status(args.job_id, args.status)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"{args.job_id} -> {args.status}")
 
 
 def cmd_review_answers(settings: Settings) -> None:
@@ -1291,7 +1305,10 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default=None,
         choices=sorted(TRACKER_STATUSES),
-        help="New status to record. Omit to print the job's current record instead.",
+        help="New status to record. Omit (with no --note either) to print the job's current record instead.",
+    )
+    status_p.add_argument(
+        "--note", default=None, help="Set a free-text note on this job (e.g. salary info from a call)."
     )
 
     sub.add_parser(

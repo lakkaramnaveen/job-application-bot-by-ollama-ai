@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from job_bot.tracker.db import InvalidSort, InvalidStatus, Tracker
@@ -139,6 +141,88 @@ def test_update_status_rejects_unknown_job_id(tmp_path):
 
     with pytest.raises(ValueError, match="No tracked job"):
         tracker.update_status("does-not-exist", "offer")
+
+
+def test_set_note_persists_and_is_returned_by_get_job(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+
+    tracker.set_note("1", "Recruiter mentioned a $150k base.")
+
+    assert tracker.get_job("1")["notes"] == "Recruiter mentioned a $150k base."
+
+
+def test_set_note_on_a_job_with_no_note_yet_defaults_to_none(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+
+    assert tracker.get_job("1")["notes"] is None
+
+
+def test_set_note_overwrites_an_existing_note(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+    tracker.set_note("1", "First note.")
+
+    tracker.set_note("1", "Updated note.")
+
+    assert tracker.get_job("1")["notes"] == "Updated note."
+
+
+def test_set_note_to_empty_string_clears_it(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+    tracker.set_note("1", "A note.")
+
+    tracker.set_note("1", "")
+
+    assert tracker.get_job("1")["notes"] == ""
+
+
+def test_set_note_rejects_unknown_job_id(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    with pytest.raises(ValueError, match="No tracked job"):
+        tracker.set_note("does-not-exist", "A note.")
+
+
+def test_notes_column_is_added_to_a_database_created_before_this_feature(tmp_path):
+    """Real migration this guards against: a db.sqlite3 created by a
+    version of this project before `notes` existed has a `jobs` table with
+    no such column - opening it with a Tracker that expects one must add
+    the column (via ALTER TABLE, in _init_db()) rather than silently fail
+    or lose the pre-existing table's rows.
+    """
+    db_path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE jobs (
+            job_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            company TEXT NOT NULL,
+            url TEXT NOT NULL,
+            match_score INTEGER,
+            status TEXT NOT NULL DEFAULT 'seen',
+            first_seen_at TEXT NOT NULL,
+            applied_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO jobs (job_id, title, company, url, first_seen_at) VALUES (?, ?, ?, ?, ?)",
+        ("1", "Engineer", "Acme", "https://example.com/1", "2026-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+
+    tracker = Tracker(db_path)
+
+    job = tracker.get_job("1")
+    assert job["title"] == "Engineer"  # the pre-existing row survived
+    assert job["notes"] is None
+    tracker.set_note("1", "Works now.")
+    assert tracker.get_job("1")["notes"] == "Works now."
 
 
 def test_status_counts_reflects_multiple_jobs(tmp_path):
