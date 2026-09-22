@@ -213,6 +213,23 @@ def make_args(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def test_run_prints_every_non_blocking_settings_warning(tmp_path, monkeypatch, capsys):
+    """validate_ready() itself is unit-tested in test_config.py to return
+    the right warning text (e.g. a DAILY_APPLICATION_CAP above the hard
+    ceiling) - this covers the other half, that cmd_run actually prints
+    what it returns rather than silently discarding it.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, daily_application_cap=500)
+    cmd_run(settings, make_args())
+
+    assert "Warning: DAILY_APPLICATION_CAP=500 exceeds the hard ceiling" in capsys.readouterr().out
+
+
 def test_run_generates_and_persists_tailored_resume_and_cover_letter(tmp_path, monkeypatch):
     provider = FakeProvider()
     monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
@@ -1041,6 +1058,162 @@ def test_run_stops_the_whole_run_when_claude_is_misconfigured(tmp_path, monkeypa
     assert tracker.get_job("job3") is None
 
 
+def test_run_stops_processing_further_postings_once_the_daily_cap_is_reached_mid_cycle(
+    tmp_path, monkeypatch, capsys
+):
+    """The daily cap can be hit partway through a single cycle's list of
+    postings, not just once per cycle at the loop level (see the --loop
+    tests below for that separate check) - --max-apps alone doesn't guard
+    this, since it's set well above what the cap allows here. This
+    exercises _run_apply_cycle's own per-posting remaining_today() check.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+
+    settings = make_settings(tmp_path, daily_application_cap=2)
+    cmd_run(settings, make_args(max_apps=10))
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied("job1") is True
+    assert tracker.has_applied("job2") is True
+    assert tracker.get_job("job3") is None
+    assert "Daily application cap reached." in capsys.readouterr().out
+
+
+def test_run_stops_processing_further_postings_once_max_apps_is_reached_mid_cycle(tmp_path, monkeypatch):
+    """--max-apps can also be hit partway through a single cycle's list of
+    postings, with more still left in the pool - every other test setting
+    max_apps this low (search-results size 1) never leaves a posting
+    unprocessed behind the limit, so this is the shape needed to actually
+    reach the loop's own `applied >= args.max_apps` check with postings
+    still remaining, rather than the for-loop simply running out on its
+    own at the same moment.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+
+    settings = make_settings(tmp_path, daily_application_cap=100)
+    cmd_run(settings, make_args(max_apps=2))
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied("job1") is True
+    assert tracker.has_applied("job2") is True
+    assert tracker.get_job("job3") is None
+
+
+class OllamaUnreachableDuringApplyProvider(LLMProvider):
+    """Scoring and tailoring succeed normally - only answering a form
+    question (which happens inside apply_to(), during the *apply* phase)
+    raises. This is the shape needed to reach the apply phase's own
+    is-Ollama-unreachable check (cli.py's apply_to() except block),
+    distinct from the prep-phase check already covered by
+    test_run_stops_the_whole_run_when_ollama_is_unreachable above, which
+    only ever fails during scoring/tailoring.
+    """
+
+    def __init__(self):
+        self.answer_calls = 0
+
+    def generate_structured(self, *, system, prompt, schema):
+        if schema is JobMatchScore:
+            return JobMatchScore(
+                eligibility="pass",
+                technical_fit=90,
+                experience_fit=90,
+                culture_fit=90,
+                score=90,
+                reasoning="Great fit",
+                should_apply=True,
+            )
+        if schema is TailoredResume:
+            return TailoredResume(
+                summary="Tailored summary for Acme.",
+                highlighted_skills=["Python"],
+                bullet_points=["Shipped feature X"],
+            )
+        if schema is CoverLetter:
+            return CoverLetter(body="Dear Acme, I would love to join your team.")
+        if schema is ApplicationAnswer:
+            self.answer_calls += 1
+            raise OllamaProviderError(
+                "Could not reach Ollama at http://localhost:11434. Is it running? "
+                "Try `ollama serve` in another terminal."
+            )
+        raise AssertionError(f"Unexpected schema requested: {schema}")
+
+
+def test_run_stops_the_whole_run_when_ollama_becomes_unreachable_mid_apply(tmp_path, monkeypatch, capsys):
+    provider = OllamaUnreachableDuringApplyProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10))
+
+    assert provider.answer_calls == 1
+    out = capsys.readouterr().out
+    assert "Ollama is unreachable - stopping the run instead of repeating this for every posting." in out
+    tracker = Tracker(settings.db_path)
+    assert tracker.get_job("job2") is None
+    assert tracker.get_job("job3") is None
+
+
+class ClaudeMisconfiguredDuringApplyProvider(LLMProvider):
+    """Same idea as OllamaUnreachableDuringApplyProvider above, for the
+    apply phase's separate is-Claude-misconfigured check.
+    """
+
+    def __init__(self):
+        self.answer_calls = 0
+
+    def generate_structured(self, *, system, prompt, schema):
+        if schema is JobMatchScore:
+            return JobMatchScore(
+                eligibility="pass",
+                technical_fit=90,
+                experience_fit=90,
+                culture_fit=90,
+                score=90,
+                reasoning="Great fit",
+                should_apply=True,
+            )
+        if schema is TailoredResume:
+            return TailoredResume(
+                summary="Tailored summary for Acme.",
+                highlighted_skills=["Python"],
+                bullet_points=["Shipped feature X"],
+            )
+        if schema is CoverLetter:
+            return CoverLetter(body="Dear Acme, I would love to join your team.")
+        if schema is ApplicationAnswer:
+            self.answer_calls += 1
+            raise ClaudeProviderError("Invalid ANTHROPIC_API_KEY.")
+        raise AssertionError(f"Unexpected schema requested: {schema}")
+
+
+def test_run_stops_the_whole_run_when_claude_becomes_misconfigured_mid_apply(tmp_path, monkeypatch, capsys):
+    provider = ClaudeMisconfiguredDuringApplyProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(max_apps=10))
+
+    assert provider.answer_calls == 1
+    out = capsys.readouterr().out
+    assert "Claude provider is misconfigured" in out
+    assert "stopping the run instead of repeating this for every posting" in out
+    tracker = Tracker(settings.db_path)
+    assert tracker.get_job("job2") is None
+    assert tracker.get_job("job3") is None
+
+
 class SearchFailsOnceAdapter(FakeAdapter):
     """search() raises on its first call - simulating a transient
     net::ERR_HTTP_RESPONSE_CODE_FAILURE that survives _goto_with_retry's
@@ -1353,6 +1526,32 @@ def test_run_does_not_quit_ollama_when_the_daily_cap_is_not_yet_reached(tmp_path
     assert quit_calls == []
 
 
+def test_run_reports_when_quit_ollama_itself_fails(tmp_path, monkeypatch, capsys):
+    """_quit_ollama_if_configured prints a different message depending on
+    whether quit_ollama() actually succeeded - every other quit_ollama test
+    above stubs it to always return True, so the "could not quit" message
+    (the real ollama_provider.quit_ollama() return value when every OS
+    command it tries fails, e.g. Ollama already stopped) has never actually
+    been printed by any test.
+    """
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    monkeypatch.setattr("job_bot.cli.quit_ollama", lambda: False)
+
+    settings = make_settings(
+        tmp_path,
+        llm_provider="ollama",
+        anthropic_api_key=None,
+        daily_application_cap=1,
+        quit_ollama_when_done=True,
+    )
+    cmd_run(settings, make_args())
+
+    assert "Daily cap reached - could not quit Ollama (it may already be stopped)." in capsys.readouterr().out
+
+
 def test_loop_quits_ollama_once_the_daily_cap_is_reached_when_configured(tmp_path, monkeypatch):
     provider = FakeProvider()
     adapter = LoopFakeAdapter(page=None)
@@ -1375,9 +1574,48 @@ def test_loop_quits_ollama_once_the_daily_cap_is_reached_when_configured(tmp_pat
     assert quit_calls == [None]
 
 
-def test_loop_stops_cleanly_on_keyboard_interrupt(tmp_path, monkeypatch):
+class AppliesOnceThenFindsNothingAdapter(FakeAdapter):
+    """First search() returns a fresh posting (so cycle 1 applies to
+    something); every call after returns nothing. --loop only ever calls
+    time.sleep() - the one place a Ctrl+C can land mid-loop - when a cycle
+    applied to nothing (see test_loop_only_sleeps_between_cycles_that_
+    applied_to_nothing), so this is the shape needed to actually reach that
+    call, rather than one where sleep is never invoked at all.
+    """
+
+    def __init__(self, page):
+        super().__init__(page)
+        self.search_calls = 0
+
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+        self.search_calls += 1
+        if self.search_calls == 1:
+            return [
+                JobPosting(
+                    job_id="loop-job-1",
+                    title="Backend Engineer",
+                    company="Acme Corp",
+                    url="https://x/loop-job-1",
+                    description="",
+                )
+            ]
+        return []
+
+
+def test_loop_stops_cleanly_on_keyboard_interrupt(tmp_path, monkeypatch, capsys):
+    """Real bug this test itself had: the original version used
+    LoopFakeAdapter, which returns a fresh posting on every single search()
+    call - every cycle then applies to something, and --loop only ever
+    calls time.sleep() (where the interrupt is injected below) between
+    cycles that applied to nothing. time.sleep() was therefore never
+    called, and the `except KeyboardInterrupt` branch this test claims to
+    cover was never reached - the test passed anyway, because cmd_run
+    happened to stop on its own once the (deliberately high) daily cap was
+    exhausted after 100 fast, no-op cycles. This version forces cycle 2 to
+    find nothing, so time.sleep() - and the interrupt - are actually hit.
+    """
     provider = FakeProvider()
-    adapter = LoopFakeAdapter(page=None)
+    adapter = AppliesOnceThenFindsNothingAdapter(page=None)
 
     def raise_interrupt(seconds):
         raise KeyboardInterrupt
@@ -1393,6 +1631,46 @@ def test_loop_stops_cleanly_on_keyboard_interrupt(tmp_path, monkeypatch):
 
     tracker = Tracker(settings.db_path)
     assert tracker.has_applied("loop-job-1") is True
+    # Cycle 1 applied; cycle 2 found nothing, slept (raising the
+    # interrupt), and the loop stopped there - a third cycle never ran.
+    assert adapter.search_calls == 2
+    assert "\nStopped." in capsys.readouterr().out
+
+
+class ClosesThePageDuringApplyAdapter(FakeAdapter):
+    """--loop has its own page.is_closed() check once per cycle, after
+    run_one_cycle() returns - separate from the is_closed() guards inside
+    _run_apply_cycle itself, which only catch the browser dying *during*
+    fill_and_submit for a plain (non --loop) run (see
+    ApplyClosesTheBrowserForFirstJobAdapter above). This simulates the
+    window closing right as a cycle finishes applying successfully - the
+    one shape only --loop's own top-level check catches.
+    """
+
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        result = super().fill_and_submit(
+            posting,
+            answer_question=answer_question,
+            resume_path=resume_path,
+            cover_letter_text=cover_letter_text,
+            dry_run=dry_run,
+        )
+        self.page.close()
+        return result
+
+
+def test_loop_stops_when_the_browser_window_closes_between_cycles(tmp_path, monkeypatch, capsys):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", ClosesThePageDuringApplyAdapter)
+
+    settings = make_settings(tmp_path, daily_application_cap=100)
+    cmd_run(settings, make_args(loop=True, max_apps=1))
+
+    assert "Browser window was closed - stopping." in capsys.readouterr().out
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied(JOB.job_id) is True
 
 
 def test_run_records_an_unanswered_required_question_as_an_answer_gap(tmp_path, monkeypatch):
