@@ -93,6 +93,22 @@ def test_build_tailored_resume_docx_declines_when_no_experience_header_is_found(
     assert not output_path.exists()
 
 
+def test_build_tailored_resume_docx_declines_when_no_skills_header_is_found(tmp_path):
+    """Same "decline rather than guess" reasoning as the no-summary and
+    no-experience cases above, for the third section boundary this
+    function needs (SUMMARY/SKILLS/EXPERIENCE) - a resume with a summary
+    but no separately labeled skills section must not have this guess at
+    where skills end and experience begins.
+    """
+    no_skills_section = "Jane Doe\n\nSUMMARY\nA summary.\n\nEXPERIENCE\nSoftware Engineer, Acme Corp."
+    output_path = tmp_path / "tailored.docx"
+
+    built = build_tailored_resume_docx(no_skills_section, TAILORED, output_path)
+
+    assert built is False
+    assert not output_path.exists()
+
+
 def test_build_tailored_resume_docx_does_not_mistake_a_linkedin_profile_contact_line_for_the_header(tmp_path):
     """Real bug this guards against: "PROFILE" is one of the SUMMARY
     section's keywords (to catch a header literally titled "Profile"), but
