@@ -1261,6 +1261,56 @@ def _resume_check(settings: Settings) -> tuple[str, bool, str]:
     return ("Resume file readable", True, str(settings.resume_path))
 
 
+def _blacklist_check(settings: Settings) -> tuple[str, bool, str]:
+    """Neither missing (a fresh install has no blacklist file yet, which is
+    fine) nor present-but-corrupted should look the same as "no companies
+    blacklisted" - but CompanyBlacklist._load() (safety/blacklist.py)
+    silently falls back to an empty blacklist on invalid JSON rather than
+    raising, so `job-bot run` would proceed with zero blacklist protection
+    and no visible error. Worse than just going unprotected for one run:
+    the next `job-bot blacklist add` (or a dashboard one-click blacklist)
+    calls _save() against that same now-empty in-memory state, silently
+    overwriting the file with only the newly added company and permanently
+    losing every previously blacklisted one. Catches the corruption here,
+    before either of those, the same way _resume_check catches a corrupted
+    resume before `job-bot run` gets there.
+    """
+    label = "Blacklist file valid (optional)"
+    if not settings.blacklist_path.exists():
+        return (label, True, "")
+    try:
+        data = json.loads(settings.blacklist_path.read_text(encoding="utf-8"))
+    except OSError as e:
+        return (label, False, f"{settings.blacklist_path}: {e}")
+    except json.JSONDecodeError as e:
+        return (label, False, f"{settings.blacklist_path}: not valid JSON ({e})")
+    if not isinstance(data, list):
+        return (label, False, f"{settings.blacklist_path}: must be a JSON array of company name strings")
+    return (label, True, "")
+
+
+def _faq_check(settings: Settings) -> tuple[str, bool, str]:
+    """Same corruption-hides-as-empty risk _blacklist_check guards against,
+    for FAQ_PATH - ResumeStore.faq_answers() (resume/store.py) also falls
+    back to {} on invalid JSON. Lower-stakes than the blacklist (a lost
+    cache just means re-asking the LLM, not a lost safety guarantee), but
+    still worth a heads-up before `job-bot review-answers`/`job-bot run`
+    silently start treating every previously-learned answer as unknown.
+    """
+    label = "FAQ cache valid (optional)"
+    if not settings.faq_path.exists():
+        return (label, True, "")
+    try:
+        data = json.loads(settings.faq_path.read_text(encoding="utf-8"))
+    except OSError as e:
+        return (label, False, f"{settings.faq_path}: {e}")
+    except json.JSONDecodeError as e:
+        return (label, False, f"{settings.faq_path}: not valid JSON ({e})")
+    if not isinstance(data, dict):
+        return (label, False, f'{settings.faq_path}: must be a JSON object of {{"question": "answer"}} pairs')
+    return (label, True, "")
+
+
 def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     """Check local setup for the common ways `job-bot run` fails partway
     through rather than up front - deliberately file/config checks only, no
@@ -1270,7 +1320,11 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     a setup script or health-check cron job that wants to act on pass/fail
     programmatically rather than parsing the human-readable [OK]/[!!] lines.
     """
-    checks: list[tuple[str, bool, str]] = [_resume_check(settings)]
+    checks: list[tuple[str, bool, str]] = [
+        _resume_check(settings),
+        _blacklist_check(settings),
+        _faq_check(settings),
+    ]
 
     if settings.llm_provider == "claude":
         checks.append(("Anthropic API key (ANTHROPIC_API_KEY)", bool(settings.anthropic_api_key), ""))

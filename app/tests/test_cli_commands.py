@@ -1100,6 +1100,91 @@ def test_doctor_flags_a_resume_with_an_unsupported_extension(tmp_path, capsys):
     assert "Unsupported resume format" in out
 
 
+def test_doctor_passes_blacklist_check_when_no_blacklist_file_exists(tmp_path, capsys):
+    settings = make_settings(tmp_path)  # blacklist_path points at a file that was never created
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Blacklist file valid" in capsys.readouterr().out
+
+
+def test_doctor_passes_blacklist_check_with_a_real_blacklist_file(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.blacklist_path.write_text('["Acme Corp"]', encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Blacklist file valid" in capsys.readouterr().out
+
+
+def test_doctor_flags_a_corrupted_blacklist_file(tmp_path, capsys):
+    """Real failure this guards against: CompanyBlacklist._load()
+    (safety/blacklist.py) silently falls back to an empty blacklist on
+    invalid JSON rather than raising - `job-bot run` would then proceed
+    with zero blacklist protection and no visible error, and the next
+    `job-bot blacklist add` would overwrite the file with only the newly
+    added company, permanently losing every previously blacklisted one.
+    """
+    settings = make_settings(tmp_path)
+    settings.blacklist_path.write_text("not valid json {{{", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Blacklist file valid" in out
+    assert "not valid JSON" in out
+
+
+def test_doctor_flags_a_blacklist_file_that_is_not_a_json_array(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.blacklist_path.write_text('{"not": "a list"}', encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Blacklist file valid" in out
+    assert "must be a JSON array" in out
+
+
+def test_doctor_passes_faq_check_when_no_faq_file_exists(tmp_path, capsys):
+    settings = make_settings(tmp_path)  # faq_path points at a file that was never created
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] FAQ cache valid" in capsys.readouterr().out
+
+
+def test_doctor_passes_faq_check_with_a_real_faq_file(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.faq_path.write_text('{"Years of Python experience?": "5"}', encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] FAQ cache valid" in capsys.readouterr().out
+
+
+def test_doctor_flags_a_corrupted_faq_file(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.faq_path.write_text("not valid json {{{", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] FAQ cache valid" in out
+    assert "not valid JSON" in out
+
+
+def test_doctor_flags_a_faq_file_that_is_not_a_json_object(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.faq_path.write_text("[1, 2, 3]", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] FAQ cache valid" in out
+    assert "must be a JSON object" in out
+
+
 def test_doctor_flags_missing_anthropic_api_key(tmp_path, capsys):
     settings = make_settings(tmp_path, anthropic_api_key=None)
 

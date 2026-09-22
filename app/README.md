@@ -161,9 +161,11 @@ Edit `.env`:
    ```bash
    job-bot login
    ```
-2. **Check your local setup for common problems** - resume file present, an
-   API key/Ollama URL configured, a LinkedIn session saved, the daily cap
-   sane. File/config checks only, no network call, so it's fast and safe to
+2. **Check your local setup for common problems** - the resume file actually
+   parses, an API key/Ollama URL configured, a LinkedIn session saved, the
+   blacklist/FAQ cache files are valid JSON (not silently treated as empty),
+   Gmail credentials present (if you use gmail-sync), the daily cap sane.
+   File/config checks only, no network call, so it's fast and safe to
    run any time something seems off:
    ```bash
    job-bot doctor
