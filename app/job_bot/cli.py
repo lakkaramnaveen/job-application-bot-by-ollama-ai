@@ -886,8 +886,21 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
     resume_store = ResumeStore(settings.resume_path, settings.faq_path)
     if args.faq_action == "list":
         answers = resume_store.faq_answers()
+        if args.search:
+            # Case-insensitive substring match against either side of the
+            # pair - the same "search" semantics job-bot export/the
+            # dashboard already use, not just the question text, since a
+            # cache large enough to need searching is exactly one where
+            # you might remember the gist of an answer but not the exact
+            # question wording that produced it.
+            needle = args.search.casefold()
+            answers = {
+                question: answer
+                for question, answer in answers.items()
+                if needle in question.casefold() or needle in answer.casefold()
+            }
         if not answers:
-            print("No cached FAQ answers.")
+            print("No cached FAQ answers." if not args.search else f'No cached FAQ answers matching "{args.search}".')
         else:
             for question, answer in answers.items():
                 print(f'"{question}"\n  -> {answer}\n')
@@ -1578,7 +1591,12 @@ def build_parser() -> argparse.ArgumentParser:
         "faq", help="View, remove, import, or export cached FAQ answers (see `job-bot review-answers`)."
     )
     faq_sub = faq_p.add_subparsers(dest="faq_action", required=True)
-    faq_sub.add_parser("list", help="Print every cached question/answer pair.")
+    faq_list_p = faq_sub.add_parser("list", help="Print every cached question/answer pair.")
+    faq_list_p.add_argument(
+        "--search",
+        default=None,
+        help="Only print pairs whose question or answer contains this text (case-insensitive).",
+    )
     faq_remove_p = faq_sub.add_parser("remove", help="Remove one cached answer, e.g. to fix a wrong one.")
     faq_remove_p.add_argument("question", help="The exact question text, as shown by `job-bot faq list`.")
     faq_import_p = faq_sub.add_parser(

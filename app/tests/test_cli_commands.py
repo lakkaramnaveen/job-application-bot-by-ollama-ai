@@ -1412,7 +1412,7 @@ def test_review_answers_json_format_on_empty_gaps_is_an_empty_array(tmp_path, ca
 def test_faq_list_says_so_when_nothing_cached(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
-    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None))
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search=None))
 
     assert "No cached FAQ answers." in capsys.readouterr().out
 
@@ -1423,13 +1423,65 @@ def test_faq_list_prints_every_cached_question_and_answer(tmp_path, capsys):
     store.save_faq_answer("Years of Python experience?", "5")
     store.save_faq_answer("Willing to relocate?", "No")
 
-    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None))
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search=None))
 
     out = capsys.readouterr().out
     assert "Years of Python experience?" in out
     assert "5" in out
     assert "Willing to relocate?" in out
     assert "No" in out
+
+
+def test_faq_list_search_matches_the_question_text(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Years of Python experience?", "5")
+    store.save_faq_answer("Willing to relocate?", "No")
+
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="python"))
+
+    out = capsys.readouterr().out
+    assert "Years of Python experience?" in out
+    assert "Willing to relocate?" not in out
+
+
+def test_faq_list_search_matches_the_answer_text(tmp_path, capsys):
+    """The same "search" semantics job-bot export/the dashboard already
+    use: matches either side of the pair, not just the question - a cache
+    large enough to need searching is exactly one where you might
+    remember the gist of an answer but not the exact question wording
+    that produced it.
+    """
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Years of Python experience?", "5")
+    store.save_faq_answer("Willing to relocate?", "No")
+
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="no"))
+
+    out = capsys.readouterr().out
+    assert "Willing to relocate?" in out
+    assert "Years of Python experience?" not in out
+
+
+def test_faq_list_search_is_case_insensitive(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Years of Python experience?", "5")
+
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="PYTHON"))
+
+    assert "Years of Python experience?" in capsys.readouterr().out
+
+
+def test_faq_list_search_says_so_when_nothing_matches(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Years of Python experience?", "5")
+
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="cobol"))
+
+    assert 'No cached FAQ answers matching "cobol".' in capsys.readouterr().out
 
 
 def test_faq_remove_deletes_a_cached_answer(tmp_path, capsys):
