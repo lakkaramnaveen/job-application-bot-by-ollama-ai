@@ -1,6 +1,11 @@
+import re
+from pathlib import Path
+
 import pytest
 
 from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError
+
+ENV_EXAMPLE_PATH = Path(__file__).resolve().parent.parent / ".env.example"
 
 
 def make_settings(tmp_path, **overrides):
@@ -83,3 +88,20 @@ def test_max_years_experience_and_require_w2_default_to_off(tmp_path):
 
     assert settings.max_years_experience is None
     assert settings.require_w2 is False
+
+
+def test_every_settings_field_is_documented_in_env_example():
+    """Real gap this guards against: stale_after_days had no line in
+    .env.example at all - not even commented out - so there was no
+    discoverable way for a user to know STALE_AFTER_DAYS existed short of
+    reading config.py's source directly. Every Settings field must appear
+    in .env.example as "FIELD_NAME=" (commented lines count, since several
+    optional/off-by-default settings are deliberately shown commented out
+    as an example rather than active), so a newly added setting can't
+    silently go undocumented the same way again.
+    """
+    env_text = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
+    documented = set(re.findall(r"^#?\s*([A-Z_][A-Z0-9_]*)=", env_text, re.MULTILINE))
+
+    undocumented = sorted(field for field in Settings.model_fields if field.upper() not in documented)
+    assert undocumented == []
