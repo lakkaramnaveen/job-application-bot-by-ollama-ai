@@ -152,6 +152,13 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
         company = html.escape(str(job.get("company", "")))
         score = job.get("match_score")
         score_text = str(score) if score is not None else "-"
+        reasoning = job.get("match_reasoning")
+        # A native title attribute rather than a button/modal like Note or
+        # Q&A get: this is the LLM's own read-only explanation of the score
+        # it already gave (see Tracker.record_score()'s reasoning param) -
+        # nothing to edit, so a hover tooltip on the very cell it explains
+        # is enough, without another click needed just to read a sentence.
+        score_title_attr = f' title="{html.escape(str(reasoning), quote=True)}"' if reasoning else ""
         status = str(job.get("status", ""))
         applied_at = html.escape(str(job.get("applied_at") or "-"))
         safe_job_id = html.escape(job_id, quote=True)
@@ -162,7 +169,7 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
             "<tr>"
             f"<td>{title_cell}</td>"
             f"<td>{company}</td>"
-            f"<td>{score_text}</td>"
+            f"<td{score_title_attr}>{score_text}</td>"
             f"<td>{_badge(status)}</td>"
             f"<td>{applied_at}</td>"
             f'<td class="jobid">{html.escape(job_id)}</td>'
@@ -289,6 +296,7 @@ def render_page_html(
   th {{ background: var(--header-bg); font-weight: 600; }}
   td.jobid {{ color: var(--muted); font-size: 0.75rem; }}
   td.empty {{ color: var(--muted); text-align: center; padding: 2rem; }}
+  td[title] {{ cursor: help; border-bottom: 1px dotted var(--muted); }}
   td.actions {{ display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }}
   .status-select {{ font-size: 0.8rem; padding: 0.25rem 0.4rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg); }}

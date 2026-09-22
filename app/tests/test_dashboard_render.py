@@ -55,6 +55,31 @@ def test_render_rows_html_escapes_company_name_in_the_blacklist_button_title():
     assert "<script>alert(1)</script>" not in html
 
 
+def test_render_rows_html_shows_match_reasoning_as_a_score_tooltip():
+    html = render_rows_html([make_job(match_reasoning="Strong Python and AWS overlap with the posting.")])
+    assert 'title="Strong Python and AWS overlap with the posting."' in html
+
+
+def test_render_rows_html_omits_score_tooltip_when_no_reasoning_recorded():
+    """A job upserted (not scored - see Tracker.upsert_job() vs.
+    record_score()) has no match_reasoning at all, and one scored before
+    this feature existed has it as "" (the migrated column's default) -
+    neither should render a score cell with an empty title="" tooltip.
+    Checks the <td> itself, not just absence of the word "title" anywhere
+    in the row - the Note/Blacklist buttons legitimately have their own
+    title attributes regardless of match_reasoning.
+    """
+    for reasoning in (None, ""):
+        html = render_rows_html([make_job(match_reasoning=reasoning)])
+        assert "<td title=" not in html
+
+
+def test_render_rows_html_escapes_match_reasoning_in_the_score_tooltip():
+    malicious = make_job(match_reasoning='Great fit"><script>alert(1)</script>')
+    html = render_rows_html([malicious])
+    assert "<script>alert(1)</script>" not in html
+
+
 def test_render_rows_html_includes_a_note_button_per_row():
     html = render_rows_html([make_job()])
     assert 'class="note-button" data-job-id="job1"' in html

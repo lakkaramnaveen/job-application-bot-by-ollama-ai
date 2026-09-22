@@ -509,6 +509,9 @@ seen, and lets you:
 - **Search** by title, company, or note text, and **filter** by status (the
   pills and the status dropdown stay in sync either way).
 - **Sort** by newest/oldest, recently applied, fit score, company, or title.
+- **Hover a fit score** to see the LLM's own reasoning for it (the same
+  `match_reasoning` `job-bot status <job_id>` prints), when the job was
+  scored rather than just tracked.
 - **Update a job's status inline** from the row - no need to drop to
   `job-bot status <job_id> <status>` for a quick correction.
 - **Edit a job's note** in a modal - the same note `job-bot status <job_id>
