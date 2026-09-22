@@ -153,12 +153,30 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
         score = job.get("match_score")
         score_text = str(score) if score is not None else "-"
         reasoning = job.get("match_reasoning")
+        eligibility = job.get("eligibility")
+        # A categorical eligibility-gate rejection (e.g. a citizenship
+        # requirement) or an ambiguous "flag" verdict the model itself was
+        # uncertain about is worth calling out at a glance in the table,
+        # not just readable one click away in `job-bot status <job_id>` -
+        # same information, surfaced where someone scanning the dashboard
+        # actually looks first.
+        flagged_eligibility = eligibility in ("fail", "flag")
+        score_text = f"⚠️ {score_text}" if flagged_eligibility else score_text
         # A native title attribute rather than a button/modal like Note or
         # Q&A get: this is the LLM's own read-only explanation of the score
-        # it already gave (see Tracker.record_score()'s reasoning param) -
-        # nothing to edit, so a hover tooltip on the very cell it explains
-        # is enough, without another click needed just to read a sentence.
-        score_title_attr = f' title="{html.escape(str(reasoning), quote=True)}"' if reasoning else ""
+        # it already gave (see Tracker.record_score()'s reasoning/
+        # eligibility params) - nothing to edit, so a hover tooltip on the
+        # very cell it explains is enough, without another click needed
+        # just to read a sentence.
+        tooltip_parts = []
+        if flagged_eligibility:
+            note = job.get("eligibility_note")
+            tooltip_parts.append(f"Eligibility: {eligibility}" + (f" - {note}" if note else ""))
+        if reasoning:
+            tooltip_parts.append(str(reasoning))
+        score_title_attr = (
+            f' title="{html.escape(chr(10).join(tooltip_parts), quote=True)}"' if tooltip_parts else ""
+        )
         status = str(job.get("status", ""))
         applied_at = html.escape(str(job.get("applied_at") or "-"))
         safe_job_id = html.escape(job_id, quote=True)

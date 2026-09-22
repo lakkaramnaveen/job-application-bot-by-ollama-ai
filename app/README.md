@@ -516,7 +516,9 @@ seen, and lets you:
 - **Sort** by newest/oldest, recently applied, fit score, company, or title.
 - **Hover a fit score** to see the LLM's own reasoning for it (the same
   `match_reasoning` `job-bot status <job_id>` prints), when the job was
-  scored rather than just tracked.
+  scored rather than just tracked. A ⚠️ before the score means the
+  eligibility gate flagged or categorically disqualified this job -
+  hover for the specific posting wording that drove the verdict.
 - **Update a job's status inline** from the row - no need to drop to
   `job-bot status <job_id> <status>` for a quick correction.
 - **Edit a job's note** in a modal - the same note `job-bot status <job_id>

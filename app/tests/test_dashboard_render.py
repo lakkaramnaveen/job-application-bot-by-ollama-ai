@@ -80,6 +80,54 @@ def test_render_rows_html_escapes_match_reasoning_in_the_score_tooltip():
     assert "<script>alert(1)</script>" not in html
 
 
+def test_render_rows_html_marks_a_failed_eligibility_verdict_in_the_score_cell():
+    html = render_rows_html([make_job(eligibility="fail")])
+    assert "⚠️ 82" in html
+
+
+def test_render_rows_html_marks_a_flagged_eligibility_verdict_in_the_score_cell():
+    html = render_rows_html([make_job(eligibility="flag")])
+    assert "⚠️ 82" in html
+
+
+def test_render_rows_html_does_not_mark_a_passing_eligibility_verdict():
+    html = render_rows_html([make_job(eligibility="pass")])
+    assert "⚠️" not in html
+
+
+def test_render_rows_html_shows_the_eligibility_note_in_the_score_tooltip():
+    html = render_rows_html(
+        [make_job(eligibility="fail", eligibility_note="Requires active US security clearance.")]
+    )
+    assert "title=" in html
+    assert "Eligibility: fail - Requires active US security clearance." in html
+
+
+def test_render_rows_html_omits_the_note_suffix_when_eligibility_note_is_empty():
+    html = render_rows_html([make_job(eligibility="flag", eligibility_note="")])
+    assert "Eligibility: flag" in html
+    assert "Eligibility: flag -" not in html
+
+
+def test_render_rows_html_combines_eligibility_and_reasoning_in_one_tooltip():
+    html = render_rows_html(
+        [
+            make_job(
+                eligibility="fail",
+                eligibility_note="Requires US citizenship.",
+                match_reasoning="Otherwise a strong technical match.",
+            )
+        ]
+    )
+    assert "Eligibility: fail - Requires US citizenship.\nOtherwise a strong technical match." in html
+
+
+def test_render_rows_html_escapes_the_eligibility_note_in_the_score_tooltip():
+    malicious = make_job(eligibility="fail", eligibility_note='x"><script>alert(1)</script>')
+    html = render_rows_html([malicious])
+    assert "<script>alert(1)</script>" not in html
+
+
 def test_render_rows_html_includes_a_note_button_per_row():
     html = render_rows_html([make_job()])
     assert 'class="note-button" data-job-id="job1"' in html
