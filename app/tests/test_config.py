@@ -105,3 +105,18 @@ def test_every_settings_field_is_documented_in_env_example():
 
     undocumented = sorted(field for field in Settings.model_fields if field.upper() not in documented)
     assert undocumented == []
+
+
+def test_security_md_states_the_correct_hard_daily_application_ceiling():
+    """Real gap this guards against: SECURITY.md's stated hard ceiling
+    ("HARD_DAILY_APPLICATION_CEILING (50)") had drifted from the actual
+    code value (100) - a wrong number in a doc specifically about this
+    project's safety guarantees, exactly the kind of claim a
+    security-conscious reader would take at face value without checking
+    config.py themselves. Asserts the current constant's value appears in
+    the doc's own sentence about it, so a future change to the constant
+    without updating the doc fails a test instead of silently shipping a
+    stale, misleading number.
+    """
+    security_text = (Path(__file__).resolve().parent.parent / "SECURITY.md").read_text(encoding="utf-8")
+    assert f"HARD_DAILY_APPLICATION_CEILING` ({HARD_DAILY_APPLICATION_CEILING})" in security_text
