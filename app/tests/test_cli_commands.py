@@ -109,6 +109,12 @@ def review_answers_args(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def status_args(**overrides) -> argparse.Namespace:
+    defaults = dict(job_id="job1", status=None, note=None, format="text")
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
 def _backdate_applied_at(db_path, job_id: str, when: datetime) -> None:
     """Directly rewrite applied_at, since mark_applied() always stamps
     "now" - tests that need a stale application have to backdate it after
@@ -128,9 +134,24 @@ def test_status_updates_a_tracked_job(tmp_path, capsys):
     tracker = Tracker(settings.db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status="interviewing", note=None))
+    cmd_status(settings, status_args(job_id="job1", status="interviewing", note=None))
 
     assert tracker.get_job("job1")["status"] == "interviewing"
+    assert "job1 -> interviewing" in capsys.readouterr().out
+
+
+def test_status_format_json_is_ignored_when_a_status_change_is_given(tmp_path, capsys):
+    """--format json only affects the no-<status>/--note view (see
+    cmd_status's docstring) - an actual status change already prints a
+    trivially-parseable one-line result and isn't meant to grow a second,
+    JSON-shaped output for the same action.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+
+    cmd_status(settings, status_args(job_id="job1", status="interviewing", format="json"))
+
     assert "job1 -> interviewing" in capsys.readouterr().out
 
 
@@ -139,7 +160,7 @@ def test_status_on_unknown_job_id_exits_with_error(tmp_path, capsys):
     Tracker(settings.db_path)  # create the (empty) DB
 
     with pytest.raises(SystemExit) as exc_info:
-        cmd_status(settings, argparse.Namespace(job_id="does-not-exist", status="offer", note=None))
+        cmd_status(settings, status_args(job_id="does-not-exist", status="offer", note=None))
 
     assert exc_info.value.code == 1
     assert "Error" in capsys.readouterr().err
@@ -151,7 +172,7 @@ def test_status_with_no_status_arg_prints_the_job_record_and_does_not_change_it(
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1", match_score=80)
     tracker.mark_applied("job1")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     out = capsys.readouterr().out
     assert "Backend Engineer" in out
@@ -161,13 +182,79 @@ def test_status_with_no_status_arg_prints_the_job_record_and_does_not_change_it(
     assert tracker.get_job("job1")["status"] == "applied"  # unchanged
 
 
+def test_status_with_no_status_arg_and_format_json_prints_the_full_record(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme", "https://x/1", score=85, should_apply=True, reasoning="Great fit"
+    )
+    tracker.set_note("job1", "Referred by Jane.")
+    tracker.record_qa("job1", "Years of Python?", "5")
+    tracker.record_resume_generation(
+        "job1", "Backend Engineer", "Acme", "A tailored summary.", ["Python", "AWS"], ["Did a thing."]
+    )
+
+    cmd_status(settings, status_args(job_id="job1", format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["job_id"] == "job1"
+    assert payload["status"] == "seen"
+    assert payload["match_score"] == 85
+    assert payload["match_reasoning"] == "Great fit"
+    assert payload["notes"] == "Referred by Jane."
+    assert payload["is_blacklisted"] is False
+    assert len(payload["qa_history"]) == 1
+    assert payload["qa_history"][0]["question"] == "Years of Python?"
+    assert payload["qa_history"][0]["answer"] == "5"
+    assert payload["resume_generation"]["summary"] == "A tailored summary."
+    assert tracker.get_job("job1")["status"] == "seen"  # unchanged
+
+
+def test_status_with_no_status_arg_and_format_json_flags_a_blacklisted_company(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
+    CompanyBlacklist(settings.blacklist_path).add("Acme Corp")
+
+    cmd_status(settings, status_args(job_id="job1", format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["is_blacklisted"] is True
+
+
+def test_status_with_no_status_arg_and_format_json_omits_optional_sections_when_absent(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+
+    cmd_status(settings, status_args(job_id="job1", format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["match_reasoning"] is None
+    assert payload["notes"] is None
+    assert payload["resume_generation"] is None
+    assert payload["qa_history"] == []
+
+
+def test_status_with_no_status_arg_and_format_json_on_unknown_job_id_exits_with_error(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path)  # create the (empty) DB
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_status(settings, status_args(job_id="does-not-exist", format="json"))
+
+    assert exc_info.value.code == 1
+    err = json.loads(capsys.readouterr().err)
+    assert "does-not-exist" in err["error"]
+
+
 def test_status_with_no_status_arg_includes_qa_history(tmp_path, capsys):
     settings = make_settings(tmp_path)
     tracker = Tracker(settings.db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     tracker.record_qa("job1", "Years of Python?", "5")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     out = capsys.readouterr().out
     assert "Q&A history (1):" in out
@@ -183,7 +270,7 @@ def test_status_with_no_status_arg_includes_the_tailored_resume_generation(tmp_p
         "job1", "Backend Engineer", "Acme", "A tailored summary.", ["Python", "AWS"], ["Did a thing."]
     )
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     out = capsys.readouterr().out
     assert "Tailored resume generated" in out
@@ -196,7 +283,7 @@ def test_status_with_no_status_arg_omits_resume_generation_section_when_never_ge
     tracker = Tracker(settings.db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     assert "Tailored resume generated" not in capsys.readouterr().out
 
@@ -206,7 +293,7 @@ def test_status_with_no_status_arg_on_unknown_job_id_exits_with_error(tmp_path, 
     Tracker(settings.db_path)  # create the (empty) DB
 
     with pytest.raises(SystemExit) as exc_info:
-        cmd_status(settings, argparse.Namespace(job_id="does-not-exist", status=None, note=None))
+        cmd_status(settings, status_args(job_id="does-not-exist", status=None, note=None))
 
     assert exc_info.value.code == 1
     assert "No tracked job" in capsys.readouterr().err
@@ -219,7 +306,7 @@ def test_status_note_flag_sets_a_note_without_changing_status(tmp_path, capsys):
     tracker.mark_applied("job1")
 
     cmd_status(
-        settings, argparse.Namespace(job_id="job1", status=None, note="Recruiter mentioned $150k base.")
+        settings, status_args(job_id="job1", status=None, note="Recruiter mentioned $150k base.")
     )
 
     assert "Note set for job1." in capsys.readouterr().out
@@ -232,7 +319,7 @@ def test_status_note_flag_combined_with_a_status_change_does_both(tmp_path, caps
     tracker = Tracker(settings.db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status="interviewing", note="Second round."))
+    cmd_status(settings, status_args(job_id="job1", status="interviewing", note="Second round."))
 
     out = capsys.readouterr().out
     assert "Note set for job1." in out
@@ -247,7 +334,7 @@ def test_status_note_flag_on_unknown_job_id_exits_with_error(tmp_path, capsys):
     Tracker(settings.db_path)  # create the (empty) DB
 
     with pytest.raises(SystemExit) as exc_info:
-        cmd_status(settings, argparse.Namespace(job_id="does-not-exist", status=None, note="A note."))
+        cmd_status(settings, status_args(job_id="does-not-exist", status=None, note="A note."))
 
     assert exc_info.value.code == 1
     assert "Error" in capsys.readouterr().err
@@ -259,7 +346,7 @@ def test_status_with_no_status_arg_shows_the_note_when_present(tmp_path, capsys)
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
     tracker.set_note("job1", "Referred by Jane.")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     assert "Note: Referred by Jane." in capsys.readouterr().out
 
@@ -269,7 +356,7 @@ def test_status_with_no_status_arg_omits_note_section_when_none_set(tmp_path, ca
     tracker = Tracker(settings.db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     assert "Note:" not in capsys.readouterr().out
 
@@ -281,7 +368,7 @@ def test_status_with_no_status_arg_shows_match_reasoning_when_present(tmp_path, 
         "job1", "Backend Engineer", "Acme", "https://x/1", score=85, should_apply=True, reasoning="Great fit"
     )
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     assert "Match reasoning: Great fit" in capsys.readouterr().out
 
@@ -291,7 +378,7 @@ def test_status_with_no_status_arg_omits_match_reasoning_section_when_never_scor
     tracker = Tracker(settings.db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     assert "Match reasoning:" not in capsys.readouterr().out
 
@@ -308,7 +395,7 @@ def test_status_with_no_status_arg_warns_when_the_company_is_blacklisted(tmp_pat
     tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
     CompanyBlacklist(settings.blacklist_path).add("Acme Corp")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     assert "Acme Corp is on your blacklist." in capsys.readouterr().out
 
@@ -318,7 +405,7 @@ def test_status_with_no_status_arg_omits_blacklist_warning_when_not_blacklisted(
     tracker = Tracker(settings.db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
 
-    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
 
     assert "blacklist" not in capsys.readouterr().out
 

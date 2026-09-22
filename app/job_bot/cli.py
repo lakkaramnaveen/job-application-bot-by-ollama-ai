@@ -732,15 +732,36 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
     answered-question history instead of changing anything - a quick,
     CLI-only way to check one application (e.g. before deciding what
     status to set, or to see *why* a job was skipped) without opening the
-    dashboard.
+    dashboard. `--format json` prints that same view as one JSON object
+    instead - every other read-oriented command here (doctor/report/
+    export/faq/review-answers) already has this, and a monitoring script
+    watching one specific application (e.g. to alert on a status change)
+    otherwise has no structured way to read it short of `job-bot export`
+    and searching the whole tracker for one job_id. Only applies to this
+    view; --format is ignored when --status/--note change something,
+    since those already print a one-line, trivially-parseable result.
     """
     tracker = Tracker(settings.db_path)
 
     if args.status is None and args.note is None:
         job = tracker.get_job(args.job_id)
         if job is None:
-            print(f"No tracked job with id {args.job_id!r}.", file=sys.stderr)
+            if args.format == "json":
+                print(json.dumps({"error": f"No tracked job with id {args.job_id!r}."}), file=sys.stderr)
+            else:
+                print(f"No tracked job with id {args.job_id!r}.", file=sys.stderr)
             sys.exit(1)
+        generation = tracker.get_resume_generation(args.job_id)
+        qa = tracker.list_qa(args.job_id)
+        if args.format == "json":
+            payload = {
+                **job,
+                "is_blacklisted": CompanyBlacklist(settings.blacklist_path).is_blocked(job["company"]),
+                "resume_generation": generation,
+                "qa_history": qa,
+            }
+            print(json.dumps(payload, indent=2))
+            return
         width = max(len(field) for field in _STATUS_VIEW_FIELDS)
         for field in _STATUS_VIEW_FIELDS:
             print(f"{field:<{width}}  {job.get(field)}")
@@ -755,12 +776,10 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
             print(f"\nMatch reasoning: {job['match_reasoning']}")
         if job.get("notes"):
             print(f"\nNote: {job['notes']}")
-        generation = tracker.get_resume_generation(args.job_id)
         if generation:
             print(f"\nTailored resume generated {generation['created_at']}:")
             print(f"  Summary: {generation['summary']}")
             print(f"  Skills:  {', '.join(generation['skills'])}")
-        qa = tracker.list_qa(args.job_id)
         if qa:
             print(f"\nQ&A history ({len(qa)}):")
             for pair in qa:
@@ -1362,6 +1381,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status_p.add_argument(
         "--note", default=None, help="Set a free-text note on this job (e.g. salary info from a call)."
+    )
+    status_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Print the view (no <status>/--note given) as one JSON object instead.",
     )
 
     review_answers_p = sub.add_parser(
