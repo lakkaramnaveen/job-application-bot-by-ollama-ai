@@ -217,6 +217,28 @@ def test_api_stats_scopes_counts_to_search_term(live_server):
     assert 'data-status="seen"' not in body
 
 
+def test_api_stats_scopes_counts_to_the_eligibility_filter(tmp_path, live_server):
+    """_handle_stats forwards eligibility to Tracker.status_counts() the
+    same way it already forwards search (see the test above) - the line
+    itself was covered by other tests exercising _handle_stats at all, but
+    that never proved the filter actually narrows the pill counts, only
+    that the wiring didn't crash.
+    """
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.record_score(
+        "job3", "DevOps Engineer", "Acme Corp", "https://example.com/job3", score=20,
+        should_apply=False, eligibility="fail",
+    )
+
+    with urllib.request.urlopen(f"{live_server}/api/stats?eligibility=fail") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert 'All <span class="count">1</span>' in body
+    assert 'data-status="skipped"' in body
+    assert 'data-status="applied"' not in body
+    assert 'data-status="seen"' not in body
+
+
 def test_index_page_includes_stats_bar_reflecting_data(live_server):
     with urllib.request.urlopen(f"{live_server}/") as resp:
         body = resp.read().decode("utf-8")
