@@ -36,6 +36,7 @@ from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import JobMatchScore
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
+from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import Tracker
 
 
@@ -265,6 +266,33 @@ def test_status_with_no_status_arg_omits_note_section_when_none_set(tmp_path, ca
     cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
 
     assert "Note:" not in capsys.readouterr().out
+
+
+def test_status_with_no_status_arg_warns_when_the_company_is_blacklisted(tmp_path, capsys):
+    """Real gap this guards against: a job tracked/applied to before its
+    company was blacklisted (or blacklisted afterward for an unrelated
+    reason) had nothing surfacing the inconsistency - job-bot run's own
+    blacklist check only ever runs at search time against new postings,
+    never retroactively against what's already tracked.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
+    CompanyBlacklist(settings.blacklist_path).add("Acme Corp")
+
+    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+
+    assert "Acme Corp is on your blacklist." in capsys.readouterr().out
+
+
+def test_status_with_no_status_arg_omits_blacklist_warning_when_not_blacklisted(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
+
+    cmd_status(settings, argparse.Namespace(job_id="job1", status=None, note=None))
+
+    assert "blacklist" not in capsys.readouterr().out
 
 
 # --- report ---

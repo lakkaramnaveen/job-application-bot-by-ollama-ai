@@ -736,6 +736,13 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
         width = max(len(field) for field in _STATUS_VIEW_FIELDS)
         for field in _STATUS_VIEW_FIELDS:
             print(f"{field:<{width}}  {job.get(field)}")
+        if CompanyBlacklist(settings.blacklist_path).is_blocked(job["company"]):
+            # A job tracked/applied to before its company was blacklisted
+            # (or blacklisted afterward for an unrelated reason) - worth
+            # surfacing here since nothing else flags the inconsistency:
+            # job-bot run's own blacklist check only ever runs at search
+            # time, never retroactively against what's already tracked.
+            print(f"\n[!!] {job['company']} is on your blacklist.")
         if job.get("notes"):
             print(f"\nNote: {job['notes']}")
         generation = tracker.get_resume_generation(args.job_id)
