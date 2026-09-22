@@ -209,6 +209,24 @@ def test_request_uses_json_schema_format():
     assert b"deepseek-r1:8b" in sent_body
 
 
+def test_quit_ollama_uses_taskkill_on_windows(monkeypatch):
+    """The macOS/Linux tests above never exercise the Windows branch at
+    all - a different command family (taskkill, not osascript/pkill).
+    """
+    monkeypatch.setattr("job_bot.llm.ollama_provider.platform.system", lambda: "Windows")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("job_bot.llm.ollama_provider.subprocess.run", fake_run)
+
+    assert quit_ollama() is True
+    assert len(calls) == 2
+    assert all(command[0] == "taskkill" for command in calls)
+
+
 def test_quit_ollama_returns_true_when_a_command_succeeds(monkeypatch):
     monkeypatch.setattr("job_bot.llm.ollama_provider.platform.system", lambda: "Darwin")
     calls = []
@@ -305,3 +323,52 @@ def test_repair_truncated_json_string_declines_more_than_one_open_object():
     truncated = '{"body": "Dear Hiring Manager", "extra": {"nested": "x\\n\\n\\n\\n'
 
     assert _repair_truncated_json_string(truncated) is None
+
+
+def test_repair_truncated_json_string_declines_when_padding_is_preceded_by_a_lone_backslash():
+    """An orphaned backslash right at the truncation boundary - an escape
+    sequence split mid-pair by the cutoff, not a clean end of real content
+    - is structurally different from the padding pattern this repair
+    targets; appending '"}' after it would leave that backslash escaping
+    the closing quote instead of ending the string. Declines rather than
+    guess, same reasoning as the mid-word-cutoff and more-than-one-open-
+    brace cases above.
+    """
+    truncated = '{"body": "Dear Hiring Manager' + "\\" + "\\n" * 3
+
+    assert _repair_truncated_json_string(truncated) is None
+
+
+def test_repair_truncated_json_string_declines_when_the_string_is_already_closed():
+    """An even count of unescaped quotes in what's left after trimming the
+    padding means the JSON string value was already closed by a real
+    closing quote before the padding started - not actually mid-string
+    truncation at all, so appending another '"}' would be wrong.
+    """
+    truncated = '{"body": "hello"' + "\\n" * 4
+
+    assert _repair_truncated_json_string(truncated) is None
+
+
+@respx.mock
+def test_repair_producing_still_invalid_json_falls_through_to_a_normal_retry():
+    """The repair can succeed structurally (closes the open string into
+    valid JSON) while the model's response was still genuinely incomplete
+    for the schema - here `reasoning` gets closed by the repair, but
+    `should_apply` (required, no default) was never reached before the
+    cutoff - so the repaired JSON must not be returned as if it were a
+    valid JobMatchScore; this must fall through to a normal retry instead,
+    same as when there was no repair at all.
+    """
+    provider = make_provider()
+    truncated = (
+        '{"eligibility": "pass", "technical_fit": 75, "experience_fit": 75, "culture_fit": 75, '
+        '"score": 75, "reasoning": "decent fit' + "\\n" * 4
+    )
+    payload = {"message": {"role": "assistant", "content": truncated}}
+    route = respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(200, json=payload))
+
+    with pytest.raises(OllamaProviderError, match="after 3 attempts"):
+        provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
+
+    assert route.call_count == 3
