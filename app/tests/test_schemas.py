@@ -197,6 +197,30 @@ def test_tailored_resume_bullet_points_accepts_genuine_bullets():
     assert resume.bullet_points == genuine
 
 
+def test_tailored_resume_highlighted_skills_rejects_leaked_reasoning():
+    """Same bug class as test_tailored_resume_bullet_points_rejects_leaked_
+    reasoning above, for highlighted_skills instead of bullet_points - all
+    three TailoredResume free-text fields come from the same generation
+    call, but this one had no schema-level backstop at all before this
+    test, despite being written into the real .docx resume
+    (generation/resume_document.py) and reused as a few-shot example for
+    future tailoring calls (Tracker.best_resume_examples()), the same
+    compounding risk this marker list exists to close.
+    """
+    contaminated = [
+        "Python",
+        "Let me check if this skill is actually grounded in the resume before including it.",
+    ]
+    with pytest.raises(ValidationError, match="leaked reasoning"):
+        TailoredResume(summary="Genuine summary.", highlighted_skills=contaminated, bullet_points=["Shipped X"])
+
+
+def test_tailored_resume_highlighted_skills_accepts_genuine_skills():
+    genuine = ["Python", "PostgreSQL", "AWS"]
+    resume = TailoredResume(summary="Genuine summary.", highlighted_skills=genuine, bullet_points=["Shipped X"])
+    assert resume.highlighted_skills == genuine
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

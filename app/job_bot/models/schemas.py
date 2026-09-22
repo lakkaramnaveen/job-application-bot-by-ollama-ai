@@ -167,6 +167,21 @@ class TailoredResume(BaseModel):
     _reject_leaked_reasoning_bullets = field_validator("bullet_points", mode="before")(
         _reject_leaked_reasoning_in_list
     )
+    # Same gap bullet_points had until it got this exact validator, for the
+    # exact same reasons: highlighted_skills is free-text list output from
+    # the same generation call, written into the real .docx resume
+    # (generation/resume_document.py) and the reference tailored_resume.txt
+    # (generation/artifacts.py), and reused as a few-shot example for
+    # future generations (Tracker.best_resume_examples() ->
+    # resume_tailor.py) - the exact compounding risk this whole guard
+    # exists to close. _grounded_skills() (resume_tailor.py) filters
+    # invented/ungrounded skills, a different problem it happens to
+    # sometimes catch as a side effect, not a reliable backstop for this
+    # one: leaked reasoning that restates real resume content (the
+    # documented failure shape) can still contain resume-matching terms.
+    _reject_leaked_reasoning_skills = field_validator("highlighted_skills", mode="before")(
+        _reject_leaked_reasoning_in_list
+    )
 
 
 class CoverLetter(BaseModel):

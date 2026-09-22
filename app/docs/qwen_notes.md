@@ -13,7 +13,8 @@ names the fix commit and the file(s) it lives in.
 ## 1. Reasoning leaks into the real answer field
 
 **Symptom:** a structured-output field (`ApplicationAnswer.answer`,
-`CoverLetter.body`, `TailoredResume.summary`) contains the model's own
+`CoverLetter.body`, `TailoredResume.summary`/`.bullet_points`/
+`.highlighted_skills`) contains the model's own
 chain-of-thought instead of (or in addition to) the finished content -
 phrasing like "I need to answer the question about X...", "Let me
 carefully/check/search...", "I should not fabricate...", or a self-review
@@ -41,15 +42,17 @@ letter body.
   directly into a real form or document - no reasoning process, no
   restating what was checked, no second draft.
 - A `field_validator` on `ApplicationAnswer.answer`, `CoverLetter.body`,
-  and `TailoredResume.summary` (models/schemas.py) raises on a shared list
-  of this model's own consistent reasoning-trace phrasing. The raise
-  routes back through `generate_structured()`'s existing
-  retry-on-`ValidationError` loop (`ollama_provider.py`), so the model
-  gets another attempt instead of the leak silently going through.
+  and all three `TailoredResume` free-text fields (`summary`,
+  `bullet_points`, `highlighted_skills` - the latter two per-list-item, via
+  a shared `_reject_leaked_reasoning_in_list` wrapper, models/schemas.py)
+  raises on a shared list of this model's own consistent reasoning-trace
+  phrasing. The raise routes back through `generate_structured()`'s
+  existing retry-on-`ValidationError` loop (`ollama_provider.py`), so the
+  model gets another attempt instead of the leak silently going through.
 
 **If you see this again:** a new leak phrasing wasn't in the marker list.
-Add it there (the list is deliberately named/shared across all three
-fields rather than duplicated) rather than writing a new field-specific
+Add it there (the list is deliberately named/shared across every guarded
+field rather than duplicated) rather than writing a new field-specific
 check. Commits: `2523b4f`, `f91c080`.
 
 ## 2. A finished response gets truncated by pure padding, never closes the JSON
