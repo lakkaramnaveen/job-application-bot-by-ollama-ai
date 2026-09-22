@@ -1102,10 +1102,10 @@ def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
     """Dump tracked jobs as CSV or JSON (`--format`) - to a file with
     `--out`, or stdout so it pipes straight into another tool. `--search`
     matches the dashboard's own search box (Tracker.list_jobs' `search`,
-    a title/company/notes substring match) - the dashboard's
-    /api/export.csv/.json already respected it, but the CLI command had no
-    equivalent way to export a search result instead of a full
-    status-filtered dump.
+    a title/company/notes/match_reasoning/eligibility_note substring
+    match) - the dashboard's /api/export.csv/.json already respected it,
+    but the CLI command had no equivalent way to export a search result
+    instead of a full status-filtered dump.
     """
     tracker = Tracker(settings.db_path)
     jobs = tracker.list_jobs(
@@ -1634,7 +1634,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_p = sub.add_parser("export", help="Export tracked jobs as CSV or JSON.")
     export_p.add_argument("--status", choices=sorted(TRACKER_STATUSES), default=None)
     export_p.add_argument(
-        "--search", default=None, help="Only export jobs whose title, company, or note contains this text."
+        "--search",
+        default=None,
+        help="Only export jobs whose title, company, note, match reasoning, or eligibility note "
+        "contains this text.",
     )
     export_p.add_argument("--format", choices=["csv", "json"], default="csv")
     export_p.add_argument(

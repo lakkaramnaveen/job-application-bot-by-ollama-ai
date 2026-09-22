@@ -542,6 +542,59 @@ def test_count_jobs_search_also_matches_notes(tmp_path):
     assert tracker.count_jobs(search="Nobody") == 0
 
 
+def test_list_jobs_search_also_matches_match_reasoning(tmp_path):
+    """Real gap this guards against: match_reasoning (Tracker.record_score())
+    is exactly the kind of free-text context someone would later search
+    for without remembering which job it was attached to - e.g. a
+    specific technology mentioned in the LLM's own scoring explanation.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_score(
+        "1", "Backend Engineer", "Acme", "https://example.com/1", score=90, should_apply=True,
+        reasoning="Strong Python and AWS overlap with the posting.",
+    )
+    tracker.record_score(
+        "2", "Designer", "Beta", "https://example.com/2", score=40, should_apply=False,
+        reasoning="Weak fit, mostly design-focused role.",
+    )
+
+    results = tracker.list_jobs(search="AWS")
+
+    assert [j["job_id"] for j in results] == ["1"]
+
+
+def test_list_jobs_search_also_matches_eligibility_note(tmp_path):
+    """Real gap this guards against: eligibility_note quotes the specific
+    posting wording driving an eligibility verdict (e.g. "Requires US
+    citizenship") - exactly the kind of thing someone would search for to
+    find every job the eligibility gate flagged over the same rule.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_score(
+        "1", "Backend Engineer", "Acme", "https://example.com/1", score=20, should_apply=False,
+        eligibility="fail", eligibility_note="Requires active US security clearance.",
+    )
+    tracker.record_score(
+        "2", "Designer", "Beta", "https://example.com/2", score=85, should_apply=True, eligibility="pass",
+    )
+
+    results = tracker.list_jobs(search="clearance")
+
+    assert [j["job_id"] for j in results] == ["1"]
+
+
+def test_count_jobs_search_also_matches_match_reasoning_and_eligibility_note(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_score(
+        "1", "Backend Engineer", "Acme", "https://example.com/1", score=90, should_apply=True,
+        reasoning="Strong Python overlap.", eligibility="fail", eligibility_note="Requires US citizenship.",
+    )
+
+    assert tracker.count_jobs(search="Python") == 1
+    assert tracker.count_jobs(search="citizenship") == 1
+    assert tracker.count_jobs(search="Nobody") == 0
+
+
 def test_list_jobs_sorts_by_match_score(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "A", "Acme", "https://example.com/1", match_score=40)

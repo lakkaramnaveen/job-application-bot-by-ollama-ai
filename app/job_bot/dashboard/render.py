@@ -369,7 +369,7 @@ def render_page_html(
 </div>
 
 <form class="toolbar" id="filters">
-  <input type="search" id="q" name="q" placeholder="Search title, company, or notes..."
+  <input type="search" id="q" name="q" placeholder="Search title, company, notes, or scoring details..."
          value="{html.escape(search, quote=True)}">
   <select id="status" name="status">
     {_options_html(status_options, status)}
