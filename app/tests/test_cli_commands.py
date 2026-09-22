@@ -10,6 +10,7 @@ import io
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,7 @@ from job_bot.cli import (
     EXPECTED_ERRORS,
     _apply_provider_overrides,
     _score_bucket_label,
+    build_parser,
     cmd_blacklist,
     cmd_dashboard,
     cmd_doctor,
@@ -1092,3 +1094,29 @@ def test_dashboard_falls_back_to_settings_port_when_not_given(tmp_path, monkeypa
     cmd_dashboard(settings, args)
 
     assert calls == [(settings.db_path, settings.blacklist_path, 8765, True)]
+
+
+# --- docs consistency ---
+
+
+def test_every_cli_flag_is_documented_in_the_readme():
+    """Real gap this guards against: `job-bot report`'s --stale-days flag
+    had no mention anywhere in README.md - not even a usage example -
+    despite every other subcommand flag being documented at least once.
+    Walks every subcommand's own flags (skipping --help, which argparse
+    adds automatically, not something anyone hand-documents) and asserts
+    each appears as a literal "--flag-name" substring somewhere in
+    README.md, so a newly added flag can't silently go undocumented the
+    same way again.
+    """
+    readme_text = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+    parser = build_parser()
+    sub_action = next(a for a in parser._subparsers._group_actions if a.choices)
+
+    undocumented = []
+    for cmd_name, subparser in sub_action.choices.items():
+        for action in subparser._actions:
+            for opt in action.option_strings:
+                if opt != "--help" and opt not in readme_text:
+                    undocumented.append(f"{cmd_name} {opt}")
+    assert undocumented == []
