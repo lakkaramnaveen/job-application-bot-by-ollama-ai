@@ -999,10 +999,16 @@ def _eligibility_breakdown(tracker: Tracker) -> dict[str, int]:
 
 
 def _print_eligibility_breakdown(tracker: Tracker) -> None:
+    """No `if not breakdown: return` guard here, unlike its sibling
+    _print_score_breakdown: that one's buckets can genuinely be empty (every
+    tracked job never scored, so none have a match_score to bucket), but
+    _eligibility_breakdown always assigns a job to "not scored" instead of
+    omitting it - it's only ever empty when there are zero tracked jobs at
+    all, a case cmd_report's own `if not counts: return` already handles
+    before this is ever called. A guard for a case that can't happen here
+    would be untestable dead code, not real defense.
+    """
     breakdown = _eligibility_breakdown(tracker)
-    if not breakdown:
-        return
-
     print("\nOutcomes by eligibility verdict:")
     width = max(len(verdict) for verdict in breakdown)
     ordered = [v for v in _ELIGIBILITY_VERDICT_ORDER if v in breakdown]
