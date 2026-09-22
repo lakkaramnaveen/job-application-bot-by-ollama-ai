@@ -452,6 +452,70 @@ def test_post_note_rejects_a_cross_origin_request(live_server):
     assert exc_info.value.code == 403
 
 
+def test_post_note_rejects_non_json_content_type(live_server):
+    req = urllib.request.Request(
+        f"{live_server}/api/jobs/job1/note",
+        data=b"note=x",
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": live_server},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 400
+
+
+def test_post_note_rejects_a_non_string_note_value(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/jobs/job1/note", {"note": 123})
+    assert exc_info.value.code == 400
+
+
+def test_post_note_rejects_malformed_json_body(live_server):
+    req = urllib.request.Request(
+        f"{live_server}/api/jobs/job1/note",
+        data=b"{not valid json",
+        method="POST",
+        headers={"Content-Type": "application/json", "Origin": live_server},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 400
+
+
+def test_post_note_rejects_oversized_body(live_server):
+    huge_payload = {"note": "x" * 10_000}
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/jobs/job1/note", huge_payload)
+    assert exc_info.value.code == 400
+
+
+def test_post_note_rejects_a_non_numeric_content_length(live_server):
+    """Same real bug/fix as test_post_status_rejects_a_non_numeric_content_
+    length above, for the /note endpoint's own, separately-implemented
+    Content-Length parsing (server.py has no shared helper for this - see
+    that test's docstring for why a raw socket is needed here).
+    """
+    parts = urlsplit(live_server)
+    sock = socket.create_connection((parts.hostname, parts.port), timeout=5)
+    try:
+        sock.sendall(
+            f"POST /api/jobs/job1/note HTTP/1.1\r\n"
+            f"Host: {parts.hostname}:{parts.port}\r\n"
+            f"Origin: {live_server}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: not-a-number\r\n\r\n".encode()
+        )
+        chunks = []
+        while chunk := sock.recv(4096):
+            chunks.append(chunk)
+        response = b"".join(chunks).decode("utf-8", errors="replace")
+    finally:
+        sock.close()
+
+    assert response.startswith("HTTP/1.0 400") or response.startswith("HTTP/1.1 400")
+    assert "Invalid Content-Length" in response
+
+
 def test_post_note_on_unknown_job_id_returns_404(live_server):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         _post_json(f"{live_server}/api/jobs/does-not-exist/note", {"note": "x"})
@@ -509,6 +573,69 @@ def test_post_blacklist_remove_rejects_a_cross_origin_request(live_server, tmp_p
         _post_json(f"{live_server}/api/blacklist/remove", {"company": "Acme Corp"}, same_origin=False)
     assert exc_info.value.code == 403
     assert CompanyBlacklist(tmp_path / "blacklist.json").is_blocked("Acme Corp")
+
+
+def test_post_blacklist_remove_rejects_non_json_content_type(live_server):
+    req = urllib.request.Request(
+        f"{live_server}/api/blacklist/remove",
+        data=b"company=x",
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": live_server},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 400
+
+
+def test_post_blacklist_remove_rejects_a_non_string_company_value(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/blacklist/remove", {"company": 123})
+    assert exc_info.value.code == 400
+
+
+def test_post_blacklist_remove_rejects_malformed_json_body(live_server):
+    req = urllib.request.Request(
+        f"{live_server}/api/blacklist/remove",
+        data=b"{not valid json",
+        method="POST",
+        headers={"Content-Type": "application/json", "Origin": live_server},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 400
+
+
+def test_post_blacklist_remove_rejects_oversized_body(live_server):
+    huge_payload = {"company": "x" * 10_000}
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/blacklist/remove", huge_payload)
+    assert exc_info.value.code == 400
+
+
+def test_post_blacklist_remove_rejects_a_non_numeric_content_length(live_server):
+    """Same real bug/fix as test_post_status_rejects_a_non_numeric_content_
+    length above, for /api/blacklist/remove's own, separately-implemented
+    Content-Length parsing.
+    """
+    parts = urlsplit(live_server)
+    sock = socket.create_connection((parts.hostname, parts.port), timeout=5)
+    try:
+        sock.sendall(
+            f"POST /api/blacklist/remove HTTP/1.1\r\n"
+            f"Host: {parts.hostname}:{parts.port}\r\n"
+            f"Origin: {live_server}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: not-a-number\r\n\r\n".encode()
+        )
+        chunks = []
+        while chunk := sock.recv(4096):
+            chunks.append(chunk)
+        response = b"".join(chunks).decode("utf-8", errors="replace")
+    finally:
+        sock.close()
+
+    assert response.startswith("HTTP/1.0 400") or response.startswith("HTTP/1.1 400")
+    assert "Invalid Content-Length" in response
 
 
 def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatch):
