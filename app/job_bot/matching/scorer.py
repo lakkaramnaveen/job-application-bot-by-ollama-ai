@@ -23,7 +23,14 @@ _BASE_SYSTEM_PROMPT = (
     "user. Set should_apply to false if the score is below 60 or a required "
     "qualification is clearly missing - eligibility='fail' postings should "
     "also get should_apply=false, though the caller enforces that "
-    "independently of what you set here."
+    "independently of what you set here.\n\n"
+    "reasoning and eligibility_note are shown directly to the candidate, "
+    "not read only by you - keep both to a brief, direct statement of your "
+    "conclusion. Never narrate your own step-by-step process of checking "
+    "the resume or posting ('let me check...', 'let me verify...'), never "
+    "restate these instructions back, and never write a self-review or a "
+    "second draft - state the conclusion and the reason for it, nothing "
+    "about how you arrived there."
 )
 
 _SENIORITY_RULE = (

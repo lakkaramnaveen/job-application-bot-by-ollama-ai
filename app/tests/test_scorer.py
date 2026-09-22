@@ -97,3 +97,24 @@ def test_require_w2_adds_an_employment_type_eligibility_rule():
     system = provider.calls[0]["system"]
     assert "Corp-to-Corp" in system
     assert "1099" in system
+
+
+def test_system_prompt_forbids_narrating_reasoning_in_the_shown_fields():
+    """reasoning/eligibility_note are shown directly to the user (see
+    schemas.py's _reject_leaked_reasoning_note/_explanation validators,
+    the second of this bug class's two complementary layers - see
+    docs/qwen_notes.md's pattern #1). The prompt layer was missing here
+    even after the validator was added: unlike qa_answerer.py/
+    cover_letter.py/resume_tailor.py, whose system prompts all explicitly
+    warn against this for their own guarded fields, scorer.py's never
+    told the model anything about it, leaving the validator as the only
+    line of defense instead of the two-layer fix this bug class always
+    gets elsewhere.
+    """
+    provider = FakeProvider()
+    score_job_match(provider, resume_text="resume", job_description="job")
+
+    system = provider.calls[0]["system"].lower()
+    assert "reasoning" in system
+    assert "self-review" in system
+    assert "second draft" in system
