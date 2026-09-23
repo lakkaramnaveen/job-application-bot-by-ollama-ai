@@ -465,6 +465,7 @@ how often it's come up. Review and answer them with:
 
 ```bash
 job-bot review-answers
+job-bot review-answers --search sponsor  # only review/print gaps whose question mentions "sponsor"
 job-bot review-answers --format json   # list gaps as JSON instead of prompting - for a monitoring script
 ```
 

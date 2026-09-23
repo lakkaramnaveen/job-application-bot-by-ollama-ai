@@ -107,7 +107,7 @@ def doctor_args(**overrides) -> argparse.Namespace:
 
 
 def review_answers_args(**overrides) -> argparse.Namespace:
-    defaults = dict(format="text")
+    defaults = dict(search=None, format="text")
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -1652,6 +1652,46 @@ def test_review_answers_says_so_when_nothing_to_review(tmp_path, capsys):
     cmd_review_answers(settings, review_answers_args())
 
     assert "nothing to review" in capsys.readouterr().out
+
+
+def test_review_answers_search_narrows_which_gaps_are_prompted(tmp_path, monkeypatch, capsys):
+    """The same --search semantics `faq list --search`/`qa-history
+    --search` already use - useful once there are enough recorded gaps
+    that reviewing them all in frequency order isn't the fastest way to
+    find a specific one.
+    """
+    settings = make_settings(tmp_path)
+    store = AnswerGapStore(settings.answer_gaps_path)
+    store.record("Are you willing to sponsor... wait, are YOU sponsored?", job_id="1", company="Acme", title="X")
+    store.record("Willing to relocate?", job_id="2", company="Acme", title="X")
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+
+    cmd_review_answers(settings, review_answers_args(search="sponsor"))
+
+    out = capsys.readouterr().out
+    assert "sponsor" in out.lower()
+    assert "relocate" not in out.lower()
+
+
+def test_review_answers_search_says_so_when_nothing_matches(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    AnswerGapStore(settings.answer_gaps_path).record("Willing to relocate?", job_id="1", company="Acme", title="X")
+
+    cmd_review_answers(settings, review_answers_args(search="cobol"))
+
+    assert 'No unanswered required questions matching "cobol".' in capsys.readouterr().out
+
+
+def test_review_answers_format_json_respects_search(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = AnswerGapStore(settings.answer_gaps_path)
+    store.record("Sponsorship required?", job_id="1", company="Acme", title="X")
+    store.record("Willing to relocate?", job_id="2", company="Acme", title="X")
+
+    cmd_review_answers(settings, review_answers_args(search="sponsor", format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert [gap["question"] for gap in payload] == ["Sponsorship required?"]
 
 
 def test_review_answers_saves_a_given_answer_to_faq_and_resolves_the_gap(tmp_path, monkeypatch, capsys):

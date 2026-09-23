@@ -828,7 +828,13 @@ def cmd_review_answers(settings: Settings, args: argparse.Namespace) -> None:
     the same way. Sorted most-frequently-seen first, since those are the
     ones worth the most to answer.
 
-    `--format json` dumps the same gaps (question/count/example) as one
+    `--search` narrows to gaps whose question contains this text (case-
+    insensitive) - the same semantics `job-bot faq list --search` and
+    `job-bot qa-history --search` already use - useful once there are
+    enough recorded gaps that reviewing them all in frequency order isn't
+    the fastest way to find a specific one (e.g. every sponsorship-related
+    question, to answer them as one batch). `--format json` dumps the same
+    (optionally --search-filtered) gaps (question/count/example) as one
     JSON array instead of prompting - for a monitoring script that wants
     to alert on e.g. a growing unanswered-questions count without an
     interactive terminal to answer from (input() would just hit EOF and
@@ -837,6 +843,9 @@ def cmd_review_answers(settings: Settings, args: argparse.Namespace) -> None:
     """
     answer_gaps = AnswerGapStore(settings.answer_gaps_path)
     gaps = answer_gaps.list_unanswered()
+    if args.search:
+        needle = args.search.casefold()
+        gaps = {question: info for question, info in gaps.items() if needle in question.casefold()}
 
     if args.format == "json":
         ordered = sorted(gaps.items(), key=lambda item: item[1].get("count", 0), reverse=True)
@@ -846,7 +855,11 @@ def cmd_review_answers(settings: Settings, args: argparse.Namespace) -> None:
 
     resume_store = ResumeStore(settings.resume_path, settings.faq_path)
     if not gaps:
-        print("No unanswered required questions recorded - nothing to review.")
+        print(
+            "No unanswered required questions recorded - nothing to review."
+            if not args.search
+            else f'No unanswered required questions matching "{args.search}".'
+        )
         return
 
     ordered = sorted(gaps.items(), key=lambda item: item[1].get("count", 0), reverse=True)
@@ -1766,6 +1779,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Answer required questions Easy Apply couldn't confidently answer on its own - "
             "saved answers are reused automatically on every future posting that asks the same question."
         ),
+    )
+    review_answers_p.add_argument(
+        "--search",
+        default=None,
+        help="Only review/print gaps whose question contains this text (case-insensitive).",
     )
     review_answers_p.add_argument(
         "--format",
