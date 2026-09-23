@@ -35,7 +35,7 @@ from job_bot.browser.linkedin_adapter import (
 )
 from job_bot.browser.session import BrowserSessionError, browser_session
 from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError, get_settings
-from job_bot.dashboard.server import run_dashboard
+from job_bot.dashboard.server import DashboardPortInUse, run_dashboard
 from job_bot.generation.artifacts import (
     UnsafeJobId,
     write_cover_letter,
@@ -79,6 +79,7 @@ EXPECTED_ERRORS = (
     GmailClientError,
     UnsafeJobId,
     BrowserSessionError,
+    DashboardPortInUse,
 )
 
 

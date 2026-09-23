@@ -46,6 +46,17 @@ DASHBOARD_HOST = "127.0.0.1"
 # a bug or abuse.
 MAX_BODY_BYTES = 4096
 
+
+class DashboardPortInUse(RuntimeError):
+    """Raised when the configured dashboard port is already bound - most
+    commonly a previous `job-bot dashboard` invocation still running (e.g.
+    a forgotten terminal tab), or another process using it. Without this,
+    ThreadingHTTPServer's own OSError ("Address already in use") propagated
+    straight out as a raw traceback instead of a clean, actionable message -
+    see cli.py's EXPECTED_ERRORS, which catches this the same way every
+    other user-facing configuration/input problem is caught.
+    """
+
 _DEFAULT_SORT = "first_seen_at"
 _DEFAULT_DIRECTION = "desc"
 
@@ -460,7 +471,19 @@ def run_dashboard(
     stale_after_days: int = 14,
 ) -> None:
     handler = make_handler(db_path, blacklist_path, stale_after_days=stale_after_days)
-    server = ThreadingHTTPServer((DASHBOARD_HOST, port), handler)
+    try:
+        server = ThreadingHTTPServer((DASHBOARD_HOST, port), handler)
+    except (OSError, OverflowError) as e:
+        # OSError: most commonly "Address already in use" (errno 48/98) -
+        # a previous `job-bot dashboard` still running is by far the most
+        # likely real cause. OverflowError: `--port`/DASHBOARD_PORT set to
+        # a value outside 0-65535 - argparse's type=int has no range check
+        # of its own, so a typo here previously reached socket.bind()
+        # itself before failing.
+        raise DashboardPortInUse(
+            f"Could not start the dashboard on port {port}: {e}. Is `job-bot dashboard` already "
+            "running? Use --port to pick a different one."
+        ) from e
     url = f"http://{DASHBOARD_HOST}:{server.server_port}/"
     print(f"Dashboard running at {url} (Ctrl+C to stop)")
     if open_browser:

@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from job_bot.dashboard.server import make_handler, run_dashboard
+from job_bot.dashboard.server import DashboardPortInUse, make_handler, run_dashboard
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import Tracker
 
@@ -843,6 +843,33 @@ def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatc
 
     assert len(opened_urls) == 1
     assert opened_urls[0].startswith("http://127.0.0.1:")
+
+
+def test_run_dashboard_raises_a_clear_error_when_the_port_is_already_in_use(tmp_path):
+    """Real failure this guards against: running `job-bot dashboard` while a
+    previous instance is still running (a forgotten terminal tab is the
+    common case) previously crashed with a raw OSError ("Address already in
+    use") traceback instead of a clean, actionable message - see
+    DashboardPortInUse.
+    """
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen(1)
+    try:
+        taken_port = blocker.getsockname()[1]
+        with pytest.raises(DashboardPortInUse, match=r"already running"):
+            run_dashboard(tmp_path / "db.sqlite3", tmp_path / "blacklist.json", port=taken_port)
+    finally:
+        blocker.close()
+
+
+def test_run_dashboard_raises_a_clear_error_for_an_out_of_range_port(tmp_path):
+    """--port/DASHBOARD_PORT has no range check of its own before reaching
+    socket.bind() - a typo like an extra digit previously surfaced as a raw
+    OverflowError traceback instead of DashboardPortInUse's clean message.
+    """
+    with pytest.raises(DashboardPortInUse):
+        run_dashboard(tmp_path / "db.sqlite3", tmp_path / "blacklist.json", port=99999999)
 
 
 def test_qa_endpoint_decodes_percent_encoded_job_id(live_server):
