@@ -1461,6 +1461,46 @@ def test_doctor_flags_an_applications_dir_that_cannot_be_created(tmp_path, capsy
     assert "[!!] Applications directory writable" in out
 
 
+def test_doctor_passes_tracker_db_check_when_no_db_file_exists(tmp_path, capsys):
+    """Unlike the resume/blacklist/FAQ/answer-gaps checks, no db.sqlite3 yet
+    is the normal case on a fresh install - job-bot run (or any other
+    command) creates it fresh, so this must not flag a plain-missing file.
+    """
+    settings = make_settings(tmp_path)
+    assert not settings.db_path.exists()
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Tracker database readable" in capsys.readouterr().out
+
+
+def test_doctor_passes_tracker_db_check_with_a_real_database(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path)  # creates a real, valid db.sqlite3
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Tracker database readable" in capsys.readouterr().out
+
+
+def test_doctor_flags_a_corrupted_tracker_database(tmp_path, capsys):
+    """Real failure this guards against: every other command opens the
+    tracker eagerly (Tracker.__init__()'s _init_db() runs on every
+    construction), so a corrupted db.sqlite3 - here, a plain text file
+    where a SQLite database should be - previously only surfaced as a raw
+    sqlite3.DatabaseError from whichever command happened to run first,
+    well past `job-bot doctor` giving a clean bill of health.
+    """
+    settings = make_settings(tmp_path)
+    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.db_path.write_text("not a sqlite database", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Tracker database readable" in out
+
+
 def test_doctor_flags_missing_anthropic_api_key(tmp_path, capsys):
     settings = make_settings(tmp_path, anthropic_api_key=None)
 

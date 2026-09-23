@@ -15,6 +15,7 @@ propagating out of a command is a real bug.
 
 import argparse
 import json
+import sqlite3
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -1482,6 +1483,28 @@ def _applications_dir_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, True, str(settings.applications_dir))
 
 
+def _tracker_db_check(settings: Settings) -> tuple[str, bool, str]:
+    """Every other command opens the tracker eagerly (Tracker.__init__()'s
+    _init_db() runs a schema migration on every construction), so a
+    present-but-corrupted db.sqlite3 (truncated by a killed process, disk
+    corruption, or simply not a SQLite file) doesn't fail quietly the way
+    a malformed JSON store does - it already raises loudly. The problem is
+    *where*: as a raw sqlite3.DatabaseError from whichever command happens
+    to run first, not here, upfront, with a message that actually explains
+    what's wrong the way this command exists to give. A missing file is
+    fine - `job-bot run`/every other command creates it fresh - so only a
+    present-but-unreadable one is a real problem.
+    """
+    label = "Tracker database readable"
+    if not settings.db_path.exists():
+        return (label, True, "not created yet - job-bot run will create it")
+    try:
+        Tracker(settings.db_path)
+    except sqlite3.DatabaseError as e:
+        return (label, False, f"{settings.db_path}: {e}")
+    return (label, True, str(settings.db_path))
+
+
 def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     """Check local setup for the common ways `job-bot run` fails partway
     through rather than up front - deliberately file/config checks only, no
@@ -1497,6 +1520,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         _faq_check(settings),
         _answer_gaps_check(settings),
         _applications_dir_check(settings),
+        _tracker_db_check(settings),
     ]
 
     if settings.llm_provider == "claude":
