@@ -1155,12 +1155,19 @@ def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
     instead of a full status-filtered dump. `--eligibility` is the exact
     counterpart to `--status`, for pulling e.g. every job the eligibility
     gate categorically disqualified without guessing a search term that
-    happens to match all of them. `--stale-days` is the row-level
-    counterpart to `job-bot report --stale-days`'s own list section (same
-    "status=applied, no reply after N days" rule as _stale_applications()
-    below) - the aggregate count there is useful for a glance, but a
-    script that wants to actually act on the stale set (send follow-up
-    reminders, say) needs the full exported rows, not just a count.
+    happens to match all of them. `--company` is an exact match (via
+    normalize_company_name, the same rule CompanyBlacklist/gmail_sync use)
+    rather than `--search`'s fuzzy substring - pulling every row for one
+    company via `--search "Acme"` risks also matching unrelated rows whose
+    notes/match_reasoning happen to mention "Acme" in passing, or missing
+    ones whose stored company name is cased/spaced differently, exactly
+    the kind of substring false-positive fixed in find_matching_job().
+    `--stale-days` is the row-level counterpart to `job-bot report
+    --stale-days`'s own list section (same "status=applied, no reply
+    after N days" rule as _stale_applications() below) - the aggregate
+    count there is useful for a glance, but a script that wants to
+    actually act on the stale set (send follow-up reminders, say) needs
+    the full exported rows, not just a count.
     """
     tracker = Tracker(settings.db_path)
     jobs = tracker.list_jobs(
@@ -1170,6 +1177,9 @@ def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
         sort="first_seen_at",
         direction="asc",
     )
+    if args.company is not None:
+        normalized = normalize_company_name(args.company)
+        jobs = [job for job in jobs if normalize_company_name(job["company"]) == normalized]
     if args.stale_days is not None:
         cutoff = (datetime.now(UTC) - timedelta(days=args.stale_days)).isoformat()
         jobs = [
@@ -1811,6 +1821,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only export jobs whose title, company, note, match reasoning, or eligibility note "
         "contains this text.",
+    )
+    export_p.add_argument(
+        "--company",
+        default=None,
+        help="Only export jobs at this exact company (case/spacing-insensitive), not a substring "
+        "match like --search.",
     )
     export_p.add_argument(
         "--stale-days",

@@ -420,6 +420,7 @@ job-bot export                          # all tracked jobs as CSV, to stdout
 job-bot export --status applied --out applied.csv
 job-bot export --format json --out applied.json    # same rows/columns, as JSON
 job-bot export --search "Acme"                      # title/company/notes/reasoning match, like the dashboard's search box
+job-bot export --company "Acme Corp"                # exact company match (case/spacing-insensitive), not a substring like --search
 job-bot export --eligibility fail                   # every job the eligibility gate categorically disqualified
 job-bot export --stale-days 14                       # applied jobs with no reply after 14 days, same rule `report --stale-days` uses
 ```

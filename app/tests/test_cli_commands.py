@@ -124,7 +124,9 @@ def gmail_sync_args(**overrides) -> argparse.Namespace:
 
 
 def export_args(**overrides) -> argparse.Namespace:
-    defaults = dict(status=None, search=None, eligibility=None, stale_days=None, out=None, format="csv")
+    defaults = dict(
+        status=None, search=None, eligibility=None, company=None, stale_days=None, out=None, format="csv"
+    )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -1097,6 +1099,33 @@ def test_export_filters_by_eligibility(tmp_path, capsys):
     )
 
     cmd_export(settings, export_args(eligibility="fail"))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert [r["job_id"] for r in rows] == ["job1"]
+
+
+def test_export_filters_by_company(tmp_path, capsys):
+    """--company is an exact (normalized) match, unlike --search's fuzzy
+    substring - "Acme Corp" here must not also pull "Acme Robotics", an
+    unrelated company that happens to share the word "Acme".
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
+    tracker.upsert_job("job2", "Frontend Engineer", "Acme Robotics", "https://x/2")
+
+    cmd_export(settings, export_args(company="Acme Corp"))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert [r["job_id"] for r in rows] == ["job1"]
+
+
+def test_export_company_matches_case_and_spacing_insensitively(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "  ACME   corp  ", "https://x/1")
+
+    cmd_export(settings, export_args(company="Acme Corp"))
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job1"]
