@@ -496,6 +496,11 @@ job-bot blacklist import past_employers.txt   # one company per line; blank/'#'-
 job-bot blacklist export --out backup.txt     # write it back out the same way; omit --out to print to stdout
 ```
 
+`blacklist add` warns (without blocking the add) if the company still has a
+tracked application `applied`, `interviewing`, or `offer` at - blacklisting
+only stops future applications, it never touches anything already tracked,
+so this is a safety net for a typo or a name confused with a similar one.
+
 Backed by `BLACKLIST_PATH` (default `data/company_blacklist.json`); matching
 is case-insensitive.
 

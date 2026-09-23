@@ -825,6 +825,65 @@ def test_blacklist_add_list_remove_round_trip(tmp_path, capsys):
     assert "Blacklist is empty." in capsys.readouterr().out
 
 
+def test_blacklist_add_warns_about_in_progress_applications_at_that_company(tmp_path, capsys):
+    """Real mistake this guards against: blacklisting only stops future
+    applications (CompanyBlacklist doesn't touch the tracker at all) - if
+    you're mid-interview somewhere and blacklist the wrong name (a typo, or
+    a company you confused with a similarly-named one), nothing here would
+    otherwise tell you that name still has an active tracked application.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
+    tracker.mark_applied("job1")
+    tracker.update_status("job1", "interviewing")
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
+
+    out = capsys.readouterr().out
+    assert "Added to blacklist: Acme Corp" in out
+    assert "1 tracked application(s) at Acme Corp are still in progress (interviewing)" in out
+    assert "blacklisting only stops future applications" in out
+
+
+def test_blacklist_add_warning_matches_case_and_spacing_insensitively(tmp_path, capsys):
+    """CompanyBlacklist.is_blocked() itself matches via normalize_company_name()
+    - this warning must agree with that, or it would miss the exact "same
+    company, different casing/spacing" case the blacklist itself already
+    treats as identical.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "  ACME   corp  ", "https://x/1")
+    tracker.mark_applied("job1")
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
+
+    assert "still in progress" in capsys.readouterr().out
+
+
+def test_blacklist_add_no_warning_when_nothing_is_in_progress(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")  # status=seen
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
+
+    assert "still in progress" not in capsys.readouterr().out
+
+
+def test_blacklist_add_no_warning_for_closed_outcomes(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
+    tracker.mark_applied("job1")
+    tracker.update_status("job1", "rejected")
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
+
+    assert "still in progress" not in capsys.readouterr().out
+
+
 def test_blacklist_remove_of_absent_company_says_so(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
