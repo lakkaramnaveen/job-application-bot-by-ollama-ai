@@ -114,13 +114,13 @@ def review_answers_args(**overrides) -> argparse.Namespace:
 
 
 def qa_history_args(**overrides) -> argparse.Namespace:
-    defaults = dict(search=None, format="text")
+    defaults = dict(search=None, company=None, format="text")
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
 
 def resume_history_args(**overrides) -> argparse.Namespace:
-    defaults = dict(search=None, format="text")
+    defaults = dict(search=None, company=None, format="text")
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -2136,6 +2136,33 @@ def test_qa_history_search_says_so_when_nothing_matches(tmp_path, capsys):
     assert 'No Q&A history matching "cobol".' in capsys.readouterr().out
 
 
+def test_qa_history_company_is_an_exact_match_not_a_substring(tmp_path, capsys):
+    """--company must not also pull "Acme Robotics", an unrelated company
+    that happens to share the word "Acme" - unlike --search's fuzzy
+    substring match.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
+    tracker.upsert_job("job2", "Frontend Engineer", "Acme Robotics", "https://x/2")
+    tracker.record_qa("job1", "Years of experience?", "5")
+    tracker.record_qa("job2", "Willing to relocate?", "No")
+
+    cmd_qa_history(settings, qa_history_args(company="Acme Corp"))
+
+    out = capsys.readouterr().out
+    assert "Years of experience?" in out
+    assert "Willing to relocate?" not in out
+
+
+def test_qa_history_company_says_so_when_nothing_matches(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_qa_history(settings, qa_history_args(company="Nobody Inc"))
+
+    assert 'No Q&A history matching company "Nobody Inc".' in capsys.readouterr().out
+
+
 def test_qa_history_format_json_prints_pairs_with_job_context(tmp_path, capsys):
     settings = make_settings(tmp_path)
     tracker = Tracker(settings.db_path)
@@ -2229,6 +2256,27 @@ def test_resume_history_search_says_so_when_nothing_matches(tmp_path, capsys):
     cmd_resume_history(settings, resume_history_args(search="cobol"))
 
     assert 'No resume generations matching "cobol".' in capsys.readouterr().out
+
+
+def test_resume_history_company_is_an_exact_match_not_a_substring(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_resume_generation("job1", "Backend Engineer", "Acme Corp", "For job 1.", [], [])
+    tracker.record_resume_generation("job2", "Frontend Engineer", "Acme Robotics", "For job 2.", [], [])
+
+    cmd_resume_history(settings, resume_history_args(company="Acme Corp"))
+
+    out = capsys.readouterr().out
+    assert "For job 1." in out
+    assert "For job 2." not in out
+
+
+def test_resume_history_company_says_so_when_nothing_matches(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_resume_history(settings, resume_history_args(company="Nobody Inc"))
+
+    assert 'No resume generations matching company "Nobody Inc".' in capsys.readouterr().out
 
 
 def test_resume_history_format_json_prints_generations_with_status(tmp_path, capsys):

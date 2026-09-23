@@ -957,21 +957,47 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
             sys.stdout.write(text)
 
 
+def _no_history_message(kind: str, search: str | None, company: str | None) -> str:
+    """Shared "nothing found" wording for cmd_qa_history/cmd_resume_history
+    - `kind` is e.g. "Q&A history"/"resume generations". Preserves the
+    exact "No {kind} matching \"{search}\"." wording those commands already
+    had before --company existed (search-only is the common case, and
+    changing established message text would be a needless breaking change
+    for a script grepping it), while still describing --company too when
+    it's given, combined or alone.
+    """
+    if not search and not company:
+        return f"No {kind} recorded yet."
+    parts = []
+    if search:
+        parts.append(f'"{search}"')
+    if company:
+        parts.append(f'company "{company}"')
+    return f"No {kind} matching {' and '.join(parts)}."
+
+
 def cmd_qa_history(settings: Settings, args: argparse.Namespace) -> None:
     """Every question/answer pair ever recorded, across every job, most
     recent first - unlike `job-bot status <job_id>` (one job at a time) or
     `job-bot faq list` (only the curated, promoted-to-cache subset), this
     is the full raw transcript (Tracker.search_qa()), with each pair's
     company/title for context. `--search` matches question or answer text,
-    the same semantics `faq list --search` already uses.
+    the same semantics `faq list --search` already uses. `--company` is an
+    exact match (via normalize_company_name, the same rule `job-bot export
+    --company` uses) rather than --search's fuzzy substring - pulling every
+    pair for one company via --search risks also matching unrelated pairs
+    whose question/answer text happens to mention that company in passing.
     """
     tracker = Tracker(settings.db_path)
     pairs = tracker.search_qa(search=args.search)
+    if args.company is not None:
+        normalized = normalize_company_name(args.company)
+        pairs = [p for p in pairs if normalize_company_name(p["company"] or "") == normalized]
     if args.format == "json":
         print(json.dumps(pairs, indent=2))
         return
     if not pairs:
-        print("No Q&A history recorded yet." if not args.search else f'No Q&A history matching "{args.search}".')
+        print(_no_history_message("Q&A history", args.search, args.company))
         return
     for pair in pairs:
         print(f"[{pair['job_id']}] {pair['company']} - {pair['title']} ({pair['created_at']})")
@@ -987,19 +1013,20 @@ def cmd_resume_history(settings: Settings, args: argparse.Namespace) -> None:
     this is the full raw history, for a human to review which tailoring
     approaches actually led somewhere. `--search` matches summary, company,
     or title text, the same semantics `faq list --search`/`job-bot
-    qa-history --search` already use.
+    qa-history --search` already use. `--company` is an exact match (same
+    rule `job-bot export --company`/`job-bot qa-history --company` use)
+    rather than --search's fuzzy substring.
     """
     tracker = Tracker(settings.db_path)
     generations = tracker.list_resume_generations(search=args.search)
+    if args.company is not None:
+        normalized = normalize_company_name(args.company)
+        generations = [g for g in generations if normalize_company_name(g["company"] or "") == normalized]
     if args.format == "json":
         print(json.dumps(generations, indent=2))
         return
     if not generations:
-        print(
-            "No resume generations recorded yet."
-            if not args.search
-            else f'No resume generations matching "{args.search}".'
-        )
+        print(_no_history_message("resume generations", args.search, args.company))
         return
     for gen in generations:
         status = gen["status"] or "not tracked"
@@ -1844,6 +1871,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only print pairs whose question or answer contains this text (case-insensitive).",
     )
     qa_history_p.add_argument(
+        "--company",
+        default=None,
+        help="Only print pairs for this exact company (case/spacing-insensitive), not a substring "
+        "match like --search.",
+    )
+    qa_history_p.add_argument(
         "--format",
         choices=["text", "json"],
         default="text",
@@ -1859,6 +1892,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only print generations whose summary, company, or title contains this text "
         "(case-insensitive).",
+    )
+    resume_history_p.add_argument(
+        "--company",
+        default=None,
+        help="Only print generations for this exact company (case/spacing-insensitive), not a "
+        "substring match like --search.",
     )
     resume_history_p.add_argument(
         "--format",

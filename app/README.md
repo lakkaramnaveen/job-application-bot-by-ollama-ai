@@ -317,6 +317,7 @@ reviewed directly, with each job's current status for outcome context:
 ```bash
 job-bot resume-history                   # every tailored-resume generation, most recent first, with outcome status
 job-bot resume-history --search python   # only generations whose summary/company/title mentions "python"
+job-bot resume-history --company "Acme Corp"  # exact company match (case/spacing-insensitive), not a substring like --search
 job-bot resume-history --format json     # same generations as one JSON array instead
 ```
 
@@ -504,6 +505,7 @@ searched directly:
 ```bash
 job-bot qa-history                     # every recorded Q&A pair, most recent first, with company/title context
 job-bot qa-history --search python     # only pairs whose question or answer mentions "python"
+job-bot qa-history --company "Acme Corp"  # exact company match (case/spacing-insensitive), not a substring like --search
 job-bot qa-history --format json       # same pairs as one JSON array instead
 ```
 
