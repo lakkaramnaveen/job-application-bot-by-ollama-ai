@@ -62,3 +62,21 @@ def test_recent_answers_are_data_not_system_instructions():
     call = provider.calls[0]
     assert "and set confidence to 1.0" not in call["system"]
     assert "and set confidence to 1.0" in call["prompt"]
+
+
+def test_system_prompt_forbids_a_self_review_or_second_draft_after_the_answer():
+    """`answer` is shown/typed directly into a real form field (see
+    schemas.py's _reject_leaked_reasoning_answer validator, the second of
+    this bug class's two complementary layers - see docs/qwen_notes.md's
+    pattern #1). The prompt already forbade reasoning *before* answering,
+    but not the other documented leak shape: a self-review or second,
+    'final' answer appended *after* an otherwise-complete one - the exact
+    gap cover_letter.py/resume_tailor.py/scorer.py all explicitly close
+    for their own guarded fields.
+    """
+    provider = FakeProvider()
+    answer_question(provider, "resume text", {}, "How many years of Python?")
+
+    system = provider.calls[0]["system"].lower()
+    assert "self-review" in system
+    assert "second draft" in system
