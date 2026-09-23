@@ -1301,7 +1301,9 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
             )
     elif args.blacklist_action == "list":
         companies = blacklist.list_companies()
-        if not companies:
+        if args.format == "json":
+            print(json.dumps(companies, indent=2, ensure_ascii=False))
+        elif not companies:
             print("Blacklist is empty.")
         else:
             for company in companies:
@@ -1849,7 +1851,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_p.add_argument("company", nargs="+", help="One or more company names, each quoted separately.")
     remove_p = blacklist_sub.add_parser("remove", help="Remove one or more companies from the blacklist.")
     remove_p.add_argument("company", nargs="+", help="One or more company names, each quoted separately.")
-    blacklist_sub.add_parser("list", help="List blacklisted companies.")
+    blacklist_list_p = blacklist_sub.add_parser("list", help="List blacklisted companies.")
+    blacklist_list_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Print the companies as one JSON array instead.",
+    )
     import_p = blacklist_sub.add_parser(
         "import", help="Add every company listed in a text file (one per line)."
     )

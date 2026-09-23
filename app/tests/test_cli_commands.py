@@ -815,14 +815,39 @@ def test_blacklist_add_list_remove_round_trip(tmp_path, capsys):
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
     assert "Added to blacklist: Acme Corp" in capsys.readouterr().out
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
     assert "Acme Corp" in capsys.readouterr().out  # display casing preserved, not normalized
 
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="remove", company=["Acme Corp"]))
     assert "Removed from blacklist: Acme Corp" in capsys.readouterr().out
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
     assert "Blacklist is empty." in capsys.readouterr().out
+
+
+def test_blacklist_list_format_json_prints_a_json_array(tmp_path, capsys):
+    """Same reasoning `job-bot faq list --format json` was added for: a
+    script or cron job that wants the structured data shouldn't have to
+    scrape human-formatted text - `blacklist export` gives JSON-adjacent
+    output but only ever the plain one-company-per-line shape `import`
+    reads back, never real JSON.
+    """
+    settings = make_settings(tmp_path)
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"]))
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == ["Acme Corp", "Beta Inc"]
+
+
+def test_blacklist_list_format_json_on_empty_blacklist_is_still_valid_json(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="json"))
+
+    assert json.loads(capsys.readouterr().out) == []
 
 
 def test_blacklist_add_warns_about_in_progress_applications_at_that_company(tmp_path, capsys):
@@ -902,7 +927,7 @@ def test_blacklist_add_accepts_multiple_companies_in_one_call(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Added to blacklist: Acme Corp" in out
     assert "Added to blacklist: Beta Inc" in out
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
     listed = capsys.readouterr().out
     assert "Acme Corp" in listed
     assert "Beta Inc" in listed
@@ -922,7 +947,7 @@ def test_blacklist_remove_accepts_multiple_companies_in_one_call(tmp_path, capsy
     out = capsys.readouterr().out
     assert "Removed from blacklist: Acme Corp" in out
     assert "Removed from blacklist: Beta Inc" in out
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
     assert "Blacklist is empty." in capsys.readouterr().out
 
 
@@ -943,7 +968,7 @@ def test_blacklist_import_adds_every_company_skipping_blanks_and_comments(tmp_pa
 
     out = capsys.readouterr().out
     assert f"Imported 3 companies from {import_file}." in out
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
     listed = capsys.readouterr().out
     assert "Acme Corp" in listed
     assert "Beta Inc" in listed
@@ -995,7 +1020,7 @@ def test_blacklist_export_round_trips_through_import(tmp_path, capsys):
     other_settings = make_settings(tmp_path, blacklist_path=tmp_path / "other_blacklist.json")
     cmd_blacklist(other_settings, argparse.Namespace(blacklist_action="import", file=export_file))
     capsys.readouterr()
-    cmd_blacklist(other_settings, argparse.Namespace(blacklist_action="list", company=None))
+    cmd_blacklist(other_settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
     listed = capsys.readouterr().out
     assert "Acme Corp" in listed
     assert "Beta Inc" in listed

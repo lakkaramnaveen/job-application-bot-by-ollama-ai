@@ -493,6 +493,7 @@ job-bot blacklist add "Company Name"      # job-bot run will always skip it
 job-bot blacklist add "Company A" "Company B" "Company C"   # add several at once
 job-bot blacklist remove "Company Name"
 job-bot blacklist list
+job-bot blacklist list --format json          # same companies as one JSON array instead
 job-bot blacklist import past_employers.txt   # one company per line; blank/'#'-comment lines skipped
 job-bot blacklist export --out backup.txt     # write it back out the same way; omit --out to print to stdout
 ```
