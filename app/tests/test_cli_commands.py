@@ -109,6 +109,7 @@ def report_args(**overrides) -> argparse.Namespace:
         by_eligibility=False,
         by_company=False,
         by_missing_qualifications=False,
+        missing_qualifications_limit=None,
         format="text",
     )
     defaults.update(overrides)
@@ -863,6 +864,91 @@ def test_report_json_includes_by_missing_qualifications_only_when_requested(tmp_
     cmd_report(settings, report_args(format="json"))
     payload = json.loads(capsys.readouterr().out)
     assert "by_missing_qualifications" not in payload
+
+
+def test_report_missing_qualifications_limit_keeps_only_the_n_most_common(tmp_path, capsys):
+    """Three distinct phrases at counts 2/1/1 - --missing-qualifications-limit 1 must keep only
+    "Kubernetes experience" (the genuine count=2 repeat), not one of the two count=1 phrases an
+    unlimited breakdown would list right alongside it.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Docker"],
+    )
+    tracker.record_score(
+        "job2",
+        "SRE",
+        "Beta",
+        "https://x/2",
+        score=65,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Terraform"],
+    )
+
+    cmd_report(settings, report_args(by_missing_qualifications=True, missing_qualifications_limit=1))
+
+    out = capsys.readouterr().out
+    assert "Kubernetes experience" in out
+    assert "Docker" not in out
+    assert "Terraform" not in out
+
+
+def test_report_json_missing_qualifications_limit_matches_the_text_output(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Docker"],
+    )
+    tracker.record_score(
+        "job2",
+        "SRE",
+        "Beta",
+        "https://x/2",
+        score=65,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Terraform"],
+    )
+
+    cmd_report(
+        settings,
+        report_args(by_missing_qualifications=True, missing_qualifications_limit=1, format="json"),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["by_missing_qualifications"] == {"Kubernetes experience": 2}
+
+
+def test_report_missing_qualifications_no_limit_by_default(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Docker"],
+    )
+
+    cmd_report(settings, report_args(by_missing_qualifications=True))
+
+    out = capsys.readouterr().out
+    assert "Kubernetes experience" in out
+    assert "Docker" in out
 
 
 def test_score_bucket_label_falls_back_for_an_out_of_range_score():

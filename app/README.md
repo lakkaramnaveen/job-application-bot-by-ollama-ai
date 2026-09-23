@@ -424,6 +424,7 @@ job-bot report --by-score --format json # same data as one JSON object, for a sc
 job-bot report --by-eligibility         # counts by eligibility-gate verdict (pass/flag/fail/not scored)
 job-bot report --by-company             # counts by company, most-applied first
 job-bot report --by-missing-qualifications # which missing qualifications the LLM scorer flags most often across postings
+job-bot report --by-missing-qualifications --missing-qualifications-limit 10 # only the 10 most common (most distinct phrases only occur once)
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response
 job-bot status <job_id>                 # no status - print the job's record, its match reasoning, eligibility verdict, and missing qualifications (if scored), tailored resume (if any), and Q&A history instead
 job-bot status <job_id> --format json   # same view as one JSON object, for a script watching one specific application
