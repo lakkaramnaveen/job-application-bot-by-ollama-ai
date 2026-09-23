@@ -88,6 +88,14 @@ def make_settings(tmp_path, **overrides) -> Settings:
         failed_applications_log_path=tmp_path / "failed_applications.log",
         answer_gaps_path=tmp_path / "answer_gaps.json",
         applications_dir=tmp_path / "applications",
+        # Without these, any test checking a Gmail-related doctor result
+        # (or leaving it at Settings' own default) was silently reading the
+        # real, working-directory data/gmail_credentials.json/gmail_token.json
+        # instead of an isolated fixture - happened to pass in this repo
+        # checkout only because neither file exists here, not because the
+        # test was actually isolated the way every other path above is.
+        gmail_credentials_path=tmp_path / "gmail_credentials.json",
+        gmail_token_path=tmp_path / "gmail_token.json",
     )
     defaults.update(overrides)
     return Settings(**defaults)
@@ -1666,6 +1674,50 @@ def test_doctor_checks_ollama_base_url_when_using_ollama(tmp_path, capsys):
     assert "[OK] Ollama base URL configured" in capsys.readouterr().out
 
 
+def test_doctor_flags_missing_gmail_credentials(tmp_path, capsys):
+    settings = make_settings(tmp_path)  # gmail_credentials_path points at a file never created
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[!!] Gmail credentials (optional, for gmail-sync)" in capsys.readouterr().out
+
+
+def test_doctor_passes_gmail_credentials_check_with_a_real_file(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.gmail_credentials_path.write_text("{}", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Gmail credentials (optional, for gmail-sync)" in capsys.readouterr().out
+
+
+def test_doctor_flags_missing_gmail_authorization(tmp_path, capsys):
+    """Real gap this guards against: gmail_credentials_path existing only
+    means gmail-sync *can* be set up, not that the one-time OAuth consent
+    (which writes gmail_token_path - see gmail_client.py) was ever actually
+    completed - doctor previously gave no way to tell "never configured"
+    apart from "configured but never authorized".
+    """
+    settings = make_settings(tmp_path)
+    settings.gmail_credentials_path.write_text("{}", encoding="utf-8")  # credentials set up...
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[OK] Gmail credentials (optional, for gmail-sync)" in out
+    assert "[!!] Gmail authorized (optional, run `job-bot gmail-sync` once)" in out  # ...but never authorized
+
+
+def test_doctor_passes_gmail_authorization_check_with_a_real_token(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.gmail_credentials_path.write_text("{}", encoding="utf-8")
+    settings.gmail_token_path.write_text("{}", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Gmail authorized (optional, run `job-bot gmail-sync` once)" in capsys.readouterr().out
+
+
 def test_doctor_flags_daily_cap_above_the_hard_ceiling(tmp_path, capsys):
     settings = make_settings(tmp_path, daily_application_cap=999)
 
@@ -1696,7 +1748,8 @@ def test_doctor_json_passed_count_matches_a_fully_healthy_setup(tmp_path, capsys
     cmd_doctor(settings, doctor_args(format="json"))
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["passed"] == payload["total"] - 1  # Gmail creds (optional) still missing
+    # Gmail credentials and Gmail authorization (both optional) still missing
+    assert payload["passed"] == payload["total"] - 2
 
 
 # --- review-answers ---

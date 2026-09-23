@@ -1633,6 +1633,23 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         )
     )
 
+    # The parallel to "LinkedIn session saved" above: credentials.json alone
+    # only means gmail-sync *can* be set up, not that the one-time OAuth
+    # consent (which writes gmail_token.json - see gmail_client.py) was ever
+    # actually completed. Without this, doctor gave no way to tell "not
+    # configured at all" apart from "configured but never authorized" -
+    # both looked identical (silence) until the first `job-bot gmail-sync`
+    # either opened a browser tab for consent or, on a headless/CI box with
+    # no browser available, failed outright.
+    gmail_authorized = settings.gmail_token_path.exists()
+    checks.append(
+        (
+            "Gmail authorized (optional, run `job-bot gmail-sync` once)",
+            gmail_authorized,
+            "" if gmail_authorized else "run `job-bot gmail-sync` once to complete the one-time OAuth consent",
+        )
+    )
+
     cap_ok = settings.daily_application_cap <= HARD_DAILY_APPLICATION_CEILING
     checks.append(
         (

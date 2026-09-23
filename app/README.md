@@ -165,9 +165,9 @@ Edit `.env`:
    parses, an API key/Ollama URL configured, a LinkedIn session saved, the
    blacklist/FAQ/answer-gaps files are valid JSON (not silently treated as empty),
    the applications directory is actually writable, Gmail credentials
-   present (if you use gmail-sync), the daily cap sane. File/config checks
-   only, no network call, so it's fast and safe to run any time something
-   seems off:
+   present and the one-time OAuth consent actually completed (if you use
+   gmail-sync), the daily cap sane. File/config checks only, no network
+   call, so it's fast and safe to run any time something seems off:
    ```bash
    job-bot doctor
    job-bot doctor --format json   # same checks as one JSON object, for a setup script or health-check cron job
