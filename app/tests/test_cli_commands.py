@@ -2135,6 +2135,7 @@ def test_main_reports_an_expected_error_and_exits_1(tmp_path, monkeypatch, capsy
         (["job-bot", "dashboard"], "cmd_dashboard"),
         (["job-bot", "blacklist", "list"], "cmd_blacklist"),
         (["job-bot", "faq", "list"], "cmd_faq"),
+        (["job-bot", "qa-history"], "cmd_qa_history"),
     ],
 )
 def test_main_dispatches_each_subcommand_to_its_own_handler(tmp_path, monkeypatch, argv, cmd_name):
