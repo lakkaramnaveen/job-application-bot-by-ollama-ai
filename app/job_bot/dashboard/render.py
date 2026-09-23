@@ -4,6 +4,7 @@ for the HTTP layer that calls this.
 """
 
 import html
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
@@ -188,6 +189,13 @@ def render_rows_html(jobs: list[dict[str, Any]], *, stale_after_days: int | None
             tooltip_parts.append(f"Eligibility: {eligibility}" + (f" - {note}" if note else ""))
         if reasoning:
             tooltip_parts.append(str(reasoning))
+        # Stored as a JSON array (see Tracker.record_score()'s docstring) -
+        # None for a job scored before this column existed, or never
+        # scored at all.
+        raw_missing_quals = job.get("missing_qualifications")
+        missing_quals = json.loads(raw_missing_quals) if raw_missing_quals else []
+        if missing_quals:
+            tooltip_parts.append("Missing: " + ", ".join(str(q) for q in missing_quals))
         score_title_attr = (
             f' title="{html.escape(chr(10).join(tooltip_parts), quote=True)}"' if tooltip_parts else ""
         )

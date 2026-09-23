@@ -430,6 +430,57 @@ def test_status_with_no_status_arg_omits_match_reasoning_section_when_never_scor
     assert "Match reasoning:" not in capsys.readouterr().out
 
 
+def test_status_with_no_status_arg_shows_missing_qualifications_when_present(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["AWS certification", "5+ years of Go"],
+    )
+
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
+
+    assert "Missing qualifications: AWS certification, 5+ years of Go" in capsys.readouterr().out
+
+
+def test_status_with_no_status_arg_omits_missing_qualifications_section_when_none(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score("job1", "Backend Engineer", "Acme", "https://x/1", score=90, should_apply=True)
+
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None))
+
+    assert "Missing qualifications:" not in capsys.readouterr().out
+
+
+def test_status_json_includes_missing_qualifications_as_a_real_list(tmp_path, capsys):
+    """The stored column is a JSON string (see Tracker.record_score()'s
+    docstring) - the --format json payload must decode it back into a real
+    array, not leak the raw stored string to a script consumer.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["AWS certification"],
+    )
+
+    cmd_status(settings, status_args(job_id="job1", status=None, note=None, format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["missing_qualifications"] == ["AWS certification"]
+
+
 def test_status_with_no_status_arg_flags_a_failed_eligibility_verdict(tmp_path, capsys):
     settings = make_settings(tmp_path)
     tracker = Tracker(settings.db_path)

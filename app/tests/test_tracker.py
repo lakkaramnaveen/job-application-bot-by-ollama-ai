@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 import pytest
@@ -237,6 +238,102 @@ def test_eligibility_columns_are_added_to_a_database_created_before_this_feature
         "1", "Engineer", "Acme", "https://example.com/1", score=90, should_apply=True, eligibility="pass"
     )
     assert tracker.get_job("1")["eligibility"] == "pass"
+
+
+def test_record_score_persists_missing_qualifications_as_json(tmp_path):
+    """missing_qualifications (JobMatchScore.missing_qualifications,
+    models/schemas.py) is the third field record_score() used to discard -
+    the LLM already lists which specific qualifications the posting asks
+    for that the resume doesn't show, on every single score, with nothing
+    ever storing or showing it before this. Stored as JSON (unlike the
+    plain-text reasoning/eligibility_note columns, since this is a list,
+    not free text) - json.loads() round-trips it back to a real list.
+    """
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_score(
+        "1",
+        "Engineer",
+        "Acme",
+        "https://example.com/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["AWS certification", "5+ years of Go"],
+    )
+
+    stored = json.loads(tracker.get_job("1")["missing_qualifications"])
+    assert stored == ["AWS certification", "5+ years of Go"]
+
+
+def test_record_score_defaults_missing_qualifications_to_an_empty_list(tmp_path):
+    tracker = make_tracker(tmp_path)
+
+    tracker.record_score("1", "Engineer", "Acme", "https://example.com/1", score=85, should_apply=True)
+
+    assert json.loads(tracker.get_job("1")["missing_qualifications"]) == []
+
+
+def test_record_score_updates_missing_qualifications_on_an_existing_job(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_score(
+        "1", "Engineer", "Acme", "https://example.com/1", score=20, should_apply=False,
+        missing_qualifications=["Old gap"],
+    )
+
+    tracker.record_score(
+        "1", "Engineer", "Acme", "https://example.com/1", score=90, should_apply=True,
+        missing_qualifications=["New gap"],
+    )
+
+    assert json.loads(tracker.get_job("1")["missing_qualifications"]) == ["New gap"]
+
+
+def test_missing_qualifications_column_is_added_to_a_database_created_before_this_feature(tmp_path):
+    """Same migration shape as the match_reasoning/eligibility tests above,
+    for the missing_qualifications column added alongside them.
+    """
+    db_path = tmp_path / "pre_existing.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE jobs (
+            job_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            company TEXT NOT NULL,
+            url TEXT NOT NULL,
+            match_score INTEGER,
+            status TEXT NOT NULL DEFAULT 'seen',
+            first_seen_at TEXT NOT NULL,
+            applied_at TEXT,
+            notes TEXT,
+            match_reasoning TEXT,
+            eligibility TEXT,
+            eligibility_note TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO jobs (job_id, title, company, url, match_score, status, first_seen_at) "
+        "VALUES ('1', 'Engineer', 'Acme', 'https://example.com/1', 85, 'seen', '2024-01-01T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    tracker = Tracker(db_path)
+
+    job = tracker.get_job("1")
+    assert job["title"] == "Engineer"
+    assert job["missing_qualifications"] is None
+    tracker.record_score(
+        "1",
+        "Engineer",
+        "Acme",
+        "https://example.com/1",
+        score=90,
+        should_apply=True,
+        missing_qualifications=["A gap"],
+    )
+    assert json.loads(tracker.get_job("1")["missing_qualifications"]) == ["A gap"]
 
 
 def test_update_status_accepts_valid_outcome_status(tmp_path):

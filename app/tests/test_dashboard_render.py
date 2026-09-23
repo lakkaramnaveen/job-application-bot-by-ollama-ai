@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 
 from job_bot.dashboard.render import (
@@ -127,6 +128,28 @@ def test_render_rows_html_combines_eligibility_and_reasoning_in_one_tooltip():
 
 def test_render_rows_html_escapes_the_eligibility_note_in_the_score_tooltip():
     malicious = make_job(eligibility="fail", eligibility_note='x"><script>alert(1)</script>')
+    html = render_rows_html([malicious])
+    assert "<script>alert(1)</script>" not in html
+
+
+def test_render_rows_html_shows_missing_qualifications_in_the_score_tooltip():
+    """missing_qualifications is stored as a JSON array (see
+    Tracker.record_score()'s docstring) - render_rows_html must decode it
+    back into a real list before joining it into the tooltip, not show the
+    raw JSON string.
+    """
+    html = render_rows_html([make_job(missing_qualifications=json.dumps(["AWS certification", "5+ years of Go"]))])
+    assert "Missing: AWS certification, 5+ years of Go" in html
+
+
+def test_render_rows_html_omits_missing_qualifications_from_tooltip_when_none_recorded():
+    for missing in (None, json.dumps([])):
+        html = render_rows_html([make_job(missing_qualifications=missing)])
+        assert "Missing:" not in html
+
+
+def test_render_rows_html_escapes_missing_qualifications_in_the_score_tooltip():
+    malicious = make_job(missing_qualifications=json.dumps(['x"><script>alert(1)</script>']))
     html = render_rows_html([malicious])
     assert "<script>alert(1)</script>" not in html
 

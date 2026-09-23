@@ -162,6 +162,8 @@ class Tracker:
                 conn.execute("ALTER TABLE jobs ADD COLUMN eligibility TEXT")
             if "eligibility_note" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN eligibility_note TEXT")
+            if "missing_qualifications" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN missing_qualifications TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS qa_history (
@@ -213,6 +215,7 @@ class Tracker:
         reasoning: str = "",
         eligibility: str = "",
         eligibility_note: str = "",
+        missing_qualifications: list[str] | None = None,
     ) -> None:
         """Upsert a job together with its LLM match score and the resulting
         seen/skipped status, in one transaction - as opposed to an
@@ -239,7 +242,19 @@ class Tracker:
         passing or failing it - worth a second look by the human, not just
         a quiet skip.
 
-        All three are optional and defaulted so every existing caller (and
+        `missing_qualifications` (JobMatchScore.missing_qualifications) is
+        the same story a third time: the LLM already lists which specific
+        qualifications the posting asks for that the resume doesn't show,
+        on every single score - it was computed and thrown away just like
+        reasoning/eligibility_note used to be, with nothing ever storing or
+        showing it. Stored as a JSON array (this table has no other
+        multi-value column, so there's no existing plain-text convention to
+        match, unlike the free-text reasoning/eligibility_note columns) -
+        callers that read it back (cli.py's cmd_status) decode it there,
+        the same way Tracker.get_resume_generation() decodes skills_json/
+        bullets_json.
+
+        All four are optional and defaulted so every existing caller (and
         every db.sqlite3 already on disk, via the same PRAGMA table_info
         migration notes uses) keeps working.
         """
@@ -250,17 +265,31 @@ class Tracker:
                 """
                 INSERT INTO jobs (
                     job_id, title, company, url, match_score, status,
-                    match_reasoning, eligibility, eligibility_note, first_seen_at
+                    match_reasoning, eligibility, eligibility_note,
+                    missing_qualifications, first_seen_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     match_score = excluded.match_score,
                     status = excluded.status,
                     match_reasoning = excluded.match_reasoning,
                     eligibility = excluded.eligibility,
-                    eligibility_note = excluded.eligibility_note
+                    eligibility_note = excluded.eligibility_note,
+                    missing_qualifications = excluded.missing_qualifications
                 """,
-                (job_id, title, company, url, score, status, reasoning, eligibility, eligibility_note, now),
+                (
+                    job_id,
+                    title,
+                    company,
+                    url,
+                    score,
+                    status,
+                    reasoning,
+                    eligibility,
+                    eligibility_note,
+                    json.dumps(list(missing_qualifications) if missing_qualifications else []),
+                    now,
+                ),
             )
 
     def mark_applied(self, job_id: str) -> None:

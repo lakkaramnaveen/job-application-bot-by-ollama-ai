@@ -72,6 +72,24 @@ def test_job_match_score_eligibility_note_accepts_genuine_quote():
     assert score.eligibility_note == genuine
 
 
+def test_job_match_score_missing_qualifications_rejects_leaked_reasoning():
+    """missing_qualifications is real, user-facing output too (`job-bot
+    status <job_id>`, --format json) - same reasoning class this guard
+    already covers for reasoning/eligibility_note (and for
+    TailoredResume.bullet_points/highlighted_skills, the other per-list-
+    item case), applied per entry via _reject_leaked_reasoning_in_list.
+    """
+    contaminated = ["AWS certification", "Let me check what else is missing from the resume."]
+    with pytest.raises(ValidationError, match="leaked reasoning"):
+        make_job_match_score(missing_qualifications=contaminated)
+
+
+def test_job_match_score_missing_qualifications_accepts_genuine_entries():
+    genuine = ["AWS certification", "5+ years of Go"]
+    score = make_job_match_score(missing_qualifications=genuine)
+    assert score.missing_qualifications == genuine
+
+
 def test_eligibility_field_description_covers_all_active_eligibility_rules():
     """This description reaches the model as part of the JSON schema sent
     alongside scorer.py's system prompt (see ollama_provider.py's `format`)

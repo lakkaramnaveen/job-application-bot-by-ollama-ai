@@ -118,3 +118,20 @@ def test_system_prompt_forbids_narrating_reasoning_in_the_shown_fields():
     assert "reasoning" in system
     assert "self-review" in system
     assert "second draft" in system
+
+
+def test_system_prompt_covers_missing_qualifications():
+    """missing_qualifications (models/schemas.py) is real, user-facing
+    output too, same as reasoning/eligibility_note above, and gets its own
+    _reject_leaked_reasoning_in_list guard - the prompt must both explain
+    what the field is for (unlike before, when it had no description or
+    prompt guidance at all and was never persisted or shown anywhere) and
+    include it in the same "no narration, shown directly to the
+    candidate" instruction the other two guarded fields already get.
+    """
+    provider = FakeProvider()
+    score_job_match(provider, resume_text="resume", job_description="job")
+
+    system = provider.calls[0]["system"].lower()
+    assert "missing_qualifications" in system
+    assert "self-review" in system  # the shared instruction now names all three fields

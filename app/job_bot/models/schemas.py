@@ -150,27 +150,40 @@ class JobMatchScore(BaseModel):
     score: int = Field(ge=0, le=100, description="Overall fit score, 0 (no match) to 100 (perfect match)")
     reasoning: str = Field(description="Brief explanation of the score")
     should_apply: bool = Field(description="Whether this job clears the bar to apply to")
-    missing_qualifications: list[str] = Field(default_factory=list)
+    missing_qualifications: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Specific required or strongly preferred qualifications the posting asks for that "
+            "the resume doesn't demonstrate (a skill, tool, certification, or years of experience "
+            "in something) - empty if the resume covers everything the posting asks for. Each "
+            "entry a short, specific phrase (e.g. 'AWS certification', '5+ years of Go'), not a "
+            "restatement of the whole posting."
+        ),
+    )
 
-    # reasoning/eligibility_note were pure internal/discarded values when
-    # this class was first written - not worth this guard, since nothing
-    # ever showed them to anyone. That changed: both are now real,
-    # user-facing output (`job-bot status <job_id>`, --format json, the
-    # dashboard's score tooltip, `job-bot report --by-score`/
-    # --by-eligibility - see 568ccd5/ef9d6d3), so a leaked reasoning trace
-    # in either would now show up directly in front of the user instead of
-    # vanishing unnoticed. _REASONING_LEAK_MARKERS' phrases are narrow,
-    # self-referential process-narration ("let me carefully...", "I need
-    # to answer...") rather than organic explanatory language, so this
-    # doesn't meaningfully risk false-positiving on a genuine "why this
-    # score" explanation - the same reasoning that already justified
-    # extending this guard to TailoredResume.bullet_points/
-    # highlighted_skills once those became real output too.
+    # reasoning/eligibility_note/missing_qualifications were pure internal/
+    # discarded values when this class was first written - not worth this
+    # guard, since nothing ever showed them to anyone. That changed: all
+    # three are now real, user-facing output (`job-bot status <job_id>`,
+    # --format json, the dashboard's score tooltip, `job-bot report
+    # --by-score`/--by-eligibility - see 568ccd5/ef9d6d3), so a leaked
+    # reasoning trace in any of them would now show up directly in front of
+    # the user instead of vanishing unnoticed. _REASONING_LEAK_MARKERS'
+    # phrases are narrow, self-referential process-narration ("let me
+    # carefully...", "I need to answer...") rather than organic explanatory
+    # language, so this doesn't meaningfully risk false-positiving on a
+    # genuine "why this score"/"what's missing" explanation - the same
+    # reasoning that already justified extending this guard to
+    # TailoredResume.bullet_points/highlighted_skills once those became
+    # real output too.
     _reject_leaked_reasoning_note = field_validator("eligibility_note", mode="before")(
         _reject_leaked_reasoning
     )
     _reject_leaked_reasoning_explanation = field_validator("reasoning", mode="before")(
         _reject_leaked_reasoning
+    )
+    _reject_leaked_reasoning_missing_quals = field_validator("missing_qualifications", mode="before")(
+        _reject_leaked_reasoning_in_list
     )
 
 

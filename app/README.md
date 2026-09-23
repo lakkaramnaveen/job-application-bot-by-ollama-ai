@@ -423,7 +423,7 @@ job-bot report --by-score --format json # same data as one JSON object, for a sc
 job-bot report --by-eligibility         # counts by eligibility-gate verdict (pass/flag/fail/not scored)
 job-bot report --by-company             # counts by company, most-applied first
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response
-job-bot status <job_id>                 # no status - print the job's record, its match reasoning and eligibility verdict (if scored), tailored resume (if any), and Q&A history instead
+job-bot status <job_id>                 # no status - print the job's record, its match reasoning, eligibility verdict, and missing qualifications (if scored), tailored resume (if any), and Q&A history instead
 job-bot status <job_id> --format json   # same view as one JSON object, for a script watching one specific application
 job-bot status <job_id> --note "Recruiter mentioned $150k base."   # attach a free-text note (independent of status)
 job-bot export                          # all tracked jobs as CSV, to stdout

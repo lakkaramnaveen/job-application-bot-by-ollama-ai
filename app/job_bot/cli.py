@@ -462,6 +462,7 @@ def _run_apply_cycle(
             reasoning=match.reasoning,
             eligibility=match.eligibility,
             eligibility_note=match.eligibility_note,
+            missing_qualifications=match.missing_qualifications,
         )
         audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
         return should_apply
@@ -758,9 +759,15 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
             sys.exit(1)
         generation = tracker.get_resume_generation(args.job_id)
         qa = tracker.list_qa(args.job_id)
+        # Stored as a JSON array (see Tracker.record_score()'s docstring for
+        # why, unlike the plain-text reasoning/eligibility_note columns) -
+        # empty/None for a job scored before this column existed, or never
+        # scored at all.
+        missing_quals = json.loads(job["missing_qualifications"]) if job.get("missing_qualifications") else []
         if args.format == "json":
             payload = {
                 **job,
+                "missing_qualifications": missing_quals,
                 "is_blacklisted": CompanyBlacklist(settings.blacklist_path).is_blocked(job["company"]),
                 "resume_generation": generation,
                 "qa_history": qa,
@@ -788,6 +795,8 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> None:
             print(f"\n[!!] Eligibility: {job['eligibility']}{note}")
         if job.get("match_reasoning"):
             print(f"\nMatch reasoning: {job['match_reasoning']}")
+        if missing_quals:
+            print(f"\nMissing qualifications: {', '.join(missing_quals)}")
         if job.get("notes"):
             print(f"\nNote: {job['notes']}")
         if generation:
