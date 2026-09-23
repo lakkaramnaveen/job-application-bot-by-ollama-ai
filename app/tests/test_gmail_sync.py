@@ -80,6 +80,31 @@ def test_find_matching_job_empty_guess_returns_none():
     assert find_matching_job(jobs, "") is None
 
 
+def test_find_matching_job_rejects_a_short_mid_word_false_positive():
+    """Real bug this guards against: plain substring containment matched a
+    tracked job named "AI" against ANY company_guess merely containing "ai"
+    as a substring - "OpenAI" here, but "Mail.com"/"Fairbank" equally -
+    silently attributing an unrelated company's email to the wrong tracked
+    job. This is exactly the "resolved by guessing" failure the module's
+    own docstring says a match must never allow.
+    """
+    jobs = [{"job_id": "1", "company": "AI"}, {"job_id": "2", "company": "Globex"}]
+    assert find_matching_job(jobs, "OpenAI") is None
+
+
+def test_find_matching_job_still_matches_a_whole_word_abbreviation():
+    """The fix for the false positive above must not break the legitimate
+    case it's modeled on: an email that only gives the short form of a
+    tracked company's full name, separated by a real word boundary (a
+    space), the same "Acme" / "Acme Corp" shape the pre-existing unique-
+    substring-match test already covers, just confirmed from the other
+    direction (short guess -> long tracked name AND long guess -> short
+    tracked name).
+    """
+    jobs = [{"job_id": "1", "company": "Acme"}, {"job_id": "2", "company": "Globex"}]
+    assert find_matching_job(jobs, "Acme Corp recruiting team")["job_id"] == "1"
+
+
 # --- sync_gmail ---
 
 

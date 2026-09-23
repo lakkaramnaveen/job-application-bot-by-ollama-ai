@@ -16,6 +16,7 @@ Safety properties (see SECURITY.md):
 """
 
 import dataclasses
+import re
 
 from job_bot.integrations.email_classifier import classify_email
 from job_bot.integrations.gmail_client import EmailMessage, GmailClient
@@ -69,11 +70,31 @@ class GmailSyncResult:
     skipped_low_confidence: int = 0
 
 
+def _contains_as_whole_word(haystack: str, needle: str) -> bool:
+    """Whether `needle` (one or more whole, space-separated words) appears
+    in `haystack` without being butted up against surrounding word
+    characters - the same (?<!\\w)/(?!\\w) lookaround technique
+    linkedin_adapter.py's _best_match_index() uses for the analogous
+    problem of matching a short string inside a longer one. Plain substring
+    containment (`needle in haystack`) matches a tracked job named "AI"
+    against ANY email whose company guess merely contains "ai" as a
+    substring - "OpenAI", "Mail.com", "Fairbank" - a wrong company
+    confidently matched and updated on a field this safety-critical (see
+    this module's docstring: "never resolved by guessing"). Word-boundary
+    matching still lets a real abbreviation match ("Acme" inside "Acme
+    Corp"), since that boundary sits on a space, while rejecting a
+    coincidental mid-word one.
+    """
+    if not needle:
+        return False
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack) is not None
+
+
 def find_matching_job(jobs: list[dict], company_guess: str) -> dict | None:
     """Match a classifier's company guess to exactly one tracked job by
-    substring overlap on the normalized company name. Returns None on zero
-    or multiple candidates - an ambiguous match is treated as no match,
-    never resolved by guessing.
+    whole-word overlap on the normalized company name (see
+    _contains_as_whole_word). Returns None on zero or multiple candidates -
+    an ambiguous match is treated as no match, never resolved by guessing.
     """
     norm_guess = normalize_company_name(company_guess)
     if not norm_guess:
@@ -83,7 +104,10 @@ def find_matching_job(jobs: list[dict], company_guess: str) -> dict | None:
         job
         for job in jobs
         if (norm_company := normalize_company_name(job["company"]))
-        and (norm_company in norm_guess or norm_guess in norm_company)
+        and (
+            _contains_as_whole_word(norm_guess, norm_company)
+            or _contains_as_whole_word(norm_company, norm_guess)
+        )
     ]
     if len(candidates) == 1:
         return candidates[0]
