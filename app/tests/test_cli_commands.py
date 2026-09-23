@@ -1131,6 +1131,38 @@ def test_export_company_matches_case_and_spacing_insensitively(tmp_path, capsys)
     assert [r["job_id"] for r in rows] == ["job1"]
 
 
+def test_export_company_combines_with_status_and_eligibility(tmp_path, capsys):
+    """--company is applied as a post-fetch filter on top of Tracker.list_jobs'
+    own status/eligibility filtering (the same pattern --stale-days already
+    uses) - this confirms the two genuinely AND together rather than one
+    silently overriding the other, the exact kind of "wiring exists but was
+    never proven to actually combine" gap this session has repeatedly
+    caught for other filter combinations.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme Corp", "https://x/1", score=90, should_apply=True, eligibility="pass"
+    )
+    tracker.record_score(
+        "job2", "Frontend Engineer", "Acme Corp", "https://x/2", score=20, should_apply=False, eligibility="fail"
+    )
+    tracker.record_score(
+        "job3",
+        "DevOps Engineer",
+        "Beta Inc",
+        "https://x/3",
+        score=90,
+        should_apply=True,
+        eligibility="pass",
+    )
+
+    cmd_export(settings, export_args(company="Acme Corp", eligibility="pass"))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert [r["job_id"] for r in rows] == ["job1"]
+
+
 def test_export_filters_by_stale_days(tmp_path, capsys):
     """--stale-days is the row-level counterpart to `job-bot report
     --stale-days`'s own list section - useful for a script that wants to
