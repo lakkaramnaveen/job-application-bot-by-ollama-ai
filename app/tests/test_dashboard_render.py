@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from job_bot.dashboard.render import (
     render_blacklist_html,
+    render_missing_qualifications_html,
     render_page_html,
     render_qa_html,
     render_resume_html,
@@ -391,6 +392,35 @@ def test_render_page_html_includes_the_manage_blacklist_button_and_dialog():
     assert 'id="manageBlacklist"' in html
     assert 'id="blacklistDialog"' in html
     assert 'id="blacklistContent"' in html
+
+
+def test_render_missing_qualifications_html_empty_state():
+    html = render_missing_qualifications_html({})
+    assert "No missing qualifications recorded yet." in html
+
+
+def test_render_missing_qualifications_html_orders_most_common_first():
+    """Docker is deliberately listed first in the input dict, with the
+    lower count - only passes if the render function sorts by count
+    itself rather than trusting insertion order.
+    """
+    html = render_missing_qualifications_html({"Docker": 1, "Kubernetes experience": 2})
+    assert html.index("Kubernetes experience") < html.index("Docker")
+    assert ">2<" in html
+    assert ">1<" in html
+
+
+def test_render_missing_qualifications_html_escapes_the_phrase_to_prevent_xss():
+    html = render_missing_qualifications_html({'<script>alert(1)</script>Kubernetes"': 1})
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_render_page_html_includes_the_missing_qualifications_button_and_dialog():
+    html = render_page_html([make_job()])
+    assert 'id="showMissingQualifications"' in html
+    assert 'id="missingQualificationsDialog"' in html
+    assert 'id="missingQualificationsContent"' in html
 
 
 def test_render_page_html_includes_the_note_dialog():

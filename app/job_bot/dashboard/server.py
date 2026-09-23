@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from job_bot.dashboard.render import (
     PAGE_SIZE,
     render_blacklist_html,
+    render_missing_qualifications_html,
     render_page_html,
     render_qa_html,
     render_resume_html,
@@ -59,6 +60,13 @@ class DashboardPortInUse(RuntimeError):
 
 _DEFAULT_SORT = "first_seen_at"
 _DEFAULT_DIRECTION = "desc"
+# Same reasoning as `job-bot report --missing-qualifications-limit`: exact-
+# string counting means most distinct phrases end up at count=1 once
+# enough jobs are tracked, so an unlimited panel would mostly show one-off
+# noise. The dashboard has no equivalent flag to override this with, so a
+# fixed cap keeps the panel readable in the common case instead of adding
+# a control for a value nobody's likely to need to change interactively.
+_MISSING_QUALIFICATIONS_LIMIT = 20
 
 
 def _parse_list_params(query: dict[str, list[str]]) -> dict:
@@ -162,6 +170,8 @@ def make_handler(
                 self._handle_note_get(tracker, job_id)
             elif parsed.path == "/api/blacklist":
                 self._handle_blacklist_list()
+            elif parsed.path == "/api/missing-qualifications":
+                self._handle_missing_qualifications(tracker)
             else:
                 self._send_text(404, "Not found")
 
@@ -425,6 +435,17 @@ def make_handler(
             """
             companies = CompanyBlacklist(blacklist_path).list_companies()
             body = render_blacklist_html(companies).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_missing_qualifications(self, tracker: Tracker) -> None:
+            """Which specific gaps the LLM scorer flags most often across
+            tracked postings, for the dashboard's Missing Qualifications
+            modal - the dashboard counterpart to `job-bot report
+            --by-missing-qualifications`, read-only the same way
+            _handle_blacklist_list is.
+            """
+            breakdown = tracker.missing_qualifications_counts(limit=_MISSING_QUALIFICATIONS_LIMIT)
+            body = render_missing_qualifications_html(breakdown).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
         def _handle_blacklist_remove(self) -> None:

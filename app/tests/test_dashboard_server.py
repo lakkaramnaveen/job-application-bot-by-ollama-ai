@@ -750,6 +750,40 @@ def test_get_blacklist_lists_added_companies(live_server, tmp_path):
     assert 'data-company="Acme Corp"' in body
 
 
+def test_get_missing_qualifications_is_empty_by_default(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/missing-qualifications") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+    assert "No missing qualifications recorded yet." in body
+
+
+def test_get_missing_qualifications_shows_the_most_common_gaps(live_server, tmp_path):
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Docker"],
+    )
+    tracker.record_score(
+        "job2",
+        "SRE",
+        "Beta",
+        "https://x/2",
+        score=65,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience"],
+    )
+
+    with urllib.request.urlopen(f"{live_server}/api/missing-qualifications") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert body.index("Kubernetes experience") < body.index("Docker")
+
+
 def test_post_blacklist_remove_removes_the_company(live_server, tmp_path):
     CompanyBlacklist(tmp_path / "blacklist.json").add("Acme Corp")
 

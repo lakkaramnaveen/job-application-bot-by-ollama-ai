@@ -298,6 +298,23 @@ def render_blacklist_html(companies: list[str]) -> str:
     return f'<ul class="blacklist-list">{"".join(items)}</ul>'
 
 
+def render_missing_qualifications_html(breakdown: dict[str, int]) -> str:
+    """The missing-qualifications breakdown (Tracker.missing_qualifications_
+    counts()) as an HTML fragment, for the dashboard's Missing Qualifications
+    modal - same read-only-list shape as render_blacklist_html above, minus
+    the per-item remove button since there's nothing here to manage, just
+    read. `job-bot report --by-missing-qualifications` is the CLI
+    counterpart to this same data.
+    """
+    if not breakdown:
+        return '<p class="empty">No missing qualifications recorded yet.</p>'
+    ordered = sorted(breakdown, key=lambda qual: (-breakdown[qual], qual.casefold()))
+    items = "".join(
+        f'<li><span class="mq-count">{breakdown[qual]}</span> {html.escape(qual)}</li>' for qual in ordered
+    )
+    return f'<ul class="mq-list">{items}</ul>'
+
+
 def _options_html(options: list[tuple[str, str]], selected: str) -> str:
     return "\n".join(
         f'<option value="{html.escape(value, quote=True)}"{" selected" if value == selected else ""}>'
@@ -423,6 +440,10 @@ def render_page_html(
   .blacklist-remove-button {{ font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}
   .blacklist-remove-button:hover {{ border-color: #ef4444; color: #ef4444; }}
+  .mq-list {{ list-style: none; margin: 0; padding: 0; }}
+  .mq-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
+  .mq-list li:last-child {{ border-bottom: none; }}
+  .mq-count {{ display: inline-block; min-width: 1.75rem; font-weight: 600; color: var(--muted); }}
 </style>
 </head>
 <body>
@@ -449,6 +470,7 @@ def render_page_html(
   <a id="exportCsv" class="export-link" href="/api/export.csv">Export CSV</a>
   <a id="exportJson" class="export-link" href="/api/export.json">Export JSON</a>
   <button type="button" id="manageBlacklist" class="export-link">Manage Blacklist</button>
+  <button type="button" id="showMissingQualifications" class="export-link">Missing Qualifications</button>
 </form>
 
 <div class="table-wrap">
@@ -484,6 +506,12 @@ def render_page_html(
   <h2>Blacklisted companies</h2>
   <div id="blacklistContent"></div>
   <button type="button" id="blacklistClose">Close</button>
+</dialog>
+
+<dialog id="missingQualificationsDialog">
+  <h2>Most common missing qualifications</h2>
+  <div id="missingQualificationsContent"></div>
+  <button type="button" id="missingQualificationsClose">Close</button>
 </dialog>
 
 <dialog id="noteDialog">
@@ -726,6 +754,22 @@ document.getElementById('blacklistContent').addEventListener('click', async (e) 
     loadBlacklist();
   }}
 }});
+
+const missingQualificationsDialog = document.getElementById('missingQualificationsDialog');
+document.getElementById('showMissingQualifications').addEventListener('click', async () => {{
+  const content = document.getElementById('missingQualificationsContent');
+  content.innerHTML = 'Loading...';
+  missingQualificationsDialog.showModal();
+  try {{
+    const res = await fetch('/api/missing-qualifications');
+    content.innerHTML = res.ok ? await res.text() : 'Could not load missing qualifications.';
+  }} catch (err) {{
+    content.innerHTML = 'Could not load missing qualifications (network error).';
+  }}
+}});
+document.getElementById('missingQualificationsClose').addEventListener(
+  'click', () => missingQualificationsDialog.close()
+);
 
 // The periodic refresh below replaces the whole <tbody>, which would
 // otherwise yank a status <select> out from under a user mid-interaction

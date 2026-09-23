@@ -401,6 +401,39 @@ class Tracker:
             rows = conn.execute(f"SELECT status, COUNT(*) FROM jobs {where} GROUP BY status", params).fetchall()
         return dict(rows)
 
+    def missing_qualifications_counts(self, *, limit: int | None = None) -> dict[str, int]:
+        """Missing-qualification phrase -> count of tracked jobs listing it -
+        shared by `job-bot report --by-missing-qualifications` (cli.py) and
+        the dashboard's own Missing Qualifications panel, the same way
+        status_counts() above is already shared by both. Kept here rather
+        than in cli.py alone specifically so the dashboard (dashboard/
+        server.py) can call it without importing from cli.py, which already
+        imports from dashboard.server (run_dashboard) - that direction
+        would be a circular import.
+
+        Exact-string counting, not fuzzy/semantic grouping - the LLM
+        phrases each gap in its own words per job ("Kubernetes experience"
+        vs. "hands-on Kubernetes"), so this only surfaces gaps repeated in
+        near-identical wording, not every semantically-same gap under
+        different phrasing. Still real signal, not noise, whenever a
+        phrase does repeat verbatim.
+
+        `limit`, when given, keeps only the N most common phrases (ties
+        broken alphabetically) - across enough tracked jobs, most distinct
+        phrases end up at count=1 (one job's own wording, never repeated
+        elsewhere), which buries the ones that actually do repeat in an
+        unfiltered breakdown.
+        """
+        counts: dict[str, int] = {}
+        for job in self.list_jobs():
+            raw = job.get("missing_qualifications")
+            for qual in (json.loads(raw) if raw else []):
+                counts[qual] = counts.get(qual, 0) + 1
+        if limit is not None:
+            ordered = sorted(counts, key=lambda qual: (-counts[qual], qual.casefold()))[:limit]
+            counts = {qual: counts[qual] for qual in ordered}
+        return counts
+
     @staticmethod
     def _where_clause(
         status: str | None, search: str | None, eligibility: str | None = None

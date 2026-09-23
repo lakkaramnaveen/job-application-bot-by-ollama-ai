@@ -585,6 +585,10 @@ seen, and lets you:
 - **Export CSV or JSON** for whatever's currently filtered/searched, not just
   the visible page - the same output `job-bot export` (`--format csv`/`json`)
   produces on the command line.
+- **View the most common missing qualifications** across every tracked
+  posting in a modal - the dashboard counterpart to `job-bot report
+  --by-missing-qualifications`, showing which specific gaps the LLM scorer
+  keeps flagging.
 
 The dashboard has no login (it's a local tool over your own data), so every
 state-changing endpoint (the inline status update, blacklisting a company,

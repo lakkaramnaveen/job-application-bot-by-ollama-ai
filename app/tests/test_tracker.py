@@ -504,6 +504,60 @@ def test_status_counts_can_be_scoped_to_a_search_term(tmp_path):
     assert tracker.status_counts(search="nonexistent") == {}
 
 
+def test_missing_qualifications_counts_reflects_multiple_jobs(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_score(
+        "1",
+        "Backend Engineer",
+        "Acme",
+        "https://example.com/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Docker"],
+    )
+    tracker.record_score(
+        "2",
+        "SRE",
+        "Beta",
+        "https://example.com/2",
+        score=65,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience"],
+    )
+    tracker.upsert_job("3", "Unscored Role", "Gamma", "https://example.com/3")  # no missing_qualifications
+
+    assert tracker.missing_qualifications_counts() == {"Kubernetes experience": 2, "Docker": 1}
+
+
+def test_missing_qualifications_counts_limit_keeps_only_the_n_most_common(tmp_path):
+    """Same shape as test_status_counts_can_be_scoped_to_a_search_term above
+    - the dashboard's Missing Qualifications panel calls this with a fixed
+    limit so it always shows a manageable, genuinely-informative list even
+    once most distinct phrases have drifted to count=1.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_score(
+        "1",
+        "Backend Engineer",
+        "Acme",
+        "https://example.com/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Docker"],
+    )
+    tracker.record_score(
+        "2",
+        "SRE",
+        "Beta",
+        "https://example.com/2",
+        score=65,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Terraform"],
+    )
+
+    assert tracker.missing_qualifications_counts(limit=1) == {"Kubernetes experience": 2}
+
+
 def test_record_qa_and_upsert_job_do_not_conflict(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")

@@ -1213,40 +1213,16 @@ def _print_company_breakdown(tracker: Tracker) -> None:
 
 
 def _missing_qualifications_breakdown(tracker: Tracker, *, limit: int | None = None) -> dict[str, int]:
-    """Missing-qualification phrase -> count of tracked jobs listing it, for
-    `job-bot report --by-missing-qualifications` - which specific gaps
-    (JobMatchScore.missing_qualifications, see matching/scorer.py's prompt
-    guidance) keep showing up across postings, the most direct signal for
-    what to actually add to a resume next, now that the field is persisted
-    at all (see the commit that first surfaced it - previously the LLM
-    computed this on every score and it was silently discarded).
-
-    Exact-string counting, not fuzzy/semantic grouping - the LLM phrases
-    each gap in its own words per job ("Kubernetes experience" vs.
-    "hands-on Kubernetes"), so this only surfaces gaps repeated in
-    near-identical wording, not every semantically-same gap under different
-    phrasing. Same trade-off _company_breakdown already accepts for company
-    names entered inconsistently, and it's still real signal, not noise,
-    whenever a phrase does repeat verbatim.
-
-    That same fragmentation means most distinct phrases end up with count=1
-    (one job's own wording, never repeated verbatim elsewhere) - across
-    enough tracked jobs, the unfiltered breakdown is mostly one-off noise
-    burying the phrases that actually do repeat, the signal this exists to
-    surface in the first place. `limit` (--missing-qualifications-limit)
-    keeps only the N most common phrases, ties broken alphabetically the
-    same way the printed order already is, so `--format json` and the text
-    table agree on which N survive rather than each picking independently.
+    """Thin wrapper around Tracker.missing_qualifications_counts() (see its
+    own docstring for the exact-string-counting/limit reasoning) - kept
+    here, matching _score_breakdown/_eligibility_breakdown/_company_breakdown's
+    own shape, so `job-bot report --by-missing-qualifications` and its
+    `--missing-qualifications-limit` flag read the same as every other
+    breakdown in this file. The counting logic itself moved to Tracker so
+    the dashboard's Missing Qualifications panel (dashboard/server.py)
+    could reuse it too, without importing from this module.
     """
-    counts: dict[str, int] = {}
-    for job in tracker.list_jobs():
-        raw = job.get("missing_qualifications")
-        for qual in (json.loads(raw) if raw else []):
-            counts[qual] = counts.get(qual, 0) + 1
-    if limit is not None:
-        ordered = sorted(counts, key=lambda qual: (-counts[qual], qual.casefold()))[:limit]
-        counts = {qual: counts[qual] for qual in ordered}
-    return counts
+    return tracker.missing_qualifications_counts(limit=limit)
 
 
 def _print_missing_qualifications_breakdown(tracker: Tracker, *, limit: int | None = None) -> None:
