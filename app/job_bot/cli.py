@@ -1212,6 +1212,49 @@ def _print_company_breakdown(tracker: Tracker) -> None:
         print(row + str(sum(counts.values())))
 
 
+def _missing_qualifications_breakdown(tracker: Tracker) -> dict[str, int]:
+    """Missing-qualification phrase -> count of tracked jobs listing it, for
+    `job-bot report --by-missing-qualifications` - which specific gaps
+    (JobMatchScore.missing_qualifications, see matching/scorer.py's prompt
+    guidance) keep showing up across postings, the most direct signal for
+    what to actually add to a resume next, now that the field is persisted
+    at all (see the commit that first surfaced it - previously the LLM
+    computed this on every score and it was silently discarded).
+
+    Exact-string counting, not fuzzy/semantic grouping - the LLM phrases
+    each gap in its own words per job ("Kubernetes experience" vs.
+    "hands-on Kubernetes"), so this only surfaces gaps repeated in
+    near-identical wording, not every semantically-same gap under different
+    phrasing. Same trade-off _company_breakdown already accepts for company
+    names entered inconsistently, and it's still real signal, not noise,
+    whenever a phrase does repeat verbatim.
+    """
+    counts: dict[str, int] = {}
+    for job in tracker.list_jobs():
+        raw = job.get("missing_qualifications")
+        for qual in (json.loads(raw) if raw else []):
+            counts[qual] = counts.get(qual, 0) + 1
+    return counts
+
+
+def _print_missing_qualifications_breakdown(tracker: Tracker) -> None:
+    """Guarded by `if not breakdown: return`, unlike _print_company_breakdown
+    - every tracked job has a company, but a job can easily have zero
+    missing_qualifications (never scored, or the LLM found no gaps), so
+    this can be genuinely empty even with jobs tracked, the same reason
+    _print_score_breakdown guards too.
+    """
+    breakdown = _missing_qualifications_breakdown(tracker)
+    if not breakdown:
+        return
+    # Most commonly missing first - that's the actionable read ("what to
+    # fix on the resume first") - alphabetical tiebreak for a stable order.
+    ordered = sorted(breakdown, key=lambda qual: (-breakdown[qual], qual.casefold()))
+    print("\nMost common missing qualifications:")
+    for qual in ordered:
+        print(f"  {breakdown[qual]:>3}  {qual}")
+
+
 def _stale_applications(tracker: Tracker, days: int) -> list[dict]:
     cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     return [
@@ -1228,9 +1271,11 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
     whether the LLM scorer's judgment tracks reality), and
     `--by-eligibility` (how many jobs were let through, flagged, or
     categorically disqualified by the eligibility gate - see
-    _eligibility_breakdown), and `--by-company` (which companies you've
-    applied to the most, and how those applications are trending). `--format
-    json` prints the same data as one
+    _eligibility_breakdown), `--by-company` (which companies you've
+    applied to the most, and how those applications are trending), and
+    `--by-missing-qualifications` (which specific gaps the LLM scorer keeps
+    flagging across postings - see _missing_qualifications_breakdown).
+    `--format json` prints the same data as one
     JSON object instead - for a script or cron job that wants to alert on
     e.g. a growing stale-applications count without scraping the
     human-readable text layout.
@@ -1261,6 +1306,8 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
             payload["by_eligibility"] = _eligibility_breakdown(tracker)
         if args.by_company:
             payload["by_company"] = _company_breakdown(tracker)
+        if args.by_missing_qualifications:
+            payload["by_missing_qualifications"] = _missing_qualifications_breakdown(tracker)
         print(json.dumps(payload, indent=2))
         return
 
@@ -1285,6 +1332,9 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
 
     if args.by_company:
         _print_company_breakdown(tracker)
+
+    if args.by_missing_qualifications:
+        _print_missing_qualifications_breakdown(tracker)
 
 
 def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
@@ -2023,6 +2073,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--by-company",
         action="store_true",
         help="Break outcomes down by company, most-applied first.",
+    )
+    report_p.add_argument(
+        "--by-missing-qualifications",
+        action="store_true",
+        help="Show which missing qualifications the LLM scorer flags most often across postings.",
     )
     report_p.add_argument(
         "--format", choices=["text", "json"], default="text", help="Print as one JSON object instead."

@@ -226,7 +226,12 @@ def report_args(**overrides):
     import argparse
 
     defaults = dict(
-        stale_days=None, by_score=False, by_eligibility=False, by_company=False, format="text"
+        stale_days=None,
+        by_score=False,
+        by_eligibility=False,
+        by_company=False,
+        by_missing_qualifications=False,
+        format="text",
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)

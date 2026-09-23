@@ -423,6 +423,7 @@ job-bot report --stale-days 7           # also flag applications with no reply a
 job-bot report --by-score --format json # same data as one JSON object, for a script or cron job
 job-bot report --by-eligibility         # counts by eligibility-gate verdict (pass/flag/fail/not scored)
 job-bot report --by-company             # counts by company, most-applied first
+job-bot report --by-missing-qualifications # which missing qualifications the LLM scorer flags most often across postings
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response
 job-bot status <job_id>                 # no status - print the job's record, its match reasoning, eligibility verdict, and missing qualifications (if scored), tailored resume (if any), and Q&A history instead
 job-bot status <job_id> --format json   # same view as one JSON object, for a script watching one specific application

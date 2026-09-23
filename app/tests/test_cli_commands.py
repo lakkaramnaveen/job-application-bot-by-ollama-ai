@@ -104,7 +104,12 @@ def make_settings(tmp_path, **overrides) -> Settings:
 
 def report_args(**overrides) -> argparse.Namespace:
     defaults = dict(
-        stale_days=None, by_score=False, by_eligibility=False, by_company=False, format="text"
+        stale_days=None,
+        by_score=False,
+        by_eligibility=False,
+        by_company=False,
+        by_missing_qualifications=False,
+        format="text",
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -773,6 +778,91 @@ def test_report_json_includes_by_company_only_when_requested(tmp_path, capsys):
     cmd_report(settings, report_args(format="json"))
     payload = json.loads(capsys.readouterr().out)
     assert "by_company" not in payload
+
+
+def test_report_by_missing_qualifications_counts_most_common_gaps_first(tmp_path, capsys):
+    """"Docker" is deliberately the least-frequent phrase, in the middle of
+    insertion order - this only passes if the breakdown is genuinely sorted
+    by count, not coincidentally by insertion or alphabetical order.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience", "Docker"],
+    )
+    tracker.record_score(
+        "job2",
+        "SRE",
+        "Beta",
+        "https://x/2",
+        score=65,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience"],
+    )
+    tracker.upsert_job("job3", "Unscored Role", "Gamma", "https://x/3")  # no missing_qualifications at all
+
+    cmd_report(settings, report_args(by_missing_qualifications=True))
+
+    out = capsys.readouterr().out
+    assert "Most common missing qualifications:" in out
+    lines = [line.strip() for line in out.splitlines() if "Kubernetes" in line or "Docker" in line]
+    assert lines == ["2  Kubernetes experience", "1  Docker"]
+
+
+def test_report_by_missing_qualifications_prints_nothing_when_none_are_recorded(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score("job1", "Backend Engineer", "Acme", "https://x/1", score=90, should_apply=True)
+
+    cmd_report(settings, report_args(by_missing_qualifications=True))
+
+    assert "Most common missing qualifications:" not in capsys.readouterr().out
+
+
+def test_report_by_missing_qualifications_omitted_without_the_flag(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience"],
+    )
+
+    cmd_report(settings, report_args())
+
+    assert "Most common missing qualifications" not in capsys.readouterr().out
+
+
+def test_report_json_includes_by_missing_qualifications_only_when_requested(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["Kubernetes experience"],
+    )
+
+    cmd_report(settings, report_args(by_missing_qualifications=True, format="json"))
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["by_missing_qualifications"] == {"Kubernetes experience": 1}
+
+    cmd_report(settings, report_args(format="json"))
+    payload = json.loads(capsys.readouterr().out)
+    assert "by_missing_qualifications" not in payload
 
 
 def test_score_bucket_label_falls_back_for_an_out_of_range_score():
