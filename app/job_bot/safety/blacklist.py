@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 from job_bot.text_utils import normalize_company_name
 
@@ -15,13 +16,24 @@ class CompanyBlacklist:
     (and `job-bot blacklist list`) previously showed every company permanently
     lowercased ("acme corp"), which is what got stored as the dict key,
     because that key was also the only copy of the name kept.
+
+    Each entry also carries an optional `reason` (e.g. "no H1B
+    sponsorship", "bad interview experience") - `job-bot blacklist add
+    --reason` sets it, `job-bot blacklist list` shows it. On disk, an entry
+    with no reason is still stored as a plain string, exactly the format
+    this file already used before reasons existed; only an entry that
+    actually has one becomes a `{"name": ..., "reason": ...}` object - so a
+    blacklist where nobody has bothered with a reason round-trips through
+    _save() byte-for-byte the same shape as before this feature, and
+    company_blacklist.json stays readable by any external tool that only
+    ever expected a plain list of strings.
     """
 
     def __init__(self, blacklist_path: Path):
         self._path = blacklist_path
-        self._companies = self._load()  # normalized name -> display name
+        self._companies = self._load()  # normalized name -> {"name": ..., "reason": ...}
 
-    def _load(self) -> dict[str, str]:
+    def _load(self) -> dict[str, dict[str, str]]:
         if not self._path.exists():
             return {}
         try:
@@ -38,9 +50,24 @@ class CompanyBlacklist:
             return {}
         if not isinstance(data, list):
             return {}
-        return {
-            self._normalize(c): c.strip() for c in data if isinstance(c, str) and c.strip()
-        }
+        entries: dict[str, dict[str, str]] = {}
+        for item in data:
+            if isinstance(item, str):
+                name, reason = item.strip(), ""
+            elif isinstance(item, dict):
+                # The reason-carrying shape _save() writes, and also what a
+                # hand-edited or externally-authored file might use -
+                # tolerate a missing/non-string "name"/"reason" the same
+                # way a plain non-string list item is already skipped below,
+                # rather than crashing on one malformed entry.
+                name = str(item.get("name", "")).strip()
+                reason = str(item.get("reason", "")).strip()
+            else:
+                continue
+            if not name:
+                continue
+            entries[self._normalize(name)] = {"name": name, "reason": reason}
+        return entries
 
     @staticmethod
     def _normalize(name: str) -> str:
@@ -49,8 +76,11 @@ class CompanyBlacklist:
     def is_blocked(self, company_name: str) -> bool:
         return self._normalize(company_name) in self._companies
 
-    def add(self, company_name: str) -> None:
-        self._companies[self._normalize(company_name)] = company_name.strip()
+    def add(self, company_name: str, *, reason: str = "") -> None:
+        self._companies[self._normalize(company_name)] = {
+            "name": company_name.strip(),
+            "reason": reason.strip(),
+        }
         self._save()
 
     def remove(self, company_name: str) -> bool:
@@ -65,8 +95,26 @@ class CompanyBlacklist:
         return True
 
     def list_companies(self) -> list[str]:
-        return sorted(self._companies.values(), key=str.casefold)
+        return [entry["name"] for entry in self._sorted_entries()]
+
+    def list_entries(self) -> list[dict[str, str]]:
+        """Every blacklisted company as {"name": ..., "reason": ...}
+        (reason is "" when none was given) - the counterpart to
+        list_companies() above for a caller that needs the reason too:
+        `job-bot blacklist list` and its `--format json`. list_companies()
+        itself stays name-only and unchanged so every existing caller
+        (is_blocked(), the dashboard's blacklist-list/remove flow) keeps
+        working exactly as before this feature.
+        """
+        return [{"name": entry["name"], "reason": entry["reason"]} for entry in self._sorted_entries()]
+
+    def _sorted_entries(self) -> list[dict[str, str]]:
+        return sorted(self._companies.values(), key=lambda entry: entry["name"].casefold())
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(self.list_companies(), indent=2), encoding="utf-8")
+        data: list[Any] = [
+            {"name": entry["name"], "reason": entry["reason"]} if entry["reason"] else entry["name"]
+            for entry in self._sorted_entries()
+        ]
+        self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")

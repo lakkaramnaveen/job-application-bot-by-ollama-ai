@@ -517,9 +517,10 @@ job-bot qa-history --format json       # same pairs as one JSON array instead
 ```bash
 job-bot blacklist add "Company Name"      # job-bot run will always skip it
 job-bot blacklist add "Company A" "Company B" "Company C"   # add several at once
+job-bot blacklist add "Company Name" --reason "no H1B sponsorship"  # remembered, shown by `list`
 job-bot blacklist remove "Company Name"
 job-bot blacklist list
-job-bot blacklist list --format json          # same companies as one JSON array instead
+job-bot blacklist list --format json          # same entries ({"name", "reason"}) as one JSON array instead
 job-bot blacklist import past_employers.txt   # one company per line; blank/'#'-comment lines skipped
 job-bot blacklist export --out backup.txt     # write it back out the same way; omit --out to print to stdout
 ```
@@ -528,6 +529,11 @@ job-bot blacklist export --out backup.txt     # write it back out the same way; 
 tracked application `applied`, `interviewing`, or `offer` at - blacklisting
 only stops future applications, it never touches anything already tracked,
 so this is a safety net for a typo or a name confused with a similar one.
+`--reason` applies to every company in that `add` call - blacklisting
+several companies for the same reason at once is the common case; a
+different reason per company just means a separate call each. Reasons
+don't round-trip through `import`/`export` (that format stays plain
+company names, one per line).
 
 Backed by `BLACKLIST_PATH` (default `data/company_blacklist.json`); matching
 is case-insensitive.

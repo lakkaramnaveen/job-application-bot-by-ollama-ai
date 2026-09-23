@@ -1445,15 +1445,20 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
     skip - see build_parser()'s `blacklist` subparser for the five
     actions. add/remove each take one or more company names (nargs="+"),
     so blacklisting several past employers at once doesn't need a
-    separate invocation per company. export's output is exactly what
-    import reads back (one company per line), so the two round-trip
-    (e.g. to move a blacklist to another install).
+    separate invocation per company. `add --reason` applies the same
+    reason to every company in that call - blacklisting several companies
+    for the same reason in one call is the common case; a different reason
+    per company just means a separate `add` call each. export's output is
+    exactly what import reads back (one company per line, no reason - see
+    CompanyBlacklist's own docstring for why reasons don't round-trip
+    through that plain-text format), so the two round-trip (e.g. to move a
+    blacklist to another install).
     """
     blacklist = CompanyBlacklist(settings.blacklist_path)
     if args.blacklist_action == "add":
         tracker = Tracker(settings.db_path)
         for company in args.company:
-            blacklist.add(company)
+            blacklist.add(company, reason=args.reason or "")
             print(f"Added to blacklist: {company}")
             # Blacklisting only stops future applications - it doesn't
             # touch anything already tracked - so this is purely a heads-up
@@ -1474,14 +1479,17 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
                 f"Removed from blacklist: {company}" if removed else f"Not on the blacklist: {company}"
             )
     elif args.blacklist_action == "list":
-        companies = blacklist.list_companies()
+        entries = blacklist.list_entries()
         if args.format == "json":
-            print(json.dumps(companies, indent=2, ensure_ascii=False))
-        elif not companies:
+            print(json.dumps(entries, indent=2, ensure_ascii=False))
+        elif not entries:
             print("Blacklist is empty.")
         else:
-            for company in companies:
-                print(company)
+            for entry in entries:
+                line = entry["name"]
+                if entry["reason"]:
+                    line += f"  - {entry['reason']}"
+                print(line)
     elif args.blacklist_action == "import":
         try:
             lines = args.file.read_text(encoding="utf-8").splitlines()
@@ -2155,6 +2163,12 @@ def build_parser() -> argparse.ArgumentParser:
     blacklist_sub = blacklist_p.add_subparsers(dest="blacklist_action", required=True)
     add_p = blacklist_sub.add_parser("add", help="Add one or more companies to the blacklist.")
     add_p.add_argument("company", nargs="+", help="One or more company names, each quoted separately.")
+    add_p.add_argument(
+        "--reason",
+        default=None,
+        help="Why these are blacklisted (optional, e.g. 'no H1B sponsorship') - applies to every "
+        "company in this call, shown by `job-bot blacklist list`.",
+    )
     remove_p = blacklist_sub.add_parser("remove", help="Remove one or more companies from the blacklist.")
     remove_p.add_argument("company", nargs="+", help="One or more company names, each quoted separately.")
     blacklist_list_p = blacklist_sub.add_parser("list", help="List blacklisted companies.")

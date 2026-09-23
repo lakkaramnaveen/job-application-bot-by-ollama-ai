@@ -1064,7 +1064,7 @@ def test_report_json_on_empty_tracker_is_still_valid_json(tmp_path, capsys):
 def test_blacklist_add_list_remove_round_trip(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
     assert "Added to blacklist: Acme Corp" in capsys.readouterr().out
 
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
@@ -1077,21 +1077,98 @@ def test_blacklist_add_list_remove_round_trip(tmp_path, capsys):
     assert "Blacklist is empty." in capsys.readouterr().out
 
 
-def test_blacklist_list_format_json_prints_a_json_array(tmp_path, capsys):
+def test_blacklist_add_with_reason_shows_it_in_list_text_output(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(
+        settings,
+        argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason="no H1B sponsorship"),
+    )
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+
+    assert "Acme Corp  - no H1B sponsorship" in capsys.readouterr().out
+
+
+def test_blacklist_add_without_reason_shows_no_dash_in_list_text_output(tmp_path, capsys):
+    """A company added with no --reason must print as a bare name, not a
+    trailing "  - " with nothing after it.
+    """
+    settings = make_settings(tmp_path)
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+
+    out = capsys.readouterr().out
+    assert out.strip() == "Acme Corp"
+
+
+def test_blacklist_add_reason_applies_to_every_company_in_one_call(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(
+        settings,
+        argparse.Namespace(
+            blacklist_action="add", company=["Acme Corp", "Beta Inc"], reason="past employer"
+        ),
+    )
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+
+    out = capsys.readouterr().out
+    assert "Acme Corp  - past employer" in out
+    assert "Beta Inc  - past employer" in out
+
+
+def test_blacklist_add_re_adding_a_company_updates_its_reason(tmp_path, capsys):
+    """add() already overwrites the display-name casing on a re-add - the
+    reason must update the same way, not stick with whatever the first
+    `add` call gave it.
+    """
+    settings = make_settings(tmp_path)
+    cmd_blacklist(
+        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason="typo reason")
+    )
+    capsys.readouterr()
+
+    cmd_blacklist(
+        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason="correct reason")
+    )
+    capsys.readouterr()
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+
+    out = capsys.readouterr().out
+    assert "Acme Corp  - correct reason" in out
+    assert "typo reason" not in out
+
+
+def test_blacklist_list_format_json_prints_name_and_reason(tmp_path, capsys):
     """Same reasoning `job-bot faq list --format json` was added for: a
     script or cron job that wants the structured data shouldn't have to
     scrape human-formatted text - `blacklist export` gives JSON-adjacent
     output but only ever the plain one-company-per-line shape `import`
-    reads back, never real JSON.
+    reads back, never real JSON. Each entry is {"name", "reason"} now
+    (reason "" when none was given), not a bare name string - the shape
+    change that came with `job-bot blacklist add --reason`.
     """
     settings = make_settings(tmp_path)
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"]))
+    cmd_blacklist(
+        settings,
+        argparse.Namespace(
+            blacklist_action="add", company=["Acme Corp"], reason="no H1B sponsorship"
+        ),
+    )
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Beta Inc"], reason=None))
     capsys.readouterr()
 
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="json"))
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload == ["Acme Corp", "Beta Inc"]
+    assert payload == [
+        {"name": "Acme Corp", "reason": "no H1B sponsorship"},
+        {"name": "Beta Inc", "reason": ""},
+    ]
 
 
 def test_blacklist_list_format_json_on_empty_blacklist_is_still_valid_json(tmp_path, capsys):
@@ -1115,7 +1192,7 @@ def test_blacklist_add_warns_about_in_progress_applications_at_that_company(tmp_
     tracker.mark_applied("job1")
     tracker.update_status("job1", "interviewing")
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
 
     out = capsys.readouterr().out
     assert "Added to blacklist: Acme Corp" in out
@@ -1134,7 +1211,7 @@ def test_blacklist_add_warning_matches_case_and_spacing_insensitively(tmp_path, 
     tracker.upsert_job("job1", "Backend Engineer", "  ACME   corp  ", "https://x/1")
     tracker.mark_applied("job1")
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
 
     assert "still in progress" in capsys.readouterr().out
 
@@ -1144,7 +1221,7 @@ def test_blacklist_add_no_warning_when_nothing_is_in_progress(tmp_path, capsys):
     tracker = Tracker(settings.db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")  # status=seen
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
 
     assert "still in progress" not in capsys.readouterr().out
 
@@ -1156,7 +1233,7 @@ def test_blacklist_add_no_warning_for_closed_outcomes(tmp_path, capsys):
     tracker.mark_applied("job1")
     tracker.update_status("job1", "rejected")
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"]))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
 
     assert "still in progress" not in capsys.readouterr().out
 
@@ -1173,7 +1250,7 @@ def test_blacklist_add_accepts_multiple_companies_in_one_call(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
     cmd_blacklist(
-        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"])
+        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"], reason=None)
     )
 
     out = capsys.readouterr().out
@@ -1188,7 +1265,7 @@ def test_blacklist_add_accepts_multiple_companies_in_one_call(tmp_path, capsys):
 def test_blacklist_remove_accepts_multiple_companies_in_one_call(tmp_path, capsys):
     settings = make_settings(tmp_path)
     cmd_blacklist(
-        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"])
+        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"], reason=None)
     )
     capsys.readouterr()
 
@@ -1269,7 +1346,9 @@ def test_blacklist_import_of_a_non_utf8_file_exits_with_a_clean_error(tmp_path, 
 
 def test_blacklist_export_to_stdout_prints_one_company_per_line(tmp_path, capsys):
     settings = make_settings(tmp_path)
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"]))
+    cmd_blacklist(
+        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"], reason=None)
+    )
     capsys.readouterr()
 
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="export", out=None))
@@ -1280,7 +1359,9 @@ def test_blacklist_export_to_stdout_prints_one_company_per_line(tmp_path, capsys
 
 def test_blacklist_export_round_trips_through_import(tmp_path, capsys):
     settings = make_settings(tmp_path)
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"]))
+    cmd_blacklist(
+        settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"], reason=None)
+    )
     capsys.readouterr()
     export_file = tmp_path / "backup.txt"
 
