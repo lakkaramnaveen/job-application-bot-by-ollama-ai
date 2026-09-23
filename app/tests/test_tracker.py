@@ -509,6 +509,26 @@ def test_search_qa_matches_question_or_answer_text(tmp_path):
     assert [p["question"] for p in tracker.search_qa(search="no")] == ["Willing to relocate?"]
 
 
+def test_search_qa_escapes_like_wildcards(tmp_path):
+    """Same wildcard-escaping requirement list_jobs()'s own search has a
+    dedicated test for - search_qa() copies that same escaping logic, so a
+    literal "%" in the search term must match literally, not act as a SQL
+    LIKE wildcard. A search of "a%b" against a row containing that exact
+    substring, and a row containing "a...b" with no percent at all, only
+    distinguishes escaped from unescaped behavior if the second row is
+    excluded - unlike a simpler "50%" search that could pass by
+    coincidence even with escaping silently broken (neither row contains
+    a bare "50" for a wildcard match to fall back to).
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_qa("1", "Does a%b apply to your case?", "Yes")
+    tracker.record_qa("2", "Does aXXXb apply to your case (no percent)?", "Yes")
+
+    results = tracker.search_qa(search="a%b")
+
+    assert [p["question"] for p in results] == ["Does a%b apply to your case?"]
+
+
 def test_search_qa_keeps_a_pair_whose_job_is_not_in_the_jobs_table(tmp_path):
     """record_qa() has no foreign-key requirement that job_id already
     exists in `jobs` - a LEFT JOIN (not a plain JOIN) must not silently
@@ -882,6 +902,23 @@ def test_list_resume_generations_matches_summary_company_or_title(tmp_path):
 
     assert [g["job_id"] for g in tracker.list_resume_generations(search="python")] == ["1"]
     assert [g["job_id"] for g in tracker.list_resume_generations(search="Beta")] == ["2"]
+
+
+def test_list_resume_generations_escapes_like_wildcards(tmp_path):
+    """Same wildcard-escaping requirement list_jobs()'s own search has a
+    dedicated test for - list_resume_generations() copies that same
+    escaping logic. See test_search_qa_escapes_like_wildcards for why the
+    fixture needs a row containing "a...b" with no percent at all: only
+    that distinguishes escaped from unescaped behavior, unlike a search
+    that could pass by coincidence with escaping silently broken.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_resume_generation("1", "Engineer", "Acme", "Tailored for the a%b role.", [], [])
+    tracker.record_resume_generation("2", "Engineer", "Beta", "Tailored for the aXXXb role.", [], [])
+
+    results = tracker.list_resume_generations(search="a%b")
+
+    assert [g["job_id"] for g in results] == ["1"]
 
 
 def test_list_resume_generations_keeps_a_generation_whose_job_is_not_in_the_jobs_table(tmp_path):
