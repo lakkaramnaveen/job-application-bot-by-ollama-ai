@@ -1413,6 +1413,25 @@ def test_doctor_flags_a_corrupted_blacklist_file(tmp_path, capsys):
     assert "not valid JSON" in out
 
 
+def test_doctor_flags_an_unreadable_blacklist_file(tmp_path, capsys):
+    """Real gap this guards against: _blacklist_check's `except OSError`
+    branch (e.g. a permission-denied file) is separate from - and was
+    never exercised by - the JSONDecodeError test above. A directory
+    where the blacklist file is expected exists (.exists() is True) but
+    read_text() raises IsADirectoryError, a subclass of OSError - a
+    portable, deterministic way to trigger this branch without relying on
+    chmod semantics that can vary by OS/filesystem/user.
+    """
+    settings = make_settings(tmp_path)
+    settings.blacklist_path.mkdir(parents=True)
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Blacklist file valid" in out
+    assert str(settings.blacklist_path) in out
+
+
 def test_doctor_flags_a_blacklist_file_that_is_not_a_json_array(tmp_path, capsys):
     settings = make_settings(tmp_path)
     settings.blacklist_path.write_text('{"not": "a list"}', encoding="utf-8")
@@ -1450,6 +1469,21 @@ def test_doctor_flags_a_corrupted_faq_file(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[!!] FAQ cache valid" in out
     assert "not valid JSON" in out
+
+
+def test_doctor_flags_an_unreadable_faq_file(tmp_path, capsys):
+    """Same OSError-branch gap as _blacklist_check's - see
+    test_doctor_flags_an_unreadable_blacklist_file for why a directory in
+    place of the file is the portable way to trigger it.
+    """
+    settings = make_settings(tmp_path)
+    settings.faq_path.mkdir(parents=True)
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] FAQ cache valid" in out
+    assert str(settings.faq_path) in out
 
 
 def test_doctor_flags_a_faq_file_that_is_not_a_json_object(tmp_path, capsys):
@@ -1499,6 +1533,21 @@ def test_doctor_flags_a_corrupted_answer_gaps_file(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[!!] Answer-gaps file valid" in out
     assert "not valid JSON" in out
+
+
+def test_doctor_flags_an_unreadable_answer_gaps_file(tmp_path, capsys):
+    """Same OSError-branch gap as _blacklist_check's/_faq_check's - see
+    test_doctor_flags_an_unreadable_blacklist_file for why a directory in
+    place of the file is the portable way to trigger it.
+    """
+    settings = make_settings(tmp_path)
+    settings.answer_gaps_path.mkdir(parents=True)
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Answer-gaps file valid" in out
+    assert str(settings.answer_gaps_path) in out
 
 
 def test_doctor_flags_an_answer_gaps_file_that_is_not_a_json_object(tmp_path, capsys):
