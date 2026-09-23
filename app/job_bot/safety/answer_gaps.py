@@ -28,7 +28,15 @@ class AnswerGapStore:
             return {}
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # UnicodeDecodeError alongside JSONDecodeError - an
+            # answer_gaps.json saved with a non-UTF-8 encoding is
+            # corruption exactly the same way invalid JSON already is, and
+            # gets the same graceful fallback here rather than crashing
+            # every command that touches unanswered-question tracking.
+            # cli.py's own _answer_gaps_check() doctor check is what
+            # actually surfaces this to the user, instead of it silently
+            # looking like "nothing unanswered".
             return {}
         return data if isinstance(data, dict) else {}
 

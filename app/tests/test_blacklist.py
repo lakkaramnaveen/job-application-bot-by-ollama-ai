@@ -31,6 +31,21 @@ def test_malformed_json_file_means_nothing_blocked(tmp_path):
     assert blacklist.is_blocked("Anything") is False
 
 
+def test_non_utf8_file_means_nothing_blocked(tmp_path):
+    """Same graceful-degrade reasoning as test_malformed_json_file_means_
+    nothing_blocked above - a blacklist.json saved with a non-UTF-8
+    encoding previously crashed CompanyBlacklist.__init__() (and every
+    command that constructs one) with a raw UnicodeDecodeError instead of
+    degrading to an empty blacklist the same way invalid JSON already does.
+    """
+    path = tmp_path / "blacklist.json"
+    path.write_bytes("Acme ’s Corp".encode("cp1252"))
+
+    blacklist = CompanyBlacklist(path)
+
+    assert blacklist.is_blocked("Anything") is False
+
+
 def test_non_list_json_file_means_nothing_blocked(tmp_path):
     """Valid JSON but the wrong shape (e.g. a dict, from an old or
     hand-edited format) is treated the same as no blacklist at all, not a

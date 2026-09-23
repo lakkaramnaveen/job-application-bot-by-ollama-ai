@@ -66,3 +66,17 @@ def test_survives_a_corrupted_file(tmp_path):
     store = AnswerGapStore(path)
 
     assert store.list_unanswered() == {}
+
+
+def test_survives_a_non_utf8_file(tmp_path):
+    """Same graceful-degrade reasoning as test_survives_a_corrupted_file -
+    an answer_gaps.json saved with a non-UTF-8 encoding previously crashed
+    _load() (and every command that touches it) with a raw
+    UnicodeDecodeError instead of degrading to an empty store the same way
+    invalid JSON already does.
+    """
+    path = tmp_path / "answer_gaps.json"
+    path.write_bytes("Isn’t sponsorship needed?".encode("cp1252"))
+    store = AnswerGapStore(path)
+
+    assert store.list_unanswered() == {}

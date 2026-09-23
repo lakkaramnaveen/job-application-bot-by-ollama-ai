@@ -72,6 +72,19 @@ def test_faq_answers_malformed_json_returns_empty_dict(tmp_path):
     assert store.faq_answers() == {}
 
 
+def test_faq_answers_non_utf8_file_returns_empty_dict(tmp_path):
+    """Same graceful-degrade reasoning as test_faq_answers_malformed_json_
+    returns_empty_dict - a faq_cache.json saved with a non-UTF-8 encoding
+    previously crashed faq_answers() (and every command that touches FAQ
+    answers) with a raw UnicodeDecodeError instead of degrading to an
+    empty dict the same way invalid JSON already does.
+    """
+    store = make_store(tmp_path)
+    store._faq_path.write_bytes("Isn’t sponsorship needed?".encode("cp1252"))
+
+    assert store.faq_answers() == {}
+
+
 def test_faq_answers_non_dict_json_returns_empty_dict(tmp_path):
     store = make_store(tmp_path)
     store._faq_path.write_text(json.dumps(["a", "list", "not", "a", "dict"]), encoding="utf-8")

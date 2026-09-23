@@ -48,7 +48,15 @@ class ResumeStore:
             return {}
         try:
             data = json.loads(self._faq_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # UnicodeDecodeError alongside JSONDecodeError - a faq_cache.json
+            # saved with a non-UTF-8 encoding (a hand edit, a bad
+            # restore/backup, ...) is corruption exactly the same way
+            # invalid JSON already is, and gets the same graceful fallback
+            # here rather than crashing every command that touches FAQ
+            # answers. cli.py's own _faq_check() doctor check is what
+            # actually surfaces this corruption to the user, instead of it
+            # silently looking like "no FAQ cache yet".
             return {}
         if not isinstance(data, dict):
             return {}

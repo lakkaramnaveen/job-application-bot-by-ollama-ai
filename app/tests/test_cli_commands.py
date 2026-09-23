@@ -1724,6 +1724,23 @@ def test_doctor_flags_a_corrupted_blacklist_file(tmp_path, capsys):
     assert "not valid JSON" in out
 
 
+def test_doctor_flags_a_non_utf8_blacklist_file(tmp_path, capsys):
+    """Real failure this guards against: a company_blacklist.json saved
+    with a non-UTF-8 encoding previously crashed this check (and every
+    other command touching the blacklist) with a raw, uncaught
+    UnicodeDecodeError, the one corruption shape _blacklist_check's own
+    OSError/JSONDecodeError handling didn't cover.
+    """
+    settings = make_settings(tmp_path)
+    settings.blacklist_path.write_bytes("Acme ’s Corp".encode("cp1252"))
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Blacklist file valid" in out
+    assert "not valid UTF-8" in out
+
+
 def test_doctor_flags_an_unreadable_blacklist_file(tmp_path, capsys):
     """Real gap this guards against: _blacklist_check's `except OSError`
     branch (e.g. a permission-denied file) is separate from - and was
@@ -1780,6 +1797,20 @@ def test_doctor_flags_a_corrupted_faq_file(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[!!] FAQ cache valid" in out
     assert "not valid JSON" in out
+
+
+def test_doctor_flags_a_non_utf8_faq_file(tmp_path, capsys):
+    """Same non-UTF-8 corruption gap as _blacklist_check's - see
+    test_doctor_flags_a_non_utf8_blacklist_file.
+    """
+    settings = make_settings(tmp_path)
+    settings.faq_path.write_bytes("Isn’t sponsorship needed?".encode("cp1252"))
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] FAQ cache valid" in out
+    assert "not valid UTF-8" in out
 
 
 def test_doctor_flags_an_unreadable_faq_file(tmp_path, capsys):
@@ -1844,6 +1875,20 @@ def test_doctor_flags_a_corrupted_answer_gaps_file(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[!!] Answer-gaps file valid" in out
     assert "not valid JSON" in out
+
+
+def test_doctor_flags_a_non_utf8_answer_gaps_file(tmp_path, capsys):
+    """Same non-UTF-8 corruption gap as _blacklist_check's/_faq_check's -
+    see test_doctor_flags_a_non_utf8_blacklist_file.
+    """
+    settings = make_settings(tmp_path)
+    settings.answer_gaps_path.write_bytes("Isn’t sponsorship needed?".encode("cp1252"))
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Answer-gaps file valid" in out
+    assert "not valid UTF-8" in out
 
 
 def test_doctor_flags_an_unreadable_answer_gaps_file(tmp_path, capsys):

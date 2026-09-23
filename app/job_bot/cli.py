@@ -1582,6 +1582,8 @@ def _blacklist_check(settings: Settings) -> tuple[str, bool, str]:
         data = json.loads(settings.blacklist_path.read_text(encoding="utf-8"))
     except OSError as e:
         return (label, False, f"{settings.blacklist_path}: {e}")
+    except UnicodeDecodeError as e:
+        return (label, False, f"{settings.blacklist_path}: not valid UTF-8 ({e})")
     except json.JSONDecodeError as e:
         return (label, False, f"{settings.blacklist_path}: not valid JSON ({e})")
     if not isinstance(data, list):
@@ -1604,6 +1606,8 @@ def _faq_check(settings: Settings) -> tuple[str, bool, str]:
         data = json.loads(settings.faq_path.read_text(encoding="utf-8"))
     except OSError as e:
         return (label, False, f"{settings.faq_path}: {e}")
+    except UnicodeDecodeError as e:
+        return (label, False, f"{settings.faq_path}: not valid UTF-8 ({e})")
     except json.JSONDecodeError as e:
         return (label, False, f"{settings.faq_path}: not valid JSON ({e})")
     if not isinstance(data, dict):
@@ -1629,6 +1633,8 @@ def _answer_gaps_check(settings: Settings) -> tuple[str, bool, str]:
         data = json.loads(settings.answer_gaps_path.read_text(encoding="utf-8"))
     except OSError as e:
         return (label, False, f"{settings.answer_gaps_path}: {e}")
+    except UnicodeDecodeError as e:
+        return (label, False, f"{settings.answer_gaps_path}: not valid UTF-8 ({e})")
     except json.JSONDecodeError as e:
         return (label, False, f"{settings.answer_gaps_path}: not valid JSON ({e})")
     if not isinstance(data, dict):

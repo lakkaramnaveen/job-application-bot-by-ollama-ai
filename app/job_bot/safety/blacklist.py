@@ -26,7 +26,15 @@ class CompanyBlacklist:
             return {}
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # UnicodeDecodeError alongside JSONDecodeError - a
+            # company_blacklist.json saved with a non-UTF-8 encoding is
+            # corruption exactly the same way invalid JSON already is, and
+            # gets the same graceful fallback here rather than crashing
+            # every command that touches the blacklist. cli.py's own
+            # _blacklist_check() doctor check is what actually surfaces
+            # this to the user, instead of it silently looking like
+            # "nothing blacklisted".
             return {}
         if not isinstance(data, list):
             return {}
