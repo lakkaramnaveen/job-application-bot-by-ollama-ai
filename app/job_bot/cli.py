@@ -1636,6 +1636,38 @@ def _tracker_db_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, True, str(settings.db_path))
 
 
+def _daily_cap_usage_check(settings: Settings) -> tuple[str, bool, str]:
+    """Today's application count against the effective daily cap - directly
+    actionable in a way a pure file/config check can't be: someone running
+    `job-bot doctor` to understand why `job-bot run` isn't applying to
+    anything (or won't get far into a fresh --loop) previously had no way
+    to see "you've already used today's cap" without starting a real run
+    and watching it apply to nothing. Flagged (not just informational) once
+    the cap is actually reached, since that's the specific, common reason
+    a run does nothing today - same "ok=False for a real, actionable
+    reason" treatment every other check here gets, not a status this one
+    alone is exempt from.
+
+    RateLimiter shares db_path with Tracker but doesn't guard against a
+    corrupted file the way _tracker_db_check() above does - same
+    sqlite3.DatabaseError catch here, or a corrupted db.sqlite3 crashed
+    doctor entirely on this check instead of giving the clean diagnosis
+    _tracker_db_check() already exists to provide.
+    """
+    label = "Daily application cap available"
+    try:
+        rate_limiter = RateLimiter(settings.db_path, settings.effective_daily_cap())
+        used = rate_limiter.count_today()
+    except sqlite3.DatabaseError:
+        return (label, True, "skipped - tracker database is corrupted, see the check above")
+    cap = settings.effective_daily_cap()
+    remaining = rate_limiter.remaining_today()
+    detail = f"{used}/{cap} applications submitted today"
+    if remaining <= 0:
+        detail += " - job-bot run will apply to nothing more until tomorrow"
+    return (label, remaining > 0, detail)
+
+
 def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     """Check local setup for the common ways `job-bot run` fails partway
     through rather than up front - deliberately file/config checks only, no
@@ -1709,6 +1741,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
             ),
         )
     )
+    checks.append(_daily_cap_usage_check(settings))
 
     passed = sum(ok for _, ok, _ in checks)
 

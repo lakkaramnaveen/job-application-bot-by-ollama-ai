@@ -166,7 +166,8 @@ Edit `.env`:
    blacklist/FAQ/answer-gaps files are valid JSON (not silently treated as empty),
    the applications directory is actually writable, Gmail credentials
    present and the one-time OAuth consent actually completed (if you use
-   gmail-sync), the daily cap sane. File/config checks only, no network
+   gmail-sync), the daily cap sane and how much of it is already used today.
+   File/config checks only, no network
    call, so it's fast and safe to run any time something seems off:
    ```bash
    job-bot doctor

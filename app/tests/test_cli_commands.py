@@ -39,6 +39,7 @@ from job_bot.models.schemas import JobMatchScore
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.blacklist import CompanyBlacklist
+from job_bot.safety.rate_limiter import RateLimiter
 from job_bot.tracker.db import Tracker
 
 
@@ -1825,6 +1826,67 @@ def test_doctor_flags_daily_cap_above_the_hard_ceiling(tmp_path, capsys):
     cmd_doctor(settings, doctor_args())
 
     assert "[!!] Daily application cap within hard ceiling" in capsys.readouterr().out
+
+
+def test_doctor_passes_daily_cap_usage_check_with_no_applications_today(tmp_path, capsys):
+    settings = make_settings(tmp_path, daily_application_cap=5)
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[OK] Daily application cap available" in out
+    assert "0/5 applications submitted today" in out
+
+
+def test_doctor_shows_partial_daily_cap_usage(tmp_path, capsys):
+    settings = make_settings(tmp_path, daily_application_cap=5)
+    rate_limiter = RateLimiter(settings.db_path, settings.effective_daily_cap())
+    rate_limiter.record_application()
+    rate_limiter.record_application()
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[OK] Daily application cap available" in out
+    assert "2/5 applications submitted today" in out
+
+
+def test_doctor_flags_daily_cap_usage_check_when_cap_reached(tmp_path, capsys):
+    """Real gap this guards against: someone running `job-bot doctor` to
+    understand why `job-bot run` isn't applying to anything (or a fresh
+    --loop stops almost immediately) previously had no way to see "you've
+    already used today's cap" without starting a real run and watching it
+    apply to nothing.
+    """
+    settings = make_settings(tmp_path, daily_application_cap=1)
+    rate_limiter = RateLimiter(settings.db_path, settings.effective_daily_cap())
+    rate_limiter.record_application()
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Daily application cap available" in out
+    assert "1/1 applications submitted today" in out
+    assert "job-bot run will apply to nothing more until tomorrow" in out
+
+
+def test_doctor_daily_cap_usage_check_does_not_crash_on_a_corrupted_tracker_database(tmp_path, capsys):
+    """RateLimiter shares db_path with Tracker but has no guard of its own
+    against a corrupted file - without this check's own try/except, a
+    corrupted db.sqlite3 crashed doctor entirely on this check (a raw
+    sqlite3.DatabaseError) instead of the clean diagnosis
+    _tracker_db_check already gives for the same root cause. Only one
+    failed check should be reported for it, not two.
+    """
+    settings = make_settings(tmp_path)
+    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.db_path.write_text("not a sqlite database", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())  # must not raise
+
+    out = capsys.readouterr().out
+    assert "[OK] Daily application cap available" in out
+    assert "[!!] Tracker database readable" in out
 
 
 def test_doctor_json_reports_each_check_and_the_pass_count(tmp_path, capsys):
