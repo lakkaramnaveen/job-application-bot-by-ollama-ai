@@ -1041,6 +1041,38 @@ def test_run_stops_the_whole_run_when_ollama_is_unreachable(tmp_path, monkeypatc
     assert tracker.get_job("job3") is None
 
 
+def test_loop_stops_instead_of_retrying_when_ollama_is_unreachable(tmp_path, monkeypatch, capsys):
+    """Real bug this guards against: _run_apply_cycle already stops early
+    within *that* cycle when Ollama is unreachable (see
+    test_run_stops_the_whole_run_when_ollama_is_unreachable above) - but
+    --loop's own outer loop had no way to tell that apart from an ordinary
+    "nothing to apply this cycle" one, so applied == 0 looked identical
+    either way. Confirmed live: a run with Ollama down correctly stopped
+    the first cycle's posting loop early, then --loop printed "Nothing to
+    apply to this cycle - sleeping 20 minute(s)..." and retried the
+    identical, guaranteed-to-fail cycle every 20 minutes until manually
+    interrupted. time.sleep is monkeypatched to fail the test outright if
+    called at all - the loop must stop, not sleep-and-retry.
+    """
+    provider = OllamaUnreachableProvider()
+
+    def fail_if_called(seconds):
+        raise AssertionError("must not sleep/retry once the provider is unreachable - the loop should stop instead")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", MultiJobAdapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", fail_if_called)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(loop=True, max_apps=10))  # must not raise
+
+    out = capsys.readouterr().out
+    assert "Ollama is unreachable" in out
+    assert "Stopping the loop" in out
+    assert provider.calls == 1
+
+
 class ClaudeMisconfiguredProvider(LLMProvider):
     """Simulates a revoked/invalid Claude API key - every call raises the
     exact ClaudeProviderError claude_provider.py raises on
