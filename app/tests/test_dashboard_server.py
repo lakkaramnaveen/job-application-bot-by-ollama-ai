@@ -256,6 +256,26 @@ def test_api_rows_search_also_matches_notes(live_server):
     assert "Frontend Engineer" not in body
 
 
+def test_api_rows_search_also_matches_missing_qualifications(live_server, tmp_path):
+    """Verifies the search term actually round-trips end-to-end through the
+    dashboard's own HTTP query-param parsing (_parse_list_params) into
+    Tracker.list_jobs' search, not just that list_jobs itself supports it -
+    a separate code path from a direct list_jobs() call, same reasoning as
+    test_api_rows_search_also_matches_notes above.
+    """
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme Corp", "https://example.com/job1", score=70,
+        should_apply=True, missing_qualifications=["AWS certification"],
+    )
+
+    with urllib.request.urlopen(f"{live_server}/api/rows?q=certification") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "Backend Engineer" in body
+    assert "Frontend Engineer" not in body
+
+
 def test_api_rows_reports_total_via_header(live_server):
     with urllib.request.urlopen(f"{live_server}/api/rows") as resp:
         assert resp.headers["X-Total-Jobs"] == "2"
