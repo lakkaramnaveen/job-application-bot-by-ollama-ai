@@ -1063,6 +1063,22 @@ def test_best_match_index_reverse_direction_picks_the_first_stated_option():
     assert LinkedInAdapter._best_match_index(options, answer) == 1
 
 
+def test_best_match_index_skips_a_blank_placeholder_option_in_reverse_direction():
+    r"""A real <select> commonly has a blank first option ("Select an
+    option", value/text ""). The reverse-direction loop's `if not
+    opt_norm: continue` guard exists specifically to skip it - without
+    that guard, an empty option's word-boundary pattern can spuriously
+    match a zero-width position in the answer right after a non-word
+    character (confirmed: re.compile(r"(?<!\w)(?!\w)").search("5+ years")
+    matches right after the "+"), so the blank option would win over the
+    real match purely because it's checked first, before the actual
+    option ("5+") ever gets its turn.
+    """
+    options = ["", "5+"]
+    answer = "5+ years of experience"
+    assert LinkedInAdapter._best_match_index(options, answer) == 1
+
+
 # --- search() URL handling and pagination ---
 
 
