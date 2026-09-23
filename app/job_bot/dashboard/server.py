@@ -26,6 +26,7 @@ from job_bot.dashboard.render import (
     render_blacklist_html,
     render_page_html,
     render_qa_html,
+    render_resume_html,
     render_rows_html,
     render_stats_html,
 )
@@ -144,6 +145,8 @@ def make_handler(
                 self._send(200, "application/json", json.dumps(jobs, default=str).encode("utf-8"))
             elif (job_id := self._job_id_from_path("/api/jobs/", "/qa")) is not None:
                 self._handle_qa(tracker, job_id)
+            elif (job_id := self._job_id_from_path("/api/jobs/", "/resume")) is not None:
+                self._handle_resume(tracker, job_id)
             elif (job_id := self._job_id_from_path("/api/jobs/", "/note")) is not None:
                 self._handle_note_get(tracker, job_id)
             elif parsed.path == "/api/blacklist":
@@ -268,6 +271,20 @@ def make_handler(
                 self._send_text(404, "Job not found")
                 return
             body = render_qa_html(tracker.list_qa(job_id)).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_resume(self, tracker: Tracker, job_id: str) -> None:
+            """The tailored resume generated for this job (summary/skills/
+            bullets, same shape `job-bot status <job_id>` already prints),
+            for the dashboard's Resume modal - the one piece of per-job
+            detail `job-bot status` already surfaced that the dashboard had
+            no equivalent for, unlike Q&A/notes/blacklist which all already
+            have their own modal here.
+            """
+            if tracker.get_job(job_id) is None:
+                self._send_text(404, "Job not found")
+                return
+            body = render_resume_html(tracker.get_resume_generation(job_id)).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
         def _handle_note_get(self, tracker: Tracker, job_id: str) -> None:

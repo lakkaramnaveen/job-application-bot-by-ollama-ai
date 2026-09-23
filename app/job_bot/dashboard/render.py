@@ -221,6 +221,7 @@ def render_rows_html(jobs: list[dict[str, Any]], *, stale_after_days: int | None
             "<td class=\"actions\">"
             f"{_status_select(job_id, str(job.get('status', '')))}"
             f'<button type="button" class="qa-button" data-job-id="{safe_job_id}">Q&amp;A</button>'
+            f'<button type="button" class="resume-button" data-job-id="{safe_job_id}">Resume</button>'
             f'<button type="button" class="{note_class}" data-job-id="{safe_job_id}" '
             f'title="{note_title}">Note</button>'
             f'<button type="button" class="blacklist-button" data-job-id="{safe_job_id}" '
@@ -244,6 +245,28 @@ def render_qa_html(qa: list[dict[str, Any]]) -> str:
         answer = html.escape(str(entry.get("answer", "")))
         items.append(f"<dt>{question}</dt><dd>{answer}</dd>")
     return f'<dl class="qa-list">{"".join(items)}</dl>'
+
+
+def render_resume_html(generation: dict[str, Any] | None) -> str:
+    """The tailored resume generated for this job (summary/skills/bullets -
+    same shape Tracker.get_resume_generation() returns, and `job-bot status
+    <job_id>` already prints) as an HTML fragment, for the dashboard's
+    Resume modal. `generation` is None when the job never cleared the fit
+    gate or otherwise was never tailored - not an error, just nothing to
+    show. LLM-generated content, so every field is escaped, same as
+    render_qa_html above.
+    """
+    if generation is None:
+        return '<p class="empty">No tailored resume generated for this job.</p>'
+    summary = html.escape(str(generation.get("summary", "")))
+    skills = ", ".join(html.escape(str(s)) for s in generation.get("skills", []))
+    bullets = "".join(f"<li>{html.escape(str(b))}</li>" for b in generation.get("bullets", []))
+    bullets_html = f"<ul>{bullets}</ul>" if bullets else ""
+    return (
+        f"<p><strong>Summary:</strong> {summary}</p>"
+        f"<p><strong>Skills:</strong> {skills or '-'}</p>"
+        f"{bullets_html}"
+    )
 
 
 def render_blacklist_html(companies: list[str]) -> str:
@@ -353,10 +376,10 @@ def render_page_html(
   td.actions {{ display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }}
   .status-select {{ font-size: 0.8rem; padding: 0.25rem 0.4rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg); }}
-  .qa-button, .blacklist-button, .note-button {{ font-size: 0.8rem; padding: 0.25rem 0.6rem; border-radius: 4px;
-              border: 1px solid var(--border); background: var(--surface); color: var(--fg);
-              cursor: pointer; }}
-  .qa-button:hover {{ background: var(--header-bg); }}
+  .qa-button, .resume-button, .blacklist-button, .note-button {{ font-size: 0.8rem; padding: 0.25rem 0.6rem;
+              border-radius: 4px; border: 1px solid var(--border); background: var(--surface);
+              color: var(--fg); cursor: pointer; }}
+  .qa-button:hover, .resume-button:hover {{ background: var(--header-bg); }}
   .blacklist-button:hover {{ border-color: #ef4444; color: #ef4444; }}
   .note-button:hover {{ background: var(--header-bg); }}
   .note-button.has-note {{ border-color: #3b82f6; color: #3b82f6; }}
@@ -441,6 +464,12 @@ def render_page_html(
   <h2>Q&amp;A history</h2>
   <div id="qaContent"></div>
   <button type="button" id="qaClose">Close</button>
+</dialog>
+
+<dialog id="resumeDialog">
+  <h2>Tailored resume</h2>
+  <div id="resumeContent"></div>
+  <button type="button" id="resumeClose">Close</button>
 </dialog>
 
 <dialog id="blacklistDialog">
@@ -587,6 +616,21 @@ document.getElementById('rows').addEventListener('click', async (e) => {{
   }}
 }});
 document.getElementById('qaClose').addEventListener('click', () => qaDialog.close());
+
+const resumeDialog = document.getElementById('resumeDialog');
+document.getElementById('rows').addEventListener('click', async (e) => {{
+  if (!e.target.classList.contains('resume-button')) return;
+  const jobId = e.target.dataset.jobId;
+  document.getElementById('resumeContent').innerHTML = 'Loading...';
+  resumeDialog.showModal();
+  try {{
+    const res = await fetch(`/api/jobs/${{encodeURIComponent(jobId)}}/resume`);
+    document.getElementById('resumeContent').innerHTML = res.ok ? await res.text() : 'Could not load resume.';
+  }} catch (err) {{
+    document.getElementById('resumeContent').innerHTML = 'Could not load resume (network error).';
+  }}
+}});
+document.getElementById('resumeClose').addEventListener('click', () => resumeDialog.close());
 
 const noteDialog = document.getElementById('noteDialog');
 const noteTextarea = document.getElementById('noteTextarea');

@@ -375,6 +375,33 @@ def test_api_jobs_qa_returns_404_for_unknown_job(live_server):
     assert exc_info.value.code == 404
 
 
+def test_api_jobs_resume_returns_fragment(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/jobs/job1/resume") as resp:
+        assert resp.status == 200
+        body = resp.read().decode("utf-8")
+    assert "No tailored resume generated" in body
+
+
+def test_api_jobs_resume_returns_the_recorded_generation(live_server, tmp_path):
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.record_resume_generation(
+        "job1", "Backend Engineer", "Acme Corp", "A tailored summary.", ["Python"], ["Did a thing."]
+    )
+
+    with urllib.request.urlopen(f"{live_server}/api/jobs/job1/resume") as resp:
+        assert resp.status == 200
+        body = resp.read().decode("utf-8")
+    assert "A tailored summary." in body
+    assert "Python" in body
+    assert "Did a thing." in body
+
+
+def test_api_jobs_resume_returns_404_for_unknown_job(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(f"{live_server}/api/jobs/does-not-exist/resume")
+    assert exc_info.value.code == 404
+
+
 def test_post_status_updates_job(live_server):
     resp = _post_json(f"{live_server}/api/jobs/job1/status", {"status": "interviewing"})
     assert resp.status == 200

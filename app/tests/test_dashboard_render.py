@@ -4,6 +4,7 @@ from job_bot.dashboard.render import (
     render_blacklist_html,
     render_page_html,
     render_qa_html,
+    render_resume_html,
     render_rows_html,
     render_stats_html,
 )
@@ -303,6 +304,43 @@ def test_render_qa_html_renders_all_entries_in_order():
     ]
     html = render_qa_html(qa)
     assert html.index("Q1") < html.index("Q2")
+
+
+def test_render_resume_html_empty_state():
+    assert "No tailored resume generated" in render_resume_html(None)
+
+
+def test_render_resume_html_escapes_summary_skills_and_bullets():
+    generation = {
+        "summary": "<script>alert(1)</script>",
+        "skills": ["Python", "<img onerror=alert(1)>"],
+        "bullets": ["<b>bold claim</b>"],
+    }
+    html = render_resume_html(generation)
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "<img onerror" not in html
+    assert "<b>bold claim</b>" not in html
+    assert "&lt;b&gt;bold claim&lt;/b&gt;" in html
+    assert "Python" in html
+
+
+def test_render_resume_html_renders_summary_skills_and_bullets():
+    generation = {
+        "summary": "A tailored summary.",
+        "skills": ["Python", "AWS"],
+        "bullets": ["Did a thing.", "Did another thing."],
+    }
+    html = render_resume_html(generation)
+    assert "A tailored summary." in html
+    assert "Python, AWS" in html
+    assert "<li>Did a thing.</li>" in html
+    assert "<li>Did another thing.</li>" in html
+
+
+def test_render_resume_html_omits_bullet_list_when_there_are_none():
+    generation = {"summary": "A summary.", "skills": ["Python"], "bullets": []}
+    assert "<ul>" not in render_resume_html(generation)
 
 
 def test_render_blacklist_html_empty_state():

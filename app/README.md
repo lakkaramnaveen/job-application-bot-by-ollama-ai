@@ -574,6 +574,9 @@ seen, and lets you:
   dropping to `job-bot blacklist list`/`remove`.
 - **View a job's Q&A history** (every application-question answer the bot
   gave, and what it was based on) in a modal, without querying the DB by hand.
+- **View a job's tailored resume** (the summary/skills/bullets actually
+  generated and submitted for it, if any) in a modal - the same view
+  `job-bot status <job_id>` already prints, one click away instead.
 - **Export CSV or JSON** for whatever's currently filtered/searched, not just
   the visible page - the same output `job-bot export` (`--format csv`/`json`)
   produces on the command line.
