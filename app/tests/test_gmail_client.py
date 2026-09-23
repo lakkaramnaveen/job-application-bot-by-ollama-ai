@@ -301,6 +301,33 @@ def test_load_credentials_runs_oauth_flow_when_no_token_exists(tmp_path, monkeyp
     assert token_path.read_text(encoding="utf-8") == '{"fake": "creds"}'
 
 
+def test_load_credentials_raises_gmail_client_error_when_the_oauth_flow_fails(tmp_path, monkeypatch):
+    """Real failure this guards against: run_local_server() opens a real
+    browser tab and blocks on a local HTTP callback until the Google
+    consent screen completes - on a headless/SSH box with no browser to
+    open, this raises webbrowser.Error (or some other exception, depending
+    on what fails); it previously escaped uncaught instead of becoming the
+    same clean GmailClientError every other failure path in this method
+    already produces.
+    """
+    creds_path = tmp_path / "creds.json"
+    creds_path.write_text("{}", encoding="utf-8")
+    token_path = tmp_path / "token.json"
+
+    class FailingFlow:
+        def run_local_server(self, port):
+            raise RuntimeError("could not locate runnable browser")
+
+    monkeypatch.setattr(
+        "job_bot.integrations.gmail_client.InstalledAppFlow.from_client_secrets_file",
+        lambda path, scopes: FailingFlow(),
+    )
+    client = GmailClient(creds_path, token_path)
+
+    with pytest.raises(GmailClientError, match="Gmail OAuth sign-in failed"):
+        client._load_credentials()
+
+
 def test_ensure_service_builds_and_caches_the_client(tmp_path, monkeypatch):
     fake_service = object()
     built_with = {}

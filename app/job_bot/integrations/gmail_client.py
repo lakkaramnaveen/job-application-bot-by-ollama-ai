@@ -104,7 +104,23 @@ class GmailClient:
                     "Cloud Console and download it there."
                 )
             flow = InstalledAppFlow.from_client_secrets_file(str(self._credentials_path), SCOPES)
-            creds = flow.run_local_server(port=0)
+            try:
+                creds = flow.run_local_server(port=0)
+            except Exception as e:
+                # This is the one-time OAuth consent step: it opens a real
+                # browser tab and blocks on a local HTTP callback server
+                # until that flow completes. Every other failure path in
+                # this method already raises GmailClientError; this one
+                # didn't, so a headless/SSH box with no browser to open
+                # (webbrowser.Error), the consent screen closed before
+                # finishing, or a local port bind failure previously
+                # crashed `job-bot gmail-sync` with whichever raw exception
+                # google-auth-oauthlib happened to raise, uncaught.
+                raise GmailClientError(
+                    f"Gmail OAuth sign-in failed: {e}. This one-time step needs a real browser "
+                    "to complete the Google consent screen - run it from a machine with one "
+                    "available, not a headless/SSH session."
+                ) from e
 
         self._token_path.parent.mkdir(parents=True, exist_ok=True)
         self._token_path.write_text(creds.to_json(), encoding="utf-8")
