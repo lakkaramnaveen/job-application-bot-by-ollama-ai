@@ -548,10 +548,10 @@ seen, and lets you:
   it instantly - the pill counts update live as statuses change, and only
   scope to whichever statuses currently have a match (plus whatever's
   selected, so you can always click back off it).
-- **Search** by title, company, note text, match reasoning, or the
-  eligibility-gate note, and **filter** by status (the pills and the
-  status dropdown stay in sync either way) or by eligibility verdict
-  (pass/flag/fail).
+- **Search** by title, company, note text, match reasoning, the
+  eligibility-gate note, or missing qualifications, and **filter** by
+  status (the pills and the status dropdown stay in sync either way) or
+  by eligibility verdict (pass/flag/fail).
 - **Sort** by newest/oldest, recently applied, fit score, company, or title.
 - **Hover a fit score** to see the LLM's own reasoning for it (the same
   `match_reasoning` `job-bot status <job_id>` prints), when the job was

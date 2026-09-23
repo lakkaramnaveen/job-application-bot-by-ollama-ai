@@ -418,19 +418,27 @@ class Tracker:
             # matches literally rather than acting as a wildcard.
             escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             # Also matches `notes` (see Tracker.set_note()), match_reasoning,
-            # and eligibility_note (see Tracker.record_score()) - not just
-            # title/company. All three are exactly the kind of free-text
-            # context ("Referred by Jane", "Requires US citizenship", "Strong
-            # Python/AWS overlap") someone would later search for without
+            # eligibility_note, and missing_qualifications (see Tracker.
+            # record_score()) - not just title/company. All four are
+            # exactly the kind of free-text context ("Referred by Jane",
+            # "Requires US citizenship", "Strong Python/AWS overlap", "AWS
+            # certification") someone would later search for without
             # remembering which job it was attached to - e.g. a search for
             # "citizenship" finds every job the eligibility gate flagged or
-            # disqualified over it, not just ones with a matching title.
+            # disqualified over it, and a search for a specific skill finds
+            # every job that skill was missing from, not just ones with a
+            # matching title. missing_qualifications is stored as a JSON
+            # array (see record_score()'s docstring), but a plain LIKE
+            # substring match against the raw JSON text still works
+            # correctly for a single skill/phrase, the same way it would
+            # against plain free text - no need to decode it for this.
             clauses.append(
                 "(title LIKE ? ESCAPE '\\' OR company LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' "
-                "OR match_reasoning LIKE ? ESCAPE '\\' OR eligibility_note LIKE ? ESCAPE '\\')"
+                "OR match_reasoning LIKE ? ESCAPE '\\' OR eligibility_note LIKE ? ESCAPE '\\' "
+                "OR missing_qualifications LIKE ? ESCAPE '\\')"
             )
             like = f"%{escaped}%"
-            params.extend([like, like, like, like, like])
+            params.extend([like, like, like, like, like, like])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         return where, params
 

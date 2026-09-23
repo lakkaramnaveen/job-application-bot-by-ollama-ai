@@ -1254,10 +1254,11 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
 def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
     """Dump tracked jobs as CSV or JSON (`--format`) - to a file with
     `--out`, or stdout so it pipes straight into another tool. `--search`
-    matches the dashboard's own search box (Tracker.list_jobs' `search`,
-    a title/company/notes/match_reasoning/eligibility_note substring
-    match) - the dashboard's /api/export.csv/.json already respected it,
-    but the CLI command had no equivalent way to export a search result
+    matches the dashboard's own search box (Tracker.list_jobs' `search`, a
+    title/company/notes/match_reasoning/eligibility_note/
+    missing_qualifications substring match) - the dashboard's
+    /api/export.csv/.json already respected it, but the CLI command had no
+    equivalent way to export a search result
     instead of a full status-filtered dump. `--eligibility` is the exact
     counterpart to `--status`, for pulling e.g. every job the eligibility
     gate categorically disqualified without guessing a search term that
@@ -1968,8 +1969,8 @@ def build_parser() -> argparse.ArgumentParser:
     export_p.add_argument(
         "--search",
         default=None,
-        help="Only export jobs whose title, company, note, match reasoning, or eligibility note "
-        "contains this text.",
+        help="Only export jobs whose title, company, note, match reasoning, eligibility note, or "
+        "missing qualifications contains this text.",
     )
     export_p.add_argument(
         "--company",

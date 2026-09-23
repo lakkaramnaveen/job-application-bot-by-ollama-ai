@@ -831,6 +831,28 @@ def test_list_jobs_search_also_matches_eligibility_note(tmp_path):
     assert [j["job_id"] for j in results] == ["1"]
 
 
+def test_list_jobs_search_also_matches_missing_qualifications(tmp_path):
+    """Real gap this guards against: missing_qualifications lists specific
+    skills/qualifications a posting asked for that the resume doesn't
+    show - exactly the kind of thing someone would search for to find
+    every job missing the same skill (e.g. "which postings wanted AWS
+    certification that I don't have").
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_score(
+        "1", "Backend Engineer", "Acme", "https://example.com/1", score=70, should_apply=True,
+        missing_qualifications=["AWS certification", "5+ years of Go"],
+    )
+    tracker.record_score(
+        "2", "Designer", "Beta", "https://example.com/2", score=85, should_apply=True,
+        missing_qualifications=["Figma proficiency"],
+    )
+
+    results = tracker.list_jobs(search="AWS")
+
+    assert [j["job_id"] for j in results] == ["1"]
+
+
 def test_count_jobs_search_also_matches_match_reasoning_and_eligibility_note(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.record_score(
