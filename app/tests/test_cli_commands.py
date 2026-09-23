@@ -1144,6 +1144,32 @@ def test_export_csv_includes_notes(tmp_path, capsys):
     assert rows[0]["notes"] == "Recruiter mentioned $150k base."
 
 
+def test_export_csv_includes_missing_qualifications(tmp_path, capsys):
+    """Same gap class test_export_csv_includes_notes already guards
+    against, for missing_qualifications: EXPORT_FIELDS didn't include it
+    when the column was added, so it was silently excluded from every
+    export even though it's now real, persisted data. Stored as JSON, so
+    the CSV cell holds the raw JSON-encoded string - there's no better
+    native representation for a list in one CSV cell.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["AWS certification", "5+ years of Go"],
+    )
+
+    cmd_export(settings, export_args(status=None, search=None, out=None, format="csv"))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert json.loads(rows[0]["missing_qualifications"]) == ["AWS certification", "5+ years of Go"]
+
+
 def test_export_filters_by_status(tmp_path, capsys):
     settings = make_settings(tmp_path)
     tracker = Tracker(settings.db_path)
@@ -1356,6 +1382,30 @@ def test_export_json_includes_notes(tmp_path, capsys):
 
     rows = json.loads(capsys.readouterr().out)
     assert rows[0]["notes"] == "Recruiter mentioned $150k base."
+
+
+def test_export_json_includes_missing_qualifications_as_a_real_array(tmp_path, capsys):
+    """Unlike CSV, the JSON export decodes the stored JSON-encoded string
+    back into a real nested array (see write_export_json's docstring) -
+    otherwise a script consuming the export would have to json.loads() a
+    string-within-JSON a second time itself.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1",
+        "Backend Engineer",
+        "Acme",
+        "https://x/1",
+        score=70,
+        should_apply=True,
+        missing_qualifications=["AWS certification"],
+    )
+
+    cmd_export(settings, export_args(status=None, search=None, out=None, format="json"))
+
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["missing_qualifications"] == ["AWS certification"]
 
 
 def test_export_json_filters_by_status(tmp_path, capsys):

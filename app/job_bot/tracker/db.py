@@ -77,6 +77,7 @@ EXPORT_FIELDS = (
     "match_reasoning",
     "eligibility",
     "eligibility_note",
+    "missing_qualifications",
 )
 
 
@@ -91,8 +92,22 @@ def write_export_json(stream: TextIO, jobs: list[dict[str, Any]]) -> None:
     order), just JSON instead of CSV - for a script that wants to consume
     the export without parsing CSV, or a value (like a URL with a comma
     in a query string) that's easier to read unescaped.
+
+    missing_qualifications is stored as a JSON-encoded string (see
+    Tracker.record_score()'s docstring) - decoded back into a real array
+    here, the same way cli.py's cmd_status/dashboard/render.py's
+    render_rows_html already decode it, so a JSON export gives a script a
+    real nested array instead of a double-JSON-encoded string it would
+    have to decode a second time itself. write_export_csv leaves it as the
+    raw JSON string, same as every other multi-value field would in CSV -
+    there's no better native representation for a list in one cell.
     """
-    rows = [{field: job.get(field) for field in EXPORT_FIELDS} for job in jobs]
+    rows = []
+    for job in jobs:
+        row = {field: job.get(field) for field in EXPORT_FIELDS}
+        raw_missing_quals = row.get("missing_qualifications")
+        row["missing_qualifications"] = json.loads(raw_missing_quals) if raw_missing_quals else []
+        rows.append(row)
     json.dump(rows, stream, indent=2)
     stream.write("\n")
 
