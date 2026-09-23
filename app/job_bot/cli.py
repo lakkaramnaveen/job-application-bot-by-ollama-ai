@@ -1619,12 +1619,13 @@ def _tracker_db_check(settings: Settings) -> tuple[str, bool, str]:
     _init_db() runs a schema migration on every construction), so a
     present-but-corrupted db.sqlite3 (truncated by a killed process, disk
     corruption, or simply not a SQLite file) doesn't fail quietly the way
-    a malformed JSON store does - it already raises loudly. The problem is
-    *where*: as a raw sqlite3.DatabaseError from whichever command happens
-    to run first, not here, upfront, with a message that actually explains
-    what's wrong the way this command exists to give. A missing file is
-    fine - `job-bot run`/every other command creates it fresh - so only a
-    present-but-unreadable one is a real problem.
+    a malformed JSON store does - it already raises loudly (main() also
+    turns that into a clean message for whichever command hits it first,
+    see its own sqlite3.DatabaseError handler). This check exists to give
+    that diagnosis upfront, before a real run gets partway through and
+    hits it. A missing file is fine - `job-bot run`/every other command
+    creates it fresh - so only a present-but-unreadable one is a real
+    problem.
     """
     label = "Tracker database readable"
     if not settings.db_path.exists():
@@ -2155,6 +2156,24 @@ def main() -> None:
             cmd_resume_history(settings, args)
     except EXPECTED_ERRORS as e:
         print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except sqlite3.DatabaseError as e:
+        # Every command that touches the tracker (Tracker.__init__()'s
+        # _init_db() runs a schema migration on every construction) opens
+        # it eagerly, so a present-but-corrupted db.sqlite3 (truncated by a
+        # killed process, disk corruption, or simply not a SQLite file)
+        # previously raised this raw, uncaught - sqlite3.DatabaseError isn't
+        # in EXPECTED_ERRORS, so it fell all the way through main() as a
+        # traceback instead of the clean, actionable message every other
+        # expected failure here gets. `job-bot doctor` already diagnoses
+        # exactly this (_tracker_db_check's own docstring calls out this
+        # gap by name), but only when doctor itself is the command run -
+        # every other command still hit the raw crash until this handler.
+        print(
+            f"Error: The tracker database at {settings.db_path} looks corrupted ({e}). "
+            "Run `job-bot doctor` for a clean diagnosis, or restore/replace it from a backup.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     except KeyboardInterrupt:
         # Without this, Ctrl+C during a real browser action (mid Easy Apply

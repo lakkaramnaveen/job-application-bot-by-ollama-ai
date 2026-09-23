@@ -2622,6 +2622,33 @@ def test_main_reports_an_expected_error_and_exits_1(tmp_path, monkeypatch, capsy
     assert "Error: bad config" in capsys.readouterr().err
 
 
+def test_main_reports_a_corrupted_tracker_database_cleanly(tmp_path, monkeypatch, capsys):
+    """Real failure this guards against: every command that touches the
+    tracker (Tracker.__init__()'s _init_db() runs on every construction)
+    opens it eagerly, so a corrupted db.sqlite3 previously crashed whichever
+    command hit it first with a raw sqlite3.DatabaseError traceback -
+    sqlite3.DatabaseError isn't one of EXPECTED_ERRORS, so it fell straight
+    through main()'s except clause uncaught. `job-bot status` (which
+    doctor's own equivalent check doesn't run) is used here to prove the fix
+    isn't doctor-specific.
+    """
+    settings = make_settings(tmp_path)
+    settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.db_path.write_text("not a sqlite database", encoding="utf-8")
+    monkeypatch.setattr("job_bot.cli.get_settings", lambda: settings)
+    monkeypatch.setattr("job_bot.cli.configure_logging", lambda: None)
+    monkeypatch.setattr("sys.argv", ["job-bot", "status", "job1", "applied"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "Error: The tracker database at" in err
+    assert str(settings.db_path) in err
+    assert "job-bot doctor" in err
+
+
 @pytest.mark.parametrize(
     "argv, cmd_name",
     [
