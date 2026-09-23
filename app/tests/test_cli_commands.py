@@ -2163,6 +2163,31 @@ def test_qa_history_company_says_so_when_nothing_matches(tmp_path, capsys):
     assert 'No Q&A history matching company "Nobody Inc".' in capsys.readouterr().out
 
 
+def test_qa_history_search_and_company_combine(tmp_path, capsys):
+    """--search and --company are applied as two separate filters
+    (search_qa()'s own SQL search, then a Python post-filter for
+    --company) - this confirms they genuinely AND together rather than
+    one silently overriding the other, the same kind of "wiring exists
+    but was never proven to combine" gap this session has repeatedly
+    caught for other filter pairs.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://x/1")
+    tracker.upsert_job("job2", "Frontend Engineer", "Acme Corp", "https://x/2")
+    tracker.upsert_job("job3", "DevOps Engineer", "Beta Inc", "https://x/3")
+    tracker.record_qa("job1", "Years of Python experience?", "5")
+    tracker.record_qa("job2", "Willing to relocate?", "No")
+    tracker.record_qa("job3", "Years of Python experience?", "3")
+
+    cmd_qa_history(settings, qa_history_args(search="python", company="Acme Corp"))
+
+    out = capsys.readouterr().out
+    assert "[job1]" in out
+    assert "[job2]" not in out  # right company, wrong search term
+    assert "[job3]" not in out  # right search term, wrong company
+
+
 def test_qa_history_format_json_prints_pairs_with_job_context(tmp_path, capsys):
     settings = make_settings(tmp_path)
     tracker = Tracker(settings.db_path)
@@ -2277,6 +2302,26 @@ def test_resume_history_company_says_so_when_nothing_matches(tmp_path, capsys):
     cmd_resume_history(settings, resume_history_args(company="Nobody Inc"))
 
     assert 'No resume generations matching company "Nobody Inc".' in capsys.readouterr().out
+
+
+def test_resume_history_search_and_company_combine(tmp_path, capsys):
+    """Same AND-combination verification as
+    test_qa_history_search_and_company_combine, for --search/--company's
+    own separate filter passes here (list_resume_generations()'s SQL
+    search, then a Python post-filter for --company).
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_resume_generation("job1", "Backend Engineer", "Acme Corp", "Python-heavy.", [], [])
+    tracker.record_resume_generation("job2", "Frontend Engineer", "Acme Corp", "React-focused.", [], [])
+    tracker.record_resume_generation("job3", "DevOps Engineer", "Beta Inc", "Python-heavy.", [], [])
+
+    cmd_resume_history(settings, resume_history_args(search="python", company="Acme Corp"))
+
+    out = capsys.readouterr().out
+    assert "[job1]" in out
+    assert "[job2]" not in out  # right company, wrong search term
+    assert "[job3]" not in out  # right search term, wrong company
 
 
 def test_resume_history_format_json_prints_generations_with_status(tmp_path, capsys):
