@@ -27,6 +27,7 @@ from job_bot.cli import (
     cmd_gmail_sync,
     cmd_qa_history,
     cmd_report,
+    cmd_resume_history,
     cmd_review_answers,
     cmd_status,
     cmd_test_provider,
@@ -113,6 +114,12 @@ def review_answers_args(**overrides) -> argparse.Namespace:
 
 
 def qa_history_args(**overrides) -> argparse.Namespace:
+    defaults = dict(search=None, format="text")
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def resume_history_args(**overrides) -> argparse.Namespace:
     defaults = dict(search=None, format="text")
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -2158,6 +2165,103 @@ def test_qa_history_format_json_on_empty_history_is_still_valid_json(tmp_path, c
     assert json.loads(capsys.readouterr().out) == []
 
 
+# --- resume-history ---
+
+
+def test_resume_history_says_so_when_nothing_recorded(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_resume_history(settings, resume_history_args())
+
+    assert "No resume generations recorded yet." in capsys.readouterr().out
+
+
+def test_resume_history_prints_every_generation_with_status_most_recent_first(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
+    tracker.record_resume_generation("job1", "Backend Engineer", "Acme", "For job 1.", ["Python"], [])
+    tracker.record_resume_generation("job2", "Frontend Engineer", "Beta", "For job 2.", ["React"], [])
+    tracker.update_status("job1", "interviewing")
+
+    cmd_resume_history(settings, resume_history_args())
+
+    out = capsys.readouterr().out
+    assert out.index("For job 2.") < out.index("For job 1.")
+    assert "[job1] Acme - Backend Engineer (interviewing" in out
+    assert "[job2] Beta - Frontend Engineer (seen" in out
+
+
+def test_resume_history_shows_not_tracked_for_a_generation_with_no_matching_job(tmp_path, capsys):
+    """record_resume_generation() has no foreign-key requirement that
+    job_id already exist in `jobs` (list_resume_generations() uses a LEFT
+    JOIN, not a plain JOIN, for exactly this reason) - such a row's status
+    comes back None, printed as "not tracked" rather than a bare "None".
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_resume_generation("orphan", "Engineer", "Acme", "Orphaned.", [], [])
+
+    cmd_resume_history(settings, resume_history_args())
+
+    assert "[orphan] Acme - Engineer (not tracked" in capsys.readouterr().out
+
+
+def test_resume_history_search_matches_summary_company_or_title(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_resume_generation("job1", "Backend Engineer", "Acme", "Python-heavy tailoring.", [], [])
+    tracker.record_resume_generation("job2", "Frontend Engineer", "Beta", "React-focused tailoring.", [], [])
+
+    cmd_resume_history(settings, resume_history_args(search="python"))
+
+    out = capsys.readouterr().out
+    assert "Python-heavy tailoring." in out
+    assert "React-focused tailoring." not in out
+
+
+def test_resume_history_search_says_so_when_nothing_matches(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_resume_generation("job1", "Backend Engineer", "Acme", "Some summary.", [], [])
+
+    cmd_resume_history(settings, resume_history_args(search="cobol"))
+
+    assert 'No resume generations matching "cobol".' in capsys.readouterr().out
+
+
+def test_resume_history_format_json_prints_generations_with_status(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.record_resume_generation("job1", "Backend Engineer", "Acme", "A summary.", ["Python"], ["Did X."])
+
+    cmd_resume_history(settings, resume_history_args(format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == [
+        {
+            "job_id": "job1",
+            "title": "Backend Engineer",
+            "company": "Acme",
+            "summary": "A summary.",
+            "skills": ["Python"],
+            "bullets": ["Did X."],
+            "created_at": payload[0]["created_at"],
+            "status": "seen",
+        }
+    ]
+
+
+def test_resume_history_format_json_on_empty_history_is_still_valid_json(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_resume_history(settings, resume_history_args(format="json"))
+
+    assert json.loads(capsys.readouterr().out) == []
+
+
 # --- main() ---
 
 
@@ -2225,6 +2329,7 @@ def test_main_reports_an_expected_error_and_exits_1(tmp_path, monkeypatch, capsy
         (["job-bot", "blacklist", "list"], "cmd_blacklist"),
         (["job-bot", "faq", "list"], "cmd_faq"),
         (["job-bot", "qa-history"], "cmd_qa_history"),
+        (["job-bot", "resume-history"], "cmd_resume_history"),
     ],
 )
 def test_main_dispatches_each_subcommand_to_its_own_handler(tmp_path, monkeypatch, argv, cmd_name):
@@ -2439,6 +2544,7 @@ def test_every_cli_flag_is_documented_in_the_readme():
         (status_args, ["status", "job1"]),
         (review_answers_args, ["review-answers"]),
         (qa_history_args, ["qa-history"]),
+        (resume_history_args, ["resume-history"]),
     ],
 )
 def test_args_helper_stays_in_sync_with_the_real_parser(helper, argv):

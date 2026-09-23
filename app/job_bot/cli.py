@@ -978,6 +978,36 @@ def cmd_qa_history(settings: Settings, args: argparse.Namespace) -> None:
         print(f"  Q: {pair['question']}\n  A: {pair['answer']}\n")
 
 
+def cmd_resume_history(settings: Settings, args: argparse.Namespace) -> None:
+    """Every tailor_resume() output ever recorded, across every job, most
+    recent first, with each job's current status for outcome context - the
+    resume-tailoring counterpart to `job-bot qa-history`. Unlike `job-bot
+    status <job_id>` (one job's own generation only) or the internal,
+    ranked-and-capped best_resume_examples() (few-shot prompt use only),
+    this is the full raw history, for a human to review which tailoring
+    approaches actually led somewhere. `--search` matches summary, company,
+    or title text, the same semantics `faq list --search`/`job-bot
+    qa-history --search` already use.
+    """
+    tracker = Tracker(settings.db_path)
+    generations = tracker.list_resume_generations(search=args.search)
+    if args.format == "json":
+        print(json.dumps(generations, indent=2))
+        return
+    if not generations:
+        print(
+            "No resume generations recorded yet."
+            if not args.search
+            else f'No resume generations matching "{args.search}".'
+        )
+        return
+    for gen in generations:
+        status = gen["status"] or "not tracked"
+        print(f"[{gen['job_id']}] {gen['company']} - {gen['title']} ({status}, {gen['created_at']})")
+        print(f"  Summary: {gen['summary']}")
+        print(f"  Skills:  {', '.join(gen['skills'])}\n")
+
+
 # Score buckets for `job-bot report --by-score`'s outcome breakdown, widest
 # (worst-fit) first so a job with a null match_score never fits any bucket
 # and is simply left out - it hasn't been through the LLM scorer yet.
@@ -1820,6 +1850,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the pairs as one JSON array instead.",
     )
 
+    resume_history_p = sub.add_parser(
+        "resume-history",
+        help="Print every tailored-resume generation ever recorded, across every job, most recent first.",
+    )
+    resume_history_p.add_argument(
+        "--search",
+        default=None,
+        help="Only print generations whose summary, company, or title contains this text "
+        "(case-insensitive).",
+    )
+    resume_history_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Print the generations as one JSON array instead.",
+    )
+
     report_p = sub.add_parser("report", help="Print a count of tracked jobs by status.")
     report_p.add_argument(
         "--stale-days",
@@ -1968,6 +2015,8 @@ def main() -> None:
             cmd_faq(settings, args)
         elif args.command == "qa-history":
             cmd_qa_history(settings, args)
+        elif args.command == "resume-history":
+            cmd_resume_history(settings, args)
     except EXPECTED_ERRORS as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

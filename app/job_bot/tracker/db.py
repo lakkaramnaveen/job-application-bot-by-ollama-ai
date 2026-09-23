@@ -651,3 +651,58 @@ class Tracker:
             }
             for row in rows
         ]
+
+    def list_resume_generations(self, search: str | None = None) -> list[dict[str, Any]]:
+        """Every tailor_resume() output ever recorded, most recent first,
+        with each job's current status joined in for outcome context (did
+        this particular tailoring actually lead anywhere?) - unlike
+        best_resume_examples() (capped and ranked purely for few-shot
+        prompt use) or get_resume_generation() (one job at a time, via
+        `job-bot status <job_id>`), this is the full raw history for a
+        human to review, the resume-tailoring counterpart to search_qa()
+        above. `search` matches summary/company/title, the same substring
+        semantics search_qa()/faq list --search use.
+
+        LEFT JOIN, not JOIN: record_resume_generation() has no foreign-key
+        requirement that job_id already exist in `jobs` (same reasoning as
+        search_qa()'s own LEFT JOIN) - status just comes back None for such
+        a row instead of silently dropping it.
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if search:
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append(
+                "(resume_generations.summary LIKE ? ESCAPE '\\' OR resume_generations.company LIKE ? "
+                "ESCAPE '\\' OR resume_generations.title LIKE ? ESCAPE '\\')"
+            )
+            like = f"%{escaped}%"
+            params.extend([like, like, like])
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"""
+                SELECT resume_generations.job_id, resume_generations.title, resume_generations.company,
+                       resume_generations.summary, resume_generations.skills_json,
+                       resume_generations.bullets_json, resume_generations.created_at, jobs.status
+                FROM resume_generations
+                LEFT JOIN jobs ON jobs.job_id = resume_generations.job_id
+                {where}
+                ORDER BY resume_generations.id DESC
+                """,
+                params,
+            ).fetchall()
+        return [
+            {
+                "job_id": row["job_id"],
+                "title": row["title"],
+                "company": row["company"],
+                "summary": row["summary"],
+                "skills": json.loads(row["skills_json"]),
+                "bullets": json.loads(row["bullets_json"]),
+                "created_at": row["created_at"],
+                "status": row["status"],
+            }
+            for row in rows
+        ]

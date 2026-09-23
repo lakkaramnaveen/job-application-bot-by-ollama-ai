@@ -857,3 +857,47 @@ def test_get_resume_generation_only_returns_this_jobs_own_generation(tmp_path):
 
     assert tracker.get_resume_generation("1")["summary"] == "For job 1."
     assert tracker.get_resume_generation("2")["summary"] == "For job 2."
+
+
+def test_list_resume_generations_returns_every_generation_most_recent_first_with_status(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Frontend Engineer", "Beta", "https://example.com/2")
+    tracker.record_resume_generation("1", "Backend Engineer", "Acme", "For job 1.", ["Python"], [])
+    tracker.record_resume_generation("2", "Frontend Engineer", "Beta", "For job 2.", ["React"], [])
+    tracker.update_status("1", "interviewing")
+
+    generations = tracker.list_resume_generations()
+
+    assert [g["job_id"] for g in generations] == ["2", "1"]
+    job1 = next(g for g in generations if g["job_id"] == "1")
+    assert job1["status"] == "interviewing"
+    assert job1["skills"] == ["Python"]
+
+
+def test_list_resume_generations_matches_summary_company_or_title(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.record_resume_generation("1", "Backend Engineer", "Acme", "Python-heavy tailoring.", [], [])
+    tracker.record_resume_generation("2", "Frontend Engineer", "Beta", "React-focused tailoring.", [], [])
+
+    assert [g["job_id"] for g in tracker.list_resume_generations(search="python")] == ["1"]
+    assert [g["job_id"] for g in tracker.list_resume_generations(search="Beta")] == ["2"]
+
+
+def test_list_resume_generations_keeps_a_generation_whose_job_is_not_in_the_jobs_table(tmp_path):
+    """record_resume_generation() has no foreign-key requirement that
+    job_id already exists in `jobs` - a LEFT JOIN (not a plain JOIN) must
+    not silently drop such a generation, just leave status as None for it.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_resume_generation("orphan", "Engineer", "Acme", "Orphaned.", [], [])
+
+    generations = tracker.list_resume_generations()
+
+    assert len(generations) == 1
+    assert generations[0]["status"] is None
+
+
+def test_list_resume_generations_empty_when_nothing_recorded(tmp_path):
+    tracker = make_tracker(tmp_path)
+    assert tracker.list_resume_generations() == []

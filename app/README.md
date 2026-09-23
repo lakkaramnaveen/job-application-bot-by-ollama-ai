@@ -311,6 +311,15 @@ reference - preferring ones for jobs you've since marked `interviewing` or
 `offer` (see "Tracking outcomes" below) over merely recent ones. See
 `Tracker.best_resume_examples()` and `tailor_resume()`'s `examples` param.
 
+Every generation - not just the 3 used as prompt reference - can be
+reviewed directly, with each job's current status for outcome context:
+
+```bash
+job-bot resume-history                   # every tailored-resume generation, most recent first, with outcome status
+job-bot resume-history --search python   # only generations whose summary/company/title mentions "python"
+job-bot resume-history --format json     # same generations as one JSON array instead
+```
+
 Unlike the resume, the generated cover letter *is* used directly in the
 submission: if the Easy Apply form has a "Cover letter" text field, it's
 filled with the generated text (a text field is per-application content
