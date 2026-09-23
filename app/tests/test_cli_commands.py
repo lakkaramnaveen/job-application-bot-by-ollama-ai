@@ -2025,3 +2025,35 @@ def test_every_cli_flag_is_documented_in_the_readme():
                 if opt != "--help" and opt not in readme_text:
                     undocumented.append(f"{cmd_name} {opt}")
     assert undocumented == []
+
+
+# --- test-helper/parser consistency ---
+
+
+@pytest.mark.parametrize(
+    "helper, argv",
+    [
+        (report_args, ["report"]),
+        (export_args, ["export"]),
+        (doctor_args, ["doctor"]),
+        (status_args, ["status", "job1"]),
+        (review_answers_args, ["review-answers"]),
+    ],
+)
+def test_args_helper_stays_in_sync_with_the_real_parser(helper, argv):
+    """Real gap this guards against: report_args() above silently missed the
+    new --by-company flag added alongside `job-bot report --by-company`
+    (see cli.py) - it only surfaced as an AttributeError from cmd_report()
+    itself on the next full-suite run, from whichever test happened to
+    exercise the gap, rather than immediately and by name. These five
+    commands' cmd_* functions consume every attribute their own argparse
+    subparser defines (unlike `run`/`gmail-sync`, whose --provider/--model
+    are read by main()'s _apply_provider_overrides() before dispatch, not
+    by cmd_run/cmd_gmail_sync themselves - so their test helpers
+    legitimately omit those two keys and don't belong in this check).
+    Comparing each helper's default Namespace keys against build_parser()'s
+    own argparse output for the same subcommand catches a missing, stale,
+    or renamed key the moment a helper drifts from the real CLI.
+    """
+    real_keys = set(vars(build_parser().parse_args(argv))) - {"command"}
+    assert set(vars(helper())) == real_keys

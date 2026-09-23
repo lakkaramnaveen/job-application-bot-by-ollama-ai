@@ -232,6 +232,22 @@ def report_args(**overrides):
     return argparse.Namespace(**defaults)
 
 
+def test_run_args_and_report_args_stay_in_sync_with_the_real_parser():
+    """This file keeps its own local run_args()/report_args() helpers,
+    separate from test_cli_commands.py's - the exact duplication that let
+    report_args() here silently miss the new --by-company flag until
+    cmd_report() raised AttributeError on a full-suite run, from whichever
+    test happened to touch the gap. Comparing each helper's default
+    Namespace keys against build_parser()'s own argparse output for the
+    same subcommand catches a missing/stale/renamed key immediately,
+    regardless of which test would otherwise have been the one to notice.
+    """
+    from job_bot.cli import build_parser
+
+    assert set(vars(run_args())) == set(vars(build_parser().parse_args(["run"]))) - {"command"}
+    assert set(vars(report_args())) == set(vars(build_parser().parse_args(["report"]))) - {"command"}
+
+
 def _audit_actions(settings) -> list[str]:
     lines = settings.audit_log_path.read_text(encoding="utf-8").strip().splitlines()
     return [json.loads(line)["action"] for line in lines]
