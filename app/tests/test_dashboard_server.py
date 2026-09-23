@@ -1,8 +1,10 @@
 import json
 import socket
+import sqlite3
 import threading
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime, timedelta
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -142,6 +144,32 @@ def test_api_rows_supports_search(live_server):
     with urllib.request.urlopen(f"{live_server}/api/rows?q=nonexistent") as resp:
         body = resp.read().decode("utf-8")
     assert "No jobs tracked yet" in body
+
+
+def _backdate_applied_at(db_path, job_id: str, when: datetime) -> None:
+    """Directly rewrite applied_at, since Tracker.mark_applied() always
+    stamps "now" - a test needing a stale application has to backdate it
+    after the fact rather than through the public Tracker API.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.execute("UPDATE jobs SET applied_at = ? WHERE job_id = ?", (when.isoformat(), job_id))
+    conn.commit()
+    conn.close()
+
+
+def test_api_rows_marks_a_stale_application(live_server, tmp_path):
+    """End-to-end proof that make_handler's stale_after_days (default 14,
+    same as Settings.stale_after_days' own default) actually reaches
+    render_rows_html - job1 in the live_server fixture was mark_applied()'d
+    "just now", so backdating it here is what actually exercises the
+    marker rather than just proving the wiring doesn't crash.
+    """
+    _backdate_applied_at(tmp_path / "db.sqlite3", "job1", datetime.now(UTC) - timedelta(days=20))
+
+    with urllib.request.urlopen(f"{live_server}/api/rows") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "⏰" in body
 
 
 def test_api_rows_supports_eligibility_filter(live_server, tmp_path):

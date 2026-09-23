@@ -4,6 +4,7 @@ for the HTTP layer that calls this.
 """
 
 import html
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -138,13 +139,26 @@ def render_stats_html(counts: dict[str, int], selected_status: str) -> str:
     return "\n".join(pills)
 
 
-def render_rows_html(jobs: list[dict[str, Any]]) -> str:
+def render_rows_html(jobs: list[dict[str, Any]], *, stale_after_days: int | None = None) -> str:
     """The <tbody> contents only - reused by both the full page and the
     polling/filtering endpoint that refreshes just the table body.
+
+    `stale_after_days` (Settings.stale_after_days) marks an applied job
+    with no reply past that many days - the same "worth a follow-up"
+    signal `job-bot report --stale-days` already surfaces, but previously
+    only in a separate CLI command someone had to remember to run; now
+    visible directly on the row people are already scanning. None (the
+    default) omits the marker entirely, for callers - tests included -
+    that don't have a threshold to compare against.
     """
     if not jobs:
         return '<tr><td colspan="7" class="empty">No jobs tracked yet - run `job-bot run` first.</td></tr>'
 
+    stale_cutoff = (
+        (datetime.now(UTC) - timedelta(days=stale_after_days)).isoformat()
+        if stale_after_days is not None
+        else None
+    )
     rows = []
     for job in jobs:
         job_id = str(job.get("job_id", ""))
@@ -178,7 +192,20 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
             f' title="{html.escape(chr(10).join(tooltip_parts), quote=True)}"' if tooltip_parts else ""
         )
         status = str(job.get("status", ""))
-        applied_at = html.escape(str(job.get("applied_at") or "-"))
+        applied_at_raw = job.get("applied_at")
+        applied_at = html.escape(str(applied_at_raw or "-"))
+        is_stale = (
+            stale_cutoff is not None
+            and status == "applied"
+            and applied_at_raw is not None
+            and str(applied_at_raw) < stale_cutoff
+        )
+        applied_display = f"⏰ {applied_at}" if is_stale else applied_at
+        applied_title_attr = (
+            f' title="No reply after {stale_after_days}+ days - job-bot report --stale-days shows all of these"'
+            if is_stale
+            else ""
+        )
         safe_job_id = html.escape(job_id, quote=True)
         has_note = bool(job.get("notes"))
         note_class = "note-button has-note" if has_note else "note-button"
@@ -189,7 +216,7 @@ def render_rows_html(jobs: list[dict[str, Any]]) -> str:
             f"<td>{company}</td>"
             f"<td{score_title_attr}>{score_text}</td>"
             f"<td>{_badge(status)}</td>"
-            f"<td>{applied_at}</td>"
+            f"<td{applied_title_attr}>{applied_display}</td>"
             f'<td class="jobid">{html.escape(job_id)}</td>'
             "<td class=\"actions\">"
             f"{_status_select(job_id, str(job.get('status', '')))}"
@@ -261,8 +288,9 @@ def render_page_html(
     direction: str = "desc",
     refresh_seconds: int = 5,
     counts: dict[str, int] | None = None,
+    stale_after_days: int | None = None,
 ) -> str:
-    rows_html = render_rows_html(jobs)
+    rows_html = render_rows_html(jobs, stale_after_days=stale_after_days)
     stats_html = render_stats_html(counts or {}, status)
     status_options = [("", "All statuses"), *((s, s.replace("_", " ")) for s in sorted(TRACKER_STATUSES))]
     eligibility_options = [

@@ -1243,7 +1243,13 @@ def cmd_dashboard(settings: Settings, args: argparse.Namespace) -> None:
     docstring for why it binds to localhost only and has no login.
     """
     port = args.port if args.port is not None else settings.dashboard_port
-    run_dashboard(settings.db_path, settings.blacklist_path, port=port, open_browser=not args.no_open)
+    run_dashboard(
+        settings.db_path,
+        settings.blacklist_path,
+        port=port,
+        open_browser=not args.no_open,
+        stale_after_days=settings.stale_after_days,
+    )
 
 
 def cmd_test_provider(settings: Settings) -> None:

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from job_bot.dashboard.render import (
     render_blacklist_html,
     render_page_html,
@@ -126,6 +128,42 @@ def test_render_rows_html_escapes_the_eligibility_note_in_the_score_tooltip():
     malicious = make_job(eligibility="fail", eligibility_note='x"><script>alert(1)</script>')
     html = render_rows_html([malicious])
     assert "<script>alert(1)</script>" not in html
+
+
+def test_render_rows_html_marks_a_stale_application():
+    stale_job = make_job(
+        status="applied", applied_at=(datetime.now(UTC) - timedelta(days=20)).isoformat()
+    )
+    html = render_rows_html([stale_job], stale_after_days=14)
+    assert "⏰" in html
+    assert "No reply after 14+ days" in html
+
+
+def test_render_rows_html_does_not_mark_a_recent_application_as_stale():
+    recent_job = make_job(status="applied", applied_at=datetime.now(UTC).isoformat())
+    html = render_rows_html([recent_job], stale_after_days=14)
+    assert "⏰" not in html
+
+
+def test_render_rows_html_does_not_mark_a_non_applied_job_as_stale():
+    """Only status="applied" jobs are eligible - the same status
+    job-bot report --stale-days itself requires (Tracker._stale_
+    applications() filters to status="applied" too), since a job that
+    was never actually applied to has no "reply" to be waiting on.
+    """
+    old_but_not_applied = make_job(
+        status="skipped", applied_at=(datetime.now(UTC) - timedelta(days=20)).isoformat()
+    )
+    html = render_rows_html([old_but_not_applied], stale_after_days=14)
+    assert "⏰" not in html
+
+
+def test_render_rows_html_omits_stale_marker_when_stale_after_days_not_given():
+    stale_job = make_job(
+        status="applied", applied_at=(datetime.now(UTC) - timedelta(days=20)).isoformat()
+    )
+    html = render_rows_html([stale_job])
+    assert "⏰" not in html
 
 
 def test_render_rows_html_includes_a_note_button_per_row():

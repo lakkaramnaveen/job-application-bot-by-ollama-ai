@@ -72,7 +72,9 @@ def _parse_list_params(query: dict[str, list[str]]) -> dict:
     }
 
 
-def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHandler]:
+def make_handler(
+    db_path: Path, blacklist_path: Path, *, stale_after_days: int = 14
+) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
         def _send(self, status: HTTPStatus | int, content_type: str, body: bytes, headers: dict | None = None) -> None:
             self.send_response(status)
@@ -200,6 +202,7 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
                 sort=params["sort"],
                 direction=params["direction"],
                 counts=tracker.status_counts(search=params["search"], eligibility=params["eligibility"]),
+                stale_after_days=stale_after_days,
             ).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
@@ -257,7 +260,7 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
             except InvalidSort as e:
                 self._send_text(400, str(e))
                 return
-            body = render_rows_html(jobs).encode("utf-8")
+            body = render_rows_html(jobs, stale_after_days=stale_after_days).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body, headers={"X-Total-Jobs": str(total)})
 
         def _handle_qa(self, tracker: Tracker, job_id: str) -> None:
@@ -418,8 +421,15 @@ def make_handler(db_path: Path, blacklist_path: Path) -> type[BaseHTTPRequestHan
     return DashboardHandler
 
 
-def run_dashboard(db_path: Path, blacklist_path: Path, port: int = 8765, open_browser: bool = True) -> None:
-    handler = make_handler(db_path, blacklist_path)
+def run_dashboard(
+    db_path: Path,
+    blacklist_path: Path,
+    port: int = 8765,
+    open_browser: bool = True,
+    *,
+    stale_after_days: int = 14,
+) -> None:
+    handler = make_handler(db_path, blacklist_path, stale_after_days=stale_after_days)
     server = ThreadingHTTPServer((DASHBOARD_HOST, port), handler)
     url = f"http://{DASHBOARD_HOST}:{server.server_port}/"
     print(f"Dashboard running at {url} (Ctrl+C to stop)")

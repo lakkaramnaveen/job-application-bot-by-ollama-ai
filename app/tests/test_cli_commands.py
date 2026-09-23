@@ -1856,15 +1856,17 @@ def test_dashboard_passes_port_and_open_browser_through(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         "job_bot.cli.run_dashboard",
-        lambda db_path, blacklist_path, port, open_browser: calls.append(
-            (db_path, blacklist_path, port, open_browser)
+        lambda db_path, blacklist_path, port, open_browser, stale_after_days: calls.append(
+            (db_path, blacklist_path, port, open_browser, stale_after_days)
         ),
     )
     args = argparse.Namespace(port=9999, no_open=True)
 
     cmd_dashboard(settings, args)
 
-    assert calls == [(settings.db_path, settings.blacklist_path, 9999, False)]
+    assert calls == [
+        (settings.db_path, settings.blacklist_path, 9999, False, settings.stale_after_days)
+    ]
 
 
 def test_dashboard_falls_back_to_settings_port_when_not_given(tmp_path, monkeypatch):
@@ -1872,15 +1874,31 @@ def test_dashboard_falls_back_to_settings_port_when_not_given(tmp_path, monkeypa
     calls = []
     monkeypatch.setattr(
         "job_bot.cli.run_dashboard",
-        lambda db_path, blacklist_path, port, open_browser: calls.append(
-            (db_path, blacklist_path, port, open_browser)
+        lambda db_path, blacklist_path, port, open_browser, stale_after_days: calls.append(
+            (db_path, blacklist_path, port, open_browser, stale_after_days)
         ),
     )
     args = argparse.Namespace(port=None, no_open=False)
 
     cmd_dashboard(settings, args)
 
-    assert calls == [(settings.db_path, settings.blacklist_path, 8765, True)]
+    assert calls == [
+        (settings.db_path, settings.blacklist_path, 8765, True, settings.stale_after_days)
+    ]
+
+
+def test_dashboard_passes_settings_stale_after_days_through(tmp_path, monkeypatch):
+    settings = make_settings(tmp_path, stale_after_days=30)
+    calls = []
+    monkeypatch.setattr(
+        "job_bot.cli.run_dashboard",
+        lambda db_path, blacklist_path, port, open_browser, stale_after_days: calls.append(stale_after_days),
+    )
+    args = argparse.Namespace(port=None, no_open=False)
+
+    cmd_dashboard(settings, args)
+
+    assert calls == [30]
 
 
 # --- docs consistency ---

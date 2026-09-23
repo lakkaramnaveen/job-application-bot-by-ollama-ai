@@ -526,6 +526,10 @@ seen, and lets you:
   scored rather than just tracked. A ⚠️ before the score means the
   eligibility gate flagged or categorically disqualified this job -
   hover for the specific posting wording that drove the verdict.
+- **Spot stale applications at a glance** - a ⏰ next to the applied date
+  means no reply after `STALE_AFTER_DAYS` (default 14), the same
+  threshold `job-bot report --stale-days` uses, now visible without
+  running a separate command.
 - **Update a job's status inline** from the row - no need to drop to
   `job-bot status <job_id> <status>` for a quick correction.
 - **Edit a job's note** in a modal - the same note `job-bot status <job_id>
