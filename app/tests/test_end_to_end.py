@@ -44,6 +44,7 @@ from job_bot.models.schemas import (
 )
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.tracker.db import Tracker
+from tests.test_cli_commands import report_args
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SEARCH_FIXTURE = FIXTURES / "search_results_e2e.html"
@@ -222,30 +223,28 @@ def run_args(**overrides):
     return argparse.Namespace(**defaults)
 
 
-def report_args(**overrides):
-    import argparse
+def test_run_args_stays_in_sync_with_the_real_parser():
+    """This file keeps its own local run_args() helper, separate from
+    test_cli_commands.py's per-command helpers - `run` legitimately needs
+    one here since this file drives cmd_run() directly with a real
+    LinkedInAdapter, and run_args() must omit --provider/--model the same
+    way test_cli_commands.py's other helpers do (see its own
+    test_args_helper_stays_in_sync_with_the_real_parser docstring: those
+    two are read by main()'s _apply_provider_overrides() before dispatch,
+    not by cmd_run() itself). Comparing its default Namespace keys against
+    build_parser()'s own argparse output for `run` catches a missing/
+    stale/renamed key immediately, regardless of which test would
+    otherwise have been the one to notice.
 
-    defaults = dict(
-        stale_days=None,
-        by_score=False,
-        by_eligibility=False,
-        by_company=False,
-        by_missing_qualifications=False,
-        format="text",
-    )
-    defaults.update(overrides)
-    return argparse.Namespace(**defaults)
-
-
-def test_run_args_and_report_args_stay_in_sync_with_the_real_parser():
-    """This file keeps its own local run_args()/report_args() helpers,
-    separate from test_cli_commands.py's - the exact duplication that let
-    report_args() here silently miss the new --by-company flag until
-    cmd_report() raised AttributeError on a full-suite run, from whichever
-    test happened to touch the gap. Comparing each helper's default
-    Namespace keys against build_parser()'s own argparse output for the
-    same subcommand catches a missing/stale/renamed key immediately,
-    regardless of which test would otherwise have been the one to notice.
+    report_args() used to be duplicated here too, its own separate copy
+    of test_cli_commands.py's helper - the exact duplication that twice let
+    it silently miss a new report flag (--by-company, then
+    --by-missing-qualifications) until cmd_report() raised AttributeError
+    on a full-suite run, from whichever test happened to touch the gap.
+    Now imported from test_cli_commands.py instead (see this file's
+    imports) - a single definition can't drift out of sync with itself,
+    which removes that whole failure class rather than requiring this test
+    to keep guarding against it going forward.
     """
     from job_bot.cli import build_parser
 
