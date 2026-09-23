@@ -190,6 +190,40 @@ def test_api_rows_supports_eligibility_filter(live_server, tmp_path):
     assert "Backend Engineer" not in body
 
 
+def test_api_rows_combines_status_and_eligibility_filters(live_server, tmp_path):
+    """status and eligibility were each tested individually above (and
+    their AND-not-OR combination was already proven at the Tracker level
+    in a8d4a3d), but no test proved the *server* - _parse_list_params()
+    parsing a real HTTP query string, not a Tracker call built directly in
+    Python - actually reads and combines both params from one request.
+    _parse_list_params is hand-written string parsing that a Tracker-level
+    test bypasses entirely, so a bug there (e.g. a typo in a dict key)
+    would go uncaught without a test that goes through do_GET itself.
+    """
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    # Matches both filters below.
+    tracker.record_score(
+        "job4", "SRE", "Acme Corp", "https://example.com/job4", score=20,
+        should_apply=False, eligibility="fail",
+    )
+    tracker.update_status("job4", "applied")
+    # Matches eligibility=fail but not status=applied (record_score's own
+    # should_apply=False set it to "skipped").
+    tracker.record_score(
+        "job3", "DevOps Engineer", "Acme Corp", "https://example.com/job3", score=20,
+        should_apply=False, eligibility="fail",
+    )
+    # job1 (from the live_server fixture) matches status=applied but has
+    # no eligibility set at all (never scored, just mark_applied()'d).
+
+    with urllib.request.urlopen(f"{live_server}/api/rows?status=applied&eligibility=fail") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "SRE" in body
+    assert "DevOps Engineer" not in body
+    assert "Backend Engineer" not in body
+
+
 def test_export_csv_respects_the_eligibility_filter(live_server, tmp_path):
     tracker = Tracker(tmp_path / "db.sqlite3")
     tracker.record_score(
