@@ -1639,7 +1639,7 @@ def test_review_answers_json_format_on_empty_gaps_is_an_empty_array(tmp_path, ca
 def test_faq_list_says_so_when_nothing_cached(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
-    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search=None))
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search=None, format="text"))
 
     assert "No cached FAQ answers." in capsys.readouterr().out
 
@@ -1650,7 +1650,7 @@ def test_faq_list_prints_every_cached_question_and_answer(tmp_path, capsys):
     store.save_faq_answer("Years of Python experience?", "5")
     store.save_faq_answer("Willing to relocate?", "No")
 
-    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search=None))
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search=None, format="text"))
 
     out = capsys.readouterr().out
     assert "Years of Python experience?" in out
@@ -1665,7 +1665,7 @@ def test_faq_list_search_matches_the_question_text(tmp_path, capsys):
     store.save_faq_answer("Years of Python experience?", "5")
     store.save_faq_answer("Willing to relocate?", "No")
 
-    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="python"))
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="python", format="text"))
 
     out = capsys.readouterr().out
     assert "Years of Python experience?" in out
@@ -1684,7 +1684,7 @@ def test_faq_list_search_matches_the_answer_text(tmp_path, capsys):
     store.save_faq_answer("Years of Python experience?", "5")
     store.save_faq_answer("Willing to relocate?", "No")
 
-    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="no"))
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="no", format="text"))
 
     out = capsys.readouterr().out
     assert "Willing to relocate?" in out
@@ -1696,7 +1696,7 @@ def test_faq_list_search_is_case_insensitive(tmp_path, capsys):
     store = ResumeStore(settings.resume_path, settings.faq_path)
     store.save_faq_answer("Years of Python experience?", "5")
 
-    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="PYTHON"))
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="PYTHON", format="text"))
 
     assert "Years of Python experience?" in capsys.readouterr().out
 
@@ -1706,9 +1706,46 @@ def test_faq_list_search_says_so_when_nothing_matches(tmp_path, capsys):
     store = ResumeStore(settings.resume_path, settings.faq_path)
     store.save_faq_answer("Years of Python experience?", "5")
 
-    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="cobol"))
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="cobol", format="text"))
 
     assert 'No cached FAQ answers matching "cobol".' in capsys.readouterr().out
+
+
+def test_faq_list_format_json_prints_the_full_cache_as_one_object(tmp_path, capsys):
+    """`job-bot faq list --format json` gives a monitoring script the same
+    structured-output option report/export/status/doctor/review-answers/
+    gmail-sync all already have - the same reasoning cmd_report's docstring
+    gives for --format json: scraping human-formatted text otherwise.
+    """
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Years of Python experience?", "5")
+    store.save_faq_answer("Willing to relocate?", "No")
+
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search=None, format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"Years of Python experience?": "5", "Willing to relocate?": "No"}
+
+
+def test_faq_list_format_json_respects_search(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Years of Python experience?", "5")
+    store.save_faq_answer("Willing to relocate?", "No")
+
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search="python", format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"Years of Python experience?": "5"}
+
+
+def test_faq_list_format_json_on_empty_cache_is_still_valid_json(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_faq(settings, argparse.Namespace(faq_action="list", question=None, search=None, format="json"))
+
+    assert json.loads(capsys.readouterr().out) == {}
 
 
 def test_faq_remove_deletes_a_cached_answer(tmp_path, capsys):

@@ -900,7 +900,9 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
                 for question, answer in answers.items()
                 if needle in question.casefold() or needle in answer.casefold()
             }
-        if not answers:
+        if args.format == "json":
+            print(json.dumps(answers, indent=2, ensure_ascii=False))
+        elif not answers:
             print("No cached FAQ answers." if not args.search else f'No cached FAQ answers matching "{args.search}".')
         else:
             for question, answer in answers.items():
@@ -1724,6 +1726,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--search",
         default=None,
         help="Only print pairs whose question or answer contains this text (case-insensitive).",
+    )
+    faq_list_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Print the (optionally --search-filtered) pairs as one JSON object instead.",
     )
     faq_remove_p = faq_sub.add_parser("remove", help="Remove one cached answer, e.g. to fix a wrong one.")
     faq_remove_p.add_argument("question", help="The exact question text, as shown by `job-bot faq list`.")
