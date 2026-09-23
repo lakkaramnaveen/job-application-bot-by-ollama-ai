@@ -1,5 +1,5 @@
 from job_bot.integrations.gmail_client import EmailMessage
-from job_bot.integrations.gmail_sync import find_matching_job, sync_gmail
+from job_bot.integrations.gmail_sync import _contains_as_whole_word, find_matching_job, sync_gmail
 from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import EmailClassification
 from job_bot.safety.audit_log import AuditLogger
@@ -54,6 +54,32 @@ def make_tracker_with_job(tmp_path, status="applied", company="Acme Corp"):
         if status not in ("applied",):
             tracker.update_status("job1", status)
     return tracker
+
+
+# --- _contains_as_whole_word ---
+
+
+def test_contains_as_whole_word_matches_a_whole_word():
+    assert _contains_as_whole_word("acme corp", "acme") is True
+
+
+def test_contains_as_whole_word_rejects_a_mid_word_substring():
+    assert _contains_as_whole_word("openai", "ai") is False
+
+
+def test_contains_as_whole_word_rejects_an_empty_needle():
+    """Not currently reachable through find_matching_job() (its one caller
+    - both norm_guess and norm_company are already checked non-empty
+    before either _contains_as_whole_word() call), but this is a real
+    correctness guarantee of the function itself, not dead code: without
+    it, an empty needle's word-boundary pattern ((?<!\\w)(?!\\w)) can
+    spuriously match wherever a haystack has a non-word boundary - e.g.
+    a comma, or an empty haystack - confirmed directly below. Locking
+    this in with a test protects a future caller that doesn't happen to
+    share find_matching_job()'s own non-empty precondition.
+    """
+    assert _contains_as_whole_word("acme, corp", "") is False
+    assert _contains_as_whole_word("", "") is False
 
 
 # --- find_matching_job ---
