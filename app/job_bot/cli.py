@@ -1291,30 +1291,6 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
             print(f"  - {subject}")
 
 
-# In-progress, not a closed outcome - a job at this status still represents
-# an active relationship with the company worth flagging before you cut off
-# every future application there. "seen"/"skipped" never became a real
-# application, and "rejected"/"withdrawn"/"no_response" are already over.
-_IN_PROGRESS_STATUSES = frozenset({"applied", "interviewing", "offer"})
-
-
-def _in_progress_jobs_at_company(tracker: Tracker, company: str) -> list[dict]:
-    """Tracked jobs at `company` (matched the same normalize_company_name()
-    way CompanyBlacklist.is_blocked() itself matches, so this agrees with
-    what blacklisting the name actually blocks) whose status is still
-    in-progress. `list_jobs()` has no company filter, so this fetches every
-    tracked job (its documented no-filter behavior - see its docstring) and
-    filters in Python; the tracker is a local SQLite file, never large
-    enough for that to matter.
-    """
-    normalized = normalize_company_name(company)
-    return [
-        job
-        for job in tracker.list_jobs()
-        if normalize_company_name(job["company"]) == normalized and job["status"] in _IN_PROGRESS_STATUSES
-    ]
-
-
 def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
     """add/remove/list/import/export companies `job-bot run` will always
     skip - see build_parser()'s `blacklist` subparser for the five
@@ -1334,7 +1310,7 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
             # touch anything already tracked - so this is purely a heads-up
             # in case the name typed here wasn't meant to catch an
             # application you're still actively in.
-            in_progress = _in_progress_jobs_at_company(tracker, company)
+            in_progress = tracker.in_progress_jobs_at_company(company)
             if in_progress:
                 statuses = ", ".join(sorted({job["status"] for job in in_progress}))
                 print(

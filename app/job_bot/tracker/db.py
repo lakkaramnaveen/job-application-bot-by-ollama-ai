@@ -14,9 +14,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
+from job_bot.text_utils import normalize_company_name
+
 # Outcome statuses that count as a genuine positive signal for a past
 # tailored resume - see best_resume_examples().
 _POSITIVE_OUTCOME_STATUSES = ("interviewing", "offer")
+
+# In-progress, not a closed outcome - a job at this status still represents
+# an active relationship with the company worth flagging before you cut off
+# every future application there (see Tracker.in_progress_jobs_at_company()).
+# "seen"/"skipped" never became a real application, and "rejected"/
+# "withdrawn"/"no_response" are already over.
+IN_PROGRESS_STATUSES = frozenset({"applied", "interviewing", "offer"})
 
 # The single authoritative set of values the `jobs.status` column may hold.
 # `seen`/`applied`/`skipped` are written by `job_bot run` itself; the rest
@@ -526,6 +535,26 @@ class Tracker:
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def in_progress_jobs_at_company(self, company: str) -> list[dict[str, Any]]:
+        """Tracked jobs at `company` (matched the same normalize_company_name()
+        way CompanyBlacklist.is_blocked() itself matches, so this agrees with
+        what blacklisting the name actually blocks) whose status is still
+        in-progress (IN_PROGRESS_STATUSES) - used to warn before blacklisting
+        a company you're still actively in process with, from both cmd_
+        blacklist (CLI) and the dashboard's blacklist-from-row action, which
+        share this one implementation rather than risking the two silently
+        diverging. list_jobs() has no company filter, so this fetches every
+        tracked job (its documented no-filter behavior) and filters in
+        Python; the tracker is a local SQLite file, never large enough for
+        that to matter.
+        """
+        normalized = normalize_company_name(company)
+        return [
+            job
+            for job in self.list_jobs()
+            if normalize_company_name(job["company"]) == normalized and job["status"] in IN_PROGRESS_STATUSES
+        ]
 
     def record_resume_generation(
         self, job_id: str, title: str, company: str, summary: str, skills: list[str], bullets: list[str]

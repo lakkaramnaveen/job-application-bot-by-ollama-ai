@@ -507,11 +507,22 @@ def _post(url: str, *, same_origin: bool = True):
 
 
 def test_post_blacklist_adds_the_jobs_company(live_server, tmp_path):
+    """job1 (this fixture's own setup) is already status="applied" - an
+    in-progress application at the very company being blacklisted here -
+    so this also doubles as coverage for the in-progress-application
+    warning (see Tracker.in_progress_jobs_at_company(), shared with
+    cmd_blacklist's own CLI warning): blacklisting only stops future
+    applications, so a company you're still actively in process with
+    deserves a heads-up in the dashboard too, not just from the CLI.
+    """
     resp = _post(f"{live_server}/api/jobs/job1/blacklist")
 
     assert resp.status == 200
     data = json.loads(resp.read().decode("utf-8"))
-    assert data == {"ok": True, "job_id": "job1", "company": "Acme Corp"}
+    assert data["ok"] is True
+    assert data["job_id"] == "job1"
+    assert data["company"] == "Acme Corp"
+    assert "1 tracked application(s) at Acme Corp are still in progress (applied)" in data["warning"]
     assert CompanyBlacklist(tmp_path / "blacklist.json").is_blocked("Acme Corp")
 
 
@@ -529,11 +540,32 @@ def test_post_blacklist_on_unknown_job_id_returns_404(live_server, tmp_path):
 
 
 def test_post_blacklist_decodes_percent_encoded_job_id(live_server):
+    """"job 2" shares its company ("Acme Corp") with job1, which this
+    fixture already marks "applied" - so this response also carries a
+    warning, same as test_post_blacklist_adds_the_jobs_company. That's
+    incidental to this test's actual purpose (job_id percent-decoding),
+    so only the fields relevant to that are asserted here; see
+    test_post_blacklist_no_warning_when_nothing_in_progress_at_that_company
+    below for the genuinely warning-free case.
+    """
     resp = _post(f"{live_server}/api/jobs/job%202/blacklist")
 
     assert resp.status == 200
     data = json.loads(resp.read().decode("utf-8"))
-    assert data == {"ok": True, "job_id": "job 2", "company": "Acme Corp"}
+    assert data["ok"] is True
+    assert data["job_id"] == "job 2"
+    assert data["company"] == "Acme Corp"
+
+
+def test_post_blacklist_no_warning_when_nothing_in_progress_at_that_company(live_server, tmp_path):
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.upsert_job("job3", "DevOps Engineer", "Globex", "https://example.com/job3")  # status=seen
+
+    resp = _post(f"{live_server}/api/jobs/job3/blacklist")
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "job_id": "job3", "company": "Globex", "warning": None}
 
 
 def test_get_note_returns_empty_string_when_none_set(live_server):

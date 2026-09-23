@@ -362,7 +362,12 @@ def make_handler(
             CLI, one click away from a row instead of leaving the
             dashboard. Only ever adds to the blacklist; doesn't touch this
             or any other job's own tracked status, exactly like the CLI
-            command it mirrors.
+            command it mirrors - including the same in-progress-application
+            warning cmd_blacklist's add branch gives (via the shared
+            Tracker.in_progress_jobs_at_company(), so the two can't
+            silently diverge): blacklisting only stops future applications,
+            so a company you're still actively interviewing at deserves a
+            heads-up here too, not just from the CLI.
             """
             if not self._is_same_origin():
                 self._send_text(403, "Cross-origin request rejected")
@@ -373,7 +378,15 @@ def make_handler(
                 return
             company = job["company"]
             CompanyBlacklist(blacklist_path).add(company)
-            self._send_json(200, {"ok": True, "job_id": job_id, "company": company})
+            in_progress = tracker.in_progress_jobs_at_company(company)
+            warning = None
+            if in_progress:
+                statuses = ", ".join(sorted({j["status"] for j in in_progress}))
+                warning = (
+                    f"{len(in_progress)} tracked application(s) at {company} are still in progress "
+                    f"({statuses}) - blacklisting only stops future applications, these aren't affected."
+                )
+            self._send_json(200, {"ok": True, "job_id": job_id, "company": company, "warning": warning})
 
         def _handle_blacklist_list(self) -> None:
             """Every blacklisted company, for the dashboard's Manage

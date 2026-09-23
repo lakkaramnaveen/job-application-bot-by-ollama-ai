@@ -557,7 +557,10 @@ seen, and lets you:
   --note "..."` sets from the command line (the Note button is highlighted
   when a note is already set).
 - **Blacklist a job's company** with one click - the same effect
-  `job-bot blacklist add "<company>"` has from the command line.
+  `job-bot blacklist add "<company>"` has from the command line, including
+  the same warning if that company still has a tracked application
+  `applied`/`interviewing`/`offer` at (blacklisting only stops future
+  applications, it never touches anything already tracked).
 - **Manage the blacklist** (view and remove entries) from a modal, without
   dropping to `job-bot blacklist list`/`remove`.
 - **View a job's Q&A history** (every application-question answer the bot

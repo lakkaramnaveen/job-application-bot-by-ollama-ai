@@ -529,6 +529,44 @@ def test_search_qa_empty_when_nothing_recorded(tmp_path):
     assert tracker.search_qa() == []
 
 
+def test_in_progress_jobs_at_company_finds_applied_interviewing_and_offer(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
+    tracker.mark_applied("1")
+    tracker.upsert_job("2", "Frontend Engineer", "Acme", "https://example.com/2")
+    tracker.mark_applied("2")
+    tracker.update_status("2", "interviewing")
+    tracker.upsert_job("3", "DevOps Engineer", "Acme", "https://example.com/3")  # status=seen
+
+    in_progress = tracker.in_progress_jobs_at_company("Acme")
+
+    assert {job["job_id"] for job in in_progress} == {"1", "2"}
+
+
+def test_in_progress_jobs_at_company_excludes_closed_outcomes(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
+    tracker.mark_applied("1")
+    tracker.update_status("1", "rejected")
+
+    assert tracker.in_progress_jobs_at_company("Acme") == []
+
+
+def test_in_progress_jobs_at_company_matches_case_and_spacing_insensitively(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "  ACME   corp  ", "https://example.com/1")
+    tracker.mark_applied("1")
+
+    in_progress = tracker.in_progress_jobs_at_company("Acme Corp")
+
+    assert [job["job_id"] for job in in_progress] == ["1"]
+
+
+def test_in_progress_jobs_at_company_empty_when_no_jobs_tracked(tmp_path):
+    tracker = make_tracker(tmp_path)
+    assert tracker.in_progress_jobs_at_company("Acme") == []
+
+
 def test_list_jobs_filters_by_status(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")

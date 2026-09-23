@@ -631,7 +631,9 @@ document.getElementById('rows').addEventListener('click', async (e) => {{
     const res = await fetch(`/api/jobs/${{encodeURIComponent(jobId)}}/blacklist`, {{ method: 'POST' }});
     if (res.ok) {{
       const body = await res.json();
-      alert(`Blacklisted ${{body.company}} - job-bot run will always skip it from now on.`);
+      let msg = `Blacklisted ${{body.company}} - job-bot run will always skip it from now on.`;
+      if (body.warning) msg += `\n\n${{body.warning}}`;
+      alert(msg);
     }} else {{
       alert('Could not blacklist: ' + (await res.text()));
     }}
