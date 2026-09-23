@@ -452,6 +452,49 @@ class Tracker:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def search_qa(self, search: str | None = None) -> list[dict[str, Any]]:
+        """Every recorded question/answer across every job (unlike list_qa,
+        which is scoped to one job_id, and recent_qa_pairs, which is capped
+        and deduplicated for prompt-context use), most recent first, joined
+        with the job's company/title for context - for `job-bot qa-history`,
+        letting someone grep the full history of what's been asked and how
+        it was answered across every application, not just one job at a
+        time (`job-bot status <job_id>`) or the curated FAQ subset
+        (`job-bot faq list`).
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if search:
+            # Same LIKE-escaping convention as _where_clause, so a search
+            # for a literal "%" or "_" matches that text rather than acting
+            # as a wildcard.
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append("(qa_history.question LIKE ? ESCAPE '\\' OR qa_history.answer LIKE ? ESCAPE '\\')")
+            like = f"%{escaped}%"
+            params.extend([like, like])
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            # LEFT JOIN, not JOIN: record_qa() has no foreign-key
+            # requirement that job_id already exist in `jobs` (confirmed by
+            # this module's own tests calling it standalone) - an inner
+            # join would silently drop a QA pair for any job_id that isn't
+            # (or is no longer) in `jobs`, which this project's philosophy
+            # elsewhere is to never do with real recorded data. company/
+            # title just come back None for such a row instead.
+            rows = conn.execute(
+                f"""
+                SELECT qa_history.job_id, jobs.company, jobs.title,
+                       qa_history.question, qa_history.answer, qa_history.created_at
+                FROM qa_history
+                LEFT JOIN jobs ON jobs.job_id = qa_history.job_id
+                {where}
+                ORDER BY qa_history.id DESC
+                """,
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def recent_qa_pairs(self, limit: int = 20) -> list[dict[str, Any]]:
         """Up to `limit` most-recently-answered *unique* questions across
         every job, most recent first - fed into qa_answerer.py's prompt as

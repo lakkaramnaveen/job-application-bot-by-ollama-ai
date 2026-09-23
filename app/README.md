@@ -487,6 +487,16 @@ checking the resume itself before answering - but it means the model's
 answers get steadily more consistent with its own history the more you
 use it, purely from normal usage, with no separate step required.
 
+Every one of those logged pairs - not just the ~20 most recent used as
+context, and not just the curated subset promoted to `FAQ_PATH` - can be
+searched directly:
+
+```bash
+job-bot qa-history                     # every recorded Q&A pair, most recent first, with company/title context
+job-bot qa-history --search python     # only pairs whose question or answer mentions "python"
+job-bot qa-history --format json       # same pairs as one JSON array instead
+```
+
 ## Company blacklist
 
 ```bash

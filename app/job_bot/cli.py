@@ -944,6 +944,27 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
             sys.stdout.write(text)
 
 
+def cmd_qa_history(settings: Settings, args: argparse.Namespace) -> None:
+    """Every question/answer pair ever recorded, across every job, most
+    recent first - unlike `job-bot status <job_id>` (one job at a time) or
+    `job-bot faq list` (only the curated, promoted-to-cache subset), this
+    is the full raw transcript (Tracker.search_qa()), with each pair's
+    company/title for context. `--search` matches question or answer text,
+    the same semantics `faq list --search` already uses.
+    """
+    tracker = Tracker(settings.db_path)
+    pairs = tracker.search_qa(search=args.search)
+    if args.format == "json":
+        print(json.dumps(pairs, indent=2))
+        return
+    if not pairs:
+        print("No Q&A history recorded yet." if not args.search else f'No Q&A history matching "{args.search}".')
+        return
+    for pair in pairs:
+        print(f"[{pair['job_id']}] {pair['company']} - {pair['title']} ({pair['created_at']})")
+        print(f"  Q: {pair['question']}\n  A: {pair['answer']}\n")
+
+
 # Score buckets for `job-bot report --by-score`'s outcome breakdown, widest
 # (worst-fit) first so a job with a null match_score never fits any bucket
 # and is simply left out - it hasn't been through the LLM scorer yet.
@@ -1784,6 +1805,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", type=Path, default=None, help="Write to this file instead of stdout."
     )
 
+    qa_history_p = sub.add_parser(
+        "qa-history",
+        help="Print every question/answer pair ever recorded, across every job, most recent first.",
+    )
+    qa_history_p.add_argument(
+        "--search",
+        default=None,
+        help="Only print pairs whose question or answer contains this text (case-insensitive).",
+    )
+    qa_history_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Print the pairs as one JSON array instead.",
+    )
+
     report_p = sub.add_parser("report", help="Print a count of tracked jobs by status.")
     report_p.add_argument(
         "--stale-days",
@@ -1930,6 +1967,8 @@ def main() -> None:
             cmd_blacklist(settings, args)
         elif args.command == "faq":
             cmd_faq(settings, args)
+        elif args.command == "qa-history":
+            cmd_qa_history(settings, args)
     except EXPECTED_ERRORS as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

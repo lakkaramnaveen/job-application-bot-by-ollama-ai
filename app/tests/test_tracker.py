@@ -484,6 +484,51 @@ def test_recent_qa_pairs_empty_when_nothing_recorded(tmp_path):
     assert tracker.recent_qa_pairs() == []
 
 
+def test_search_qa_returns_every_pair_most_recent_first_with_job_context(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Frontend Engineer", "Beta", "https://example.com/2")
+    tracker.record_qa("1", "Years of experience?", "5")
+    tracker.record_qa("2", "Willing to relocate?", "No")
+
+    pairs = tracker.search_qa()
+
+    assert [p["question"] for p in pairs] == ["Willing to relocate?", "Years of experience?"]
+    assert pairs[0]["job_id"] == "2"
+    assert pairs[0]["company"] == "Beta"
+    assert pairs[0]["title"] == "Frontend Engineer"
+
+
+def test_search_qa_matches_question_or_answer_text(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
+    tracker.record_qa("1", "Years of Python experience?", "5")
+    tracker.record_qa("1", "Willing to relocate?", "No")
+
+    assert [p["question"] for p in tracker.search_qa(search="python")] == ["Years of Python experience?"]
+    assert [p["question"] for p in tracker.search_qa(search="no")] == ["Willing to relocate?"]
+
+
+def test_search_qa_keeps_a_pair_whose_job_is_not_in_the_jobs_table(tmp_path):
+    """record_qa() has no foreign-key requirement that job_id already
+    exists in `jobs` - a LEFT JOIN (not a plain JOIN) must not silently
+    drop such a pair, just leave company/title as None for it.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_qa("orphan", "Years of experience?", "5")
+
+    pairs = tracker.search_qa()
+
+    assert len(pairs) == 1
+    assert pairs[0]["company"] is None
+    assert pairs[0]["title"] is None
+
+
+def test_search_qa_empty_when_nothing_recorded(tmp_path):
+    tracker = make_tracker(tmp_path)
+    assert tracker.search_qa() == []
+
+
 def test_list_jobs_filters_by_status(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
