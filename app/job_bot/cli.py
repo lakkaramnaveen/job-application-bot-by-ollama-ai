@@ -1084,10 +1084,15 @@ def _company_breakdown(tracker: Tracker) -> dict[str, dict[str, int]]:
 
 
 def _print_company_breakdown(tracker: Tracker) -> None:
+    """No `if not buckets: return` guard here, the same reasoning
+    _print_eligibility_breakdown gives for lacking one: every tracked job
+    has a non-null `company` (the jobs table's own NOT NULL constraint),
+    so _company_breakdown can only be empty when there are zero tracked
+    jobs at all - a case cmd_report's own `if not counts: return` already
+    handles before this is ever called. A guard for a case that can't
+    happen here would be untestable dead code, not real defense.
+    """
     buckets = _company_breakdown(tracker)
-    if not buckets:
-        return
-
     statuses = sorted({status for counts in buckets.values() for status in counts})
     # Most-applied company first, not alphabetical - that's the actually
     # useful read ("where have I put in the most effort"), with an
