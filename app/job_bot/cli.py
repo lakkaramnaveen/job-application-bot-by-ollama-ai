@@ -1030,6 +1030,42 @@ def _print_eligibility_breakdown(tracker: Tracker) -> None:
         print(f"{verdict:<{width}}  {breakdown[verdict]}")
 
 
+def _company_breakdown(tracker: Tracker) -> dict[str, dict[str, int]]:
+    """company -> status -> count, for `job-bot report --by-company` - which
+    companies you've actually applied to the most, and how those
+    applications are trending (interviewing/offer vs rejected/no_response),
+    without dropping to `job-bot export --search "<company>"` one company at
+    a time. Unlike _score_breakdown, every tracked job has a company, so
+    this is never partial the way the score breakdown is for unscored jobs.
+    """
+    buckets: dict[str, dict[str, int]] = {}
+    for job in tracker.list_jobs():
+        by_status = buckets.setdefault(job["company"], {})
+        by_status[job["status"]] = by_status.get(job["status"], 0) + 1
+    return buckets
+
+
+def _print_company_breakdown(tracker: Tracker) -> None:
+    buckets = _company_breakdown(tracker)
+    if not buckets:
+        return
+
+    statuses = sorted({status for counts in buckets.values() for status in counts})
+    # Most-applied company first, not alphabetical - that's the actually
+    # useful read ("where have I put in the most effort"), with an
+    # alphabetical tiebreak so equal-count companies still print in a
+    # stable, predictable order.
+    ordered = sorted(buckets, key=lambda company: (-sum(buckets[company].values()), company.casefold()))
+    width = max(len("company"), max(len(company) for company in buckets))
+    print("\nOutcomes by company:")
+    header = "company".ljust(width + 2) + "".join(status.ljust(14) for status in statuses) + "total"
+    print(header)
+    for company in ordered:
+        counts = buckets[company]
+        row = company.ljust(width + 2) + "".join(str(counts.get(s, 0)).ljust(14) for s in statuses)
+        print(row + str(sum(counts.values())))
+
+
 def _stale_applications(tracker: Tracker, days: int) -> list[dict]:
     cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     return [
@@ -1046,7 +1082,9 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
     whether the LLM scorer's judgment tracks reality), and
     `--by-eligibility` (how many jobs were let through, flagged, or
     categorically disqualified by the eligibility gate - see
-    _eligibility_breakdown). `--format json` prints the same data as one
+    _eligibility_breakdown), and `--by-company` (which companies you've
+    applied to the most, and how those applications are trending). `--format
+    json` prints the same data as one
     JSON object instead - for a script or cron job that wants to alert on
     e.g. a growing stale-applications count without scraping the
     human-readable text layout.
@@ -1075,6 +1113,8 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
             payload["by_score"] = _score_breakdown(tracker)
         if args.by_eligibility:
             payload["by_eligibility"] = _eligibility_breakdown(tracker)
+        if args.by_company:
+            payload["by_company"] = _company_breakdown(tracker)
         print(json.dumps(payload, indent=2))
         return
 
@@ -1096,6 +1136,9 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
 
     if args.by_eligibility:
         _print_eligibility_breakdown(tracker)
+
+    if args.by_company:
+        _print_company_breakdown(tracker)
 
 
 def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
@@ -1673,6 +1716,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--by-eligibility",
         action="store_true",
         help="Break outcomes down by eligibility-gate verdict (pass/flag/fail/not scored).",
+    )
+    report_p.add_argument(
+        "--by-company",
+        action="store_true",
+        help="Break outcomes down by company, most-applied first.",
     )
     report_p.add_argument(
         "--format", choices=["text", "json"], default="text", help="Print as one JSON object instead."

@@ -92,7 +92,9 @@ def make_settings(tmp_path, **overrides) -> Settings:
 
 
 def report_args(**overrides) -> argparse.Namespace:
-    defaults = dict(stale_days=None, by_score=False, by_eligibility=False, format="text")
+    defaults = dict(
+        stale_days=None, by_score=False, by_eligibility=False, by_company=False, format="text"
+    )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -638,6 +640,63 @@ def test_report_format_json_omits_by_eligibility_when_not_requested(tmp_path, ca
     cmd_report(settings, report_args(format="json"))
 
     assert "by_eligibility" not in json.loads(capsys.readouterr().out)
+
+
+def test_report_by_company_breaks_down_outcomes_most_applied_first(tmp_path, capsys):
+    """Zeta has more tracked jobs than Acme, deliberately the opposite of
+    alphabetical order - so this only passes if the breakdown is genuinely
+    sorted by total count, not coincidentally by name.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.mark_applied("job1")
+    tracker.upsert_job("job2", "SRE", "Zeta", "https://x/2")
+    tracker.mark_applied("job2")
+    tracker.update_status("job2", "interviewing")
+    tracker.upsert_job("job3", "Platform Engineer", "Zeta", "https://x/3")
+
+    cmd_report(settings, report_args(by_company=True))
+
+    out = capsys.readouterr().out
+    assert "Outcomes by company:" in out
+    lines = [line for line in out.splitlines() if line.strip()]
+    company_lines = [line for line in lines if line.split()[0] in ("Acme", "Zeta")]
+    # Zeta has 2 tracked jobs, Acme has 1 - most-applied first, not alphabetical.
+    assert [line.split()[0] for line in company_lines] == ["Zeta", "Acme"]
+
+
+def test_report_by_company_prints_nothing_when_no_job_is_tracked(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path)  # create the (empty) DB
+
+    cmd_report(settings, report_args(by_company=True))
+
+    assert "Outcomes by company:" not in capsys.readouterr().out
+
+
+def test_report_by_company_omitted_without_the_flag(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+
+    cmd_report(settings, report_args())
+
+    assert "Outcomes by company" not in capsys.readouterr().out
+
+
+def test_report_json_includes_by_company_only_when_requested(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+
+    cmd_report(settings, report_args(by_company=True, format="json"))
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["by_company"] == {"Acme": {"seen": 1}}
+
+    cmd_report(settings, report_args(format="json"))
+    payload = json.loads(capsys.readouterr().out)
+    assert "by_company" not in payload
 
 
 def test_score_bucket_label_falls_back_for_an_out_of_range_score():

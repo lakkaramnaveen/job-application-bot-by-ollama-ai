@@ -225,7 +225,9 @@ def run_args(**overrides):
 def report_args(**overrides):
     import argparse
 
-    defaults = dict(stale_days=None, by_score=False, by_eligibility=False, format="text")
+    defaults = dict(
+        stale_days=None, by_score=False, by_eligibility=False, by_company=False, format="text"
+    )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
