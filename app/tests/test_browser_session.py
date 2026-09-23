@@ -42,6 +42,7 @@ class FakeChromium:
         self.cdp_browser: FakeBrowser | None = None
         self.persistent_context: FakeContext | None = None
         self.connect_over_cdp_error: Exception | None = None
+        self.launch_persistent_context_error: Exception | None = None
 
     def connect_over_cdp(self, endpoint_url, **kwargs):
         self.connect_over_cdp_calls.append(endpoint_url)
@@ -51,6 +52,8 @@ class FakeChromium:
 
     def launch_persistent_context(self, **kwargs):
         self.launch_persistent_context_calls.append(kwargs)
+        if self.launch_persistent_context_error is not None:
+            raise self.launch_persistent_context_error
         return self.persistent_context
 
 
@@ -109,6 +112,30 @@ def test_cdp_mode_raises_a_clear_error_when_nothing_is_listening(monkeypatch, tm
         browser_session(tmp_path / "profile", cdp_url="http://localhost:9222"),
     ):
         pass
+
+
+def test_default_mode_raises_a_clear_error_when_chromium_fails_to_launch(monkeypatch, tmp_path):
+    """Same reasoning as the CDP-mode test above, for the default (non-CDP)
+    launch path - the one every user actually hits, not just BROWSER_CDP_URL
+    users. Two real, plausible causes: Chromium was never installed
+    (`playwright install chromium`), or profile_dir is already locked by
+    another job-bot process (Chromium's own single-instance lock on a
+    persistent-context user-data-dir). A raw playwright.sync_api.Error
+    (confirmed: this is what launch_persistent_context raises for both)
+    used to propagate straight out as a traceback instead of a clean,
+    actionable message - this path had no error handling at all before.
+    """
+    chromium = FakeChromium()
+    profile = tmp_path / "profile"
+    chromium.launch_persistent_context_error = PlaywrightError(
+        "Executable doesn't exist at .../chromium-1234/chrome-mac/Chromium.app"
+    )
+    monkeypatch.setattr(session_module, "sync_playwright", lambda: FakePlaywrightCM(chromium))
+
+    with pytest.raises(BrowserSessionError) as exc_info, browser_session(profile):
+        pass
+    assert "playwright install chromium" in str(exc_info.value)
+    assert str(profile) in str(exc_info.value)
 
 
 def test_default_mode_launches_an_isolated_profile_and_closes_it_on_exit(monkeypatch, tmp_path):

@@ -14,8 +14,10 @@ from playwright.sync_api import Error as PlaywrightError
 
 class BrowserSessionError(RuntimeError):
     """Raised when browser_session() can't establish the browser context it
-    needs - in practice, a configured BROWSER_CDP_URL with nothing actually
-    listening there.
+    needs - either a configured BROWSER_CDP_URL with nothing actually
+    listening there, or (the default, non-CDP mode) Chromium failing to
+    launch at all: not installed yet, or profile_dir already locked by
+    another running instance.
     """
 
 
@@ -66,10 +68,29 @@ def browser_session(
 
     profile_dir.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
-            headless=headless,
-        )
+        try:
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                headless=headless,
+            )
+        except PlaywrightError as e:
+            # Same "wrap the raw playwright error" reasoning as the cdp_url
+            # branch above - two real, plausible causes: Chromium was never
+            # installed (`playwright install chromium`, see README.md's
+            # "Setup on macOS"), or profile_dir is already locked by
+            # another job-bot process (Chromium's own single-instance lock
+            # on a persistent-context user-data-dir) - e.g. `job-bot run`
+            # started twice, or a previous run's browser window still open.
+            # Playwright's own message for the first case already names the
+            # fix, but a raw playwright.sync_api.Error still isn't in
+            # EXPECTED_ERRORS, so without this it crashed as a traceback
+            # instead of main()'s usual clean "Error: ..." line either way.
+            raise BrowserSessionError(
+                f"Could not launch Chromium (profile: {profile_dir}): {e}\n\nIf this is a fresh "
+                "install, run `playwright install chromium` first. If job-bot (or a leftover "
+                "browser window from a previous run) is already using this profile, close it "
+                "first - only one instance can use the same profile at a time."
+            ) from e
         try:
             yield context
         finally:
