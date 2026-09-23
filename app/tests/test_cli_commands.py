@@ -1249,6 +1249,24 @@ def test_blacklist_import_of_missing_file_exits_with_error(tmp_path, capsys):
     assert "Error" in capsys.readouterr().err
 
 
+def test_blacklist_import_of_a_non_utf8_file_exits_with_a_clean_error(tmp_path, capsys):
+    """Real failure this guards against: a --file saved with a non-UTF-8
+    encoding (e.g. exported from a spreadsheet on Windows) previously
+    crashed this with a raw, uncaught UnicodeDecodeError instead of the
+    same clean "could not read" message an unreadable/missing file
+    already gets here.
+    """
+    settings = make_settings(tmp_path)
+    bad_file = tmp_path / "companies.txt"
+    bad_file.write_bytes("Acme ’s Corp".encode("cp1252"))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_blacklist(settings, argparse.Namespace(blacklist_action="import", file=bad_file))
+
+    assert exc_info.value.code == 1
+    assert "Error: could not read" in capsys.readouterr().err
+
+
 def test_blacklist_export_to_stdout_prints_one_company_per_line(tmp_path, capsys):
     settings = make_settings(tmp_path)
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp", "Beta Inc"]))
@@ -2426,6 +2444,23 @@ def test_faq_import_of_invalid_json_exits_with_error(tmp_path, capsys):
 
     assert exc_info.value.code == 1
     assert "not valid JSON" in capsys.readouterr().err
+
+
+def test_faq_import_of_a_non_utf8_file_exits_with_a_clean_error(tmp_path, capsys):
+    """Same reasoning as blacklist import's own non-UTF-8 regression test -
+    a --file saved with a non-UTF-8 encoding previously crashed this with
+    a raw, uncaught UnicodeDecodeError instead of the same clean "could
+    not read" message an unreadable/missing file already gets here.
+    """
+    settings = make_settings(tmp_path)
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_bytes("Isn’t sponsorship needed?".encode("cp1252"))
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_faq(settings, argparse.Namespace(faq_action="import", file=bad_file))
+
+    assert exc_info.value.code == 1
+    assert "Error: could not read" in capsys.readouterr().err
 
 
 def test_faq_import_of_non_object_json_exits_with_error(tmp_path, capsys):

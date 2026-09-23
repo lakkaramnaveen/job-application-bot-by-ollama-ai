@@ -32,7 +32,22 @@ def parse_resume(path: Path) -> str:
 
 
 def _parse_txt(path: Path) -> str:
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        # A resume.txt saved with a non-UTF-8 encoding (common for a plain
+        # text file: exported from Word on Windows, or hand-saved by an
+        # editor defaulting to the system locale's encoding rather than
+        # UTF-8) previously crashed parse_resume() with a raw
+        # UnicodeDecodeError - the one exception type this module doesn't
+        # define and cli.py's EXPECTED_ERRORS doesn't catch, unlike every
+        # other resume-parsing failure here, which already raises the
+        # clean ResumeParseError EXPECTED_ERRORS turns into a one-line
+        # message.
+        raise ResumeParseError(
+            f"Could not read {path} as UTF-8 text: {e}. Re-save it with UTF-8 encoding, or use a "
+            ".pdf/.docx resume instead."
+        ) from e
     if not text.strip():
         # Same empty-content guard as _parse_pdf/_parse_docx below - an
         # empty or whitespace-only resume.txt (truncated download, wrong

@@ -52,6 +52,22 @@ def test_parse_resume_raises_for_whitespace_only_txt_file(tmp_path):
         parse_resume(path)
 
 
+def test_parse_resume_raises_a_clean_error_for_a_non_utf8_txt_file(tmp_path):
+    """Real failure this guards against: a resume.txt saved with a non-UTF-8
+    encoding (exported from Word on Windows, or hand-saved by an editor
+    defaulting to the system locale rather than UTF-8) previously crashed
+    parse_resume() with a raw UnicodeDecodeError instead of this module's
+    own ResumeParseError, the one exception type EXPECTED_ERRORS catches.
+    U+2019 (a right single quotation mark - a common "smart quote" in a
+    Word-authored resume) encodes to cp1252 as the single byte 0x92, which
+    is not valid UTF-8 on its own.
+    """
+    path = tmp_path / "resume.txt"
+    path.write_bytes("Jane Doe’s resume".encode("cp1252"))
+    with pytest.raises(ResumeParseError, match="Could not read .* as UTF-8 text"):
+        parse_resume(path)
+
+
 def test_parse_resume_extension_check_is_case_insensitive(tmp_path):
     """A resume downloaded on Windows can easily carry an uppercase
     extension - the format dispatch must not silently misroute it to the

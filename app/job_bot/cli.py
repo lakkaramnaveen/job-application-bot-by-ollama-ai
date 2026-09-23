@@ -977,7 +977,11 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
     elif args.faq_action == "import":
         try:
             data = json.loads(args.file.read_text(encoding="utf-8"))
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
+            # UnicodeDecodeError alongside OSError - a --file saved with a
+            # non-UTF-8 encoding previously crashed this with a raw,
+            # uncaught traceback instead of the same clean "could not
+            # read" message an unreadable/missing file already gets here.
             print(f"Error: could not read {args.file}: {e}", file=sys.stderr)
             sys.exit(1)
         except json.JSONDecodeError as e:
@@ -1481,7 +1485,11 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
     elif args.blacklist_action == "import":
         try:
             lines = args.file.read_text(encoding="utf-8").splitlines()
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
+            # Same reasoning as `faq import`'s own read above - a --file
+            # saved with a non-UTF-8 encoding previously crashed this with
+            # a raw, uncaught traceback instead of this same clean
+            # "could not read" message.
             print(f"Error: could not read {args.file}: {e}", file=sys.stderr)
             sys.exit(1)
         # One company per line - blank lines and "#"-prefixed comment lines
