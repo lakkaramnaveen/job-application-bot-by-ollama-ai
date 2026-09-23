@@ -34,11 +34,11 @@ SYSTEM_PROMPT = (
     "candidate genuinely has (e.g. 'CI/CD' vs 'continuous integration') "
     "since ATS keyword matching is often literal - but only ever for skills "
     "actually grounded in the resume.\n"
-    "- The `summary` field and each string in `bullet_points` are finished "
-    "resume text itself, verbatim - never your reasoning process, never a "
-    "self-review, never a note about how you checked the resume or arrived "
-    "at the wording. Do all of that silently, then output just the "
-    "finished text."
+    "- The `summary` field, each string in `bullet_points`, and each string "
+    "in `highlighted_skills` are finished resume text itself, verbatim - "
+    "never your reasoning process, never a self-review, never a note about "
+    "how you checked the resume or arrived at the wording. Do all of that "
+    "silently, then output just the finished text."
 )
 
 

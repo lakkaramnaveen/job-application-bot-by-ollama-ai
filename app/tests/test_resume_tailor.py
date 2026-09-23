@@ -32,6 +32,27 @@ def test_tailor_resume_returns_provider_result():
     assert result.bullet_points == ["Built REST APIs handling 100,000+ requests daily."]
 
 
+def test_system_prompt_forbids_reasoning_in_all_three_guarded_fields():
+    """Real gap this guards against: the prompt-layer "no reasoning
+    process" instruction only ever named `summary`/`bullet_points`, even
+    after highlighted_skills got the matching schema-level validator (see
+    schemas.py's _reject_leaked_reasoning_skills) - the same incomplete
+    two-layer fix (docs/qwen_notes.md pattern #1) found and fixed for
+    scorer.py's prompt in be748c7, here in the file that originated the
+    two-layer pattern in the first place.
+    """
+    provider = FakeProvider(
+        TailoredResume(summary="s", highlighted_skills=["Python"], bullet_points=["b"])
+    )
+    tailor_resume(provider, RESUME_TEXT, "Backend Engineer role.")
+
+    system = provider.calls[0]["system"]
+    assert "summary" in system
+    assert "bullet_points" in system
+    assert "highlighted_skills" in system
+    assert "reasoning process" in system
+
+
 def test_fabricated_skill_not_grounded_in_resume_is_dropped():
     """A local model isn't guaranteed to honor "never invent skills" - seen
     in practice with qwen3:30b pulling a skill straight from the job
