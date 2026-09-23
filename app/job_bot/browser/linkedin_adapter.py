@@ -1017,6 +1017,21 @@ class LinkedInAdapter(JobBoardAdapter):
         return None
 
     def _dismiss_safety_reminder_if_present(self) -> None:
+        """Checked immediately after the submit click, with no delay before
+        this one - unlike every other post-click DOM check in this adapter
+        (_find_easy_apply_dialog(), the review/next button loop), which all
+        wait ACTION_DELAY_SECONDS first specifically so LinkedIn's own
+        client-side rendering has caught up (see that constant's comment).
+        Without it, this is exactly the same race commit 4fbad00 fixed for
+        the Easy Apply dialog itself: a reminder that renders slightly
+        after the click, rather than already being in the DOM the instant
+        this runs, would silently go undismissed. This dialog is optional
+        (most submissions show none at all), so it gets the adapter's
+        normal single-action pause rather than a multi-second poll like
+        _find_easy_apply_dialog() - that would slow down every application
+        that never shows one, for no benefit.
+        """
+        time.sleep(ACTION_DELAY_SECONDS)
         try:
             dismiss = self._page.locator(SELECTORS["dismiss_safety_reminder"])
             if dismiss.count() > 0:

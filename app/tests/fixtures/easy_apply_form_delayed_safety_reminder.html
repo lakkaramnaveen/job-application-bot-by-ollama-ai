@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: post-submit safety reminder renders after a delay</title></head>
+<!--
+  Reproduces the same class of race _find_easy_apply_dialog() was fixed for
+  in commit 4fbad00, applied to _dismiss_safety_reminder_if_present(): the
+  post-submit "Dismiss" reminder isn't in the DOM at the instant the submit
+  button is clicked - it's injected a short moment later, simulating
+  LinkedIn's own client-side rendering catching up after the click.
+-->
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Job application">
+    <label for="years-python">Years of Python experience</label>
+    <input id="years-python" type="text" />
+
+    <button id="submit-btn" aria-label="Submit application">Submit application</button>
+  </div>
+
+  <script>
+    document.getElementById('submit-btn').addEventListener('click', () => {
+      setTimeout(() => {
+        const btn = document.createElement('button');
+        btn.setAttribute('aria-label', 'Dismiss');
+        btn.textContent = 'Dismiss';
+        btn.addEventListener('click', () => {
+          window.__dismissed = true;
+          btn.remove();
+        });
+        document.body.appendChild(btn);
+      }, 500);
+    });
+  </script>
+</body>
+</html>

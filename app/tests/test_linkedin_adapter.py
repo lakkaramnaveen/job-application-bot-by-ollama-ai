@@ -55,6 +55,9 @@ SUBMIT_BUTTON_TEXT_ONLY_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_submit_button_text_only.html"
 )
 NO_PROGRESS_BUTTON_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_no_progress_button.html"
+DELAYED_SAFETY_REMINDER_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_delayed_safety_reminder.html"
+)
 ARIA_REQUIRED_TEXT_FIELD_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_aria_required_text_field.html"
 )
@@ -516,6 +519,33 @@ def test_submit_button_matched_by_text_when_aria_label_is_missing(playwright_pag
     )
 
     assert submitted is True
+
+
+def test_dismisses_a_safety_reminder_that_renders_shortly_after_the_submit_click(playwright_page):
+    """Same class of race commit 4fbad00 fixed for _find_easy_apply_dialog()
+    (a dialog rendering slightly after the triggering click rather than
+    already being in the DOM the instant it's checked), here for the
+    post-submit "Dismiss" safety reminder: DELAYED_SAFETY_REMINDER_FIXTURE_PATH
+    only injects the reminder 500ms after the submit button is clicked, so
+    this only passes if _dismiss_safety_reminder_if_present() actually waits
+    before giving up, not if it checks immediately and finds nothing there
+    yet.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{DELAYED_SAFETY_REMINDER_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting,
+        answer_question=lambda label: "5",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=False,
+    )
+
+    assert submitted is True
+    assert playwright_page.evaluate("window.__dismissed") is True
 
 
 def test_stuck_error_names_the_buttons_that_were_actually_on_screen(playwright_page):
