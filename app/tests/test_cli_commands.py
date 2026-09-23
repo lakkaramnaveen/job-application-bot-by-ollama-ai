@@ -122,7 +122,7 @@ def gmail_sync_args(**overrides) -> argparse.Namespace:
 
 
 def export_args(**overrides) -> argparse.Namespace:
-    defaults = dict(status=None, search=None, eligibility=None, out=None, format="csv")
+    defaults = dict(status=None, search=None, eligibility=None, stale_days=None, out=None, format="csv")
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -957,6 +957,47 @@ def test_export_filters_by_eligibility(tmp_path, capsys):
 
     rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
     assert [r["job_id"] for r in rows] == ["job1"]
+
+
+def test_export_filters_by_stale_days(tmp_path, capsys):
+    """--stale-days is the row-level counterpart to `job-bot report
+    --stale-days`'s own list section - useful for a script that wants to
+    act on the stale set (send follow-up reminders, say), not just see a
+    count.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Backend Engineer", "Acme", "https://x/1")
+    tracker.mark_applied("job1")
+    _backdate_applied_at(settings.db_path, "job1", datetime.now(UTC) - timedelta(days=20))
+    tracker.upsert_job("job2", "Frontend Engineer", "Beta", "https://x/2")
+    tracker.mark_applied("job2")  # applied just now - not stale
+    tracker.upsert_job("job3", "DevOps Engineer", "Gamma", "https://x/3")  # never applied at all
+
+    cmd_export(settings, export_args(stale_days=14))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert [r["job_id"] for r in rows] == ["job1"]
+
+
+def test_export_stale_days_combines_with_status_and_eligibility(tmp_path, capsys):
+    """--stale-days already implies status="applied" (see
+    _stale_applications()), but this confirms it still ANDs correctly
+    with an explicit --status/--eligibility rather than one silently
+    overriding the other.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        "job1", "Backend Engineer", "Acme", "https://x/1", score=90, should_apply=True, eligibility="pass"
+    )
+    tracker.mark_applied("job1")
+    _backdate_applied_at(settings.db_path, "job1", datetime.now(UTC) - timedelta(days=20))
+
+    cmd_export(settings, export_args(status="skipped", stale_days=14))
+
+    rows = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert rows == []
 
 
 def test_export_filters_by_search(tmp_path, capsys):

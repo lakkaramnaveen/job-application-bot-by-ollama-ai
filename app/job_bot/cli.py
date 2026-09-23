@@ -1108,7 +1108,12 @@ def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
     instead of a full status-filtered dump. `--eligibility` is the exact
     counterpart to `--status`, for pulling e.g. every job the eligibility
     gate categorically disqualified without guessing a search term that
-    happens to match all of them.
+    happens to match all of them. `--stale-days` is the row-level
+    counterpart to `job-bot report --stale-days`'s own list section (same
+    "status=applied, no reply after N days" rule as _stale_applications()
+    below) - the aggregate count there is useful for a glance, but a
+    script that wants to actually act on the stale set (send follow-up
+    reminders, say) needs the full exported rows, not just a count.
     """
     tracker = Tracker(settings.db_path)
     jobs = tracker.list_jobs(
@@ -1118,6 +1123,11 @@ def cmd_export(settings: Settings, args: argparse.Namespace) -> None:
         sort="first_seen_at",
         direction="asc",
     )
+    if args.stale_days is not None:
+        cutoff = (datetime.now(UTC) - timedelta(days=args.stale_days)).isoformat()
+        jobs = [
+            job for job in jobs if job["status"] == "applied" and job["applied_at"] and job["applied_at"] < cutoff
+        ]
     write = write_export_json if args.format == "json" else write_export_csv
 
     if args.out:
@@ -1681,6 +1691,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only export jobs whose title, company, note, match reasoning, or eligibility note "
         "contains this text.",
+    )
+    export_p.add_argument(
+        "--stale-days",
+        type=int,
+        default=None,
+        help="Only export applied jobs with no reply after this many days "
+        "(same rule `job-bot report --stale-days` uses).",
     )
     export_p.add_argument("--format", choices=["csv", "json"], default="csv")
     export_p.add_argument(

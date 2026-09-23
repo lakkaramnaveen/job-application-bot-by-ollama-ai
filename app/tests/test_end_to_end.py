@@ -323,7 +323,9 @@ def test_run_then_report_and_export_reflect_the_same_state(settings, wired_run, 
 
     cmd_export(
         settings,
-        argparse.Namespace(status="applied", search=None, eligibility=None, out=None, format="csv"),
+        argparse.Namespace(
+            status="applied", search=None, eligibility=None, stale_days=None, out=None, format="csv"
+        ),
     )
     csv_out = capsys.readouterr().out
     # Checked via the job_id column specifically, not a raw substring search
