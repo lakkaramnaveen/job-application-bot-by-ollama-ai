@@ -88,6 +88,48 @@ def test_selects_the_best_matching_option(playwright_page):
 
 
 # --- _best_match_index (no browser needed - pure string matching) ---
+#
+# ExternalApplyAdapter._best_match_index() is, by its own docstring, "Same
+# bidirectional, word-boundary matching as linkedin_adapter.py's
+# _best_match_index()" - a near-verbatim copy, not just similar logic. This
+# module's own SENSITIVE_FIELD_MARKERS/NON_RESUME_FILE_LABEL_MARKERS comment
+# in browser/base_adapter.py documents a real drift that already happened
+# once between these two adapters' independent copies of a shared list - the
+# exact failure mode a test suite this much thinner than
+# LinkedInAdapter's own (test_linkedin_adapter.py's "_best_match_index"
+# section) wouldn't catch here if the two implementations silently diverged
+# again. This section is brought up to the same coverage: exact match,
+# forward word-boundary fallback, substring-false-positive rejection,
+# non-word-character-boundary answers, and both reverse-direction branches
+# coverage previously missed entirely (first-stated-option-wins, and the
+# blank-placeholder-skip guard - see LinkedInAdapter's own test docstring
+# for exactly why that guard exists and how skipping it produces a
+# specific, real wrong-answer bug).
+
+
+def test_best_match_index_exact_match():
+    assert ExternalApplyAdapter._best_match_index(["Yes", "No"], "No") == 1
+
+
+def test_best_match_index_word_boundary_fallback_matches_correctly():
+    options = ["Not sure", "Yes, I am authorized"]
+    assert ExternalApplyAdapter._best_match_index(options, "yes") == 1
+
+
+def test_best_match_index_does_not_match_an_unrelated_option_containing_the_answer_as_a_substring():
+    assert ExternalApplyAdapter._best_match_index(["None", "Notice period"], "no") is None
+
+
+@pytest.mark.parametrize(
+    ("answer", "options", "expected"),
+    [
+        ("5+", ["Select an option", "1-2 years", "5+ years"], 2),
+        ("C++", ["Java", "C++ developer"], 1),
+        ("100%", ["50% travel", "100% remote"], 1),
+    ],
+)
+def test_best_match_index_matches_answers_ending_in_a_non_word_character(answer, options, expected):
+    assert ExternalApplyAdapter._best_match_index(options, answer) == expected
 
 
 def test_best_match_index_matches_a_short_option_named_by_a_long_explanatory_answer():
@@ -106,6 +148,48 @@ def test_best_match_index_reverse_direction_respects_word_boundaries():
     options = ["Yes", "No"]
     answer = "I know the role well and am a normal full-time candidate."
     assert ExternalApplyAdapter._best_match_index(options, answer) is None
+
+
+def test_best_match_index_reverse_direction_picks_the_first_stated_option():
+    options = ["Yes", "No", "Maybe"]
+    answer = "No, though I might consider it under the right circumstances - maybe."
+    assert ExternalApplyAdapter._best_match_index(options, answer) == 1
+
+
+def test_best_match_index_skips_a_blank_placeholder_option_in_reverse_direction():
+    """Previously uncovered branch (the `if not opt_norm: continue` guard) -
+    see LinkedInAdapter's own equivalent test for the exact real-world
+    failure this guards against: a blank <select> placeholder option
+    spuriously matching a zero-width position right after a non-word
+    character in the answer, winning purely because it's checked first.
+    """
+    options = ["", "5+"]
+    answer = "5+ years of experience"
+    assert ExternalApplyAdapter._best_match_index(options, answer) == 1
+
+
+# --- _numeric_value (no browser needed - pure string extraction) ---
+
+
+def test_numeric_value_extracts_a_plain_digit_sequence():
+    assert ExternalApplyAdapter._numeric_value("5 years of experience") == "5"
+
+
+def test_numeric_value_extracts_a_decimal():
+    assert ExternalApplyAdapter._numeric_value("3.5 years") == "3.5"
+
+
+def test_numeric_value_handles_a_trailing_plus_qualifier():
+    """The common qwen answer shape ("5+ years") for a years-of-experience
+    question - see this method's own docstring for why an
+    input[type="number"] silently rejects the "+"/"years" text and needs
+    just the digits.
+    """
+    assert ExternalApplyAdapter._numeric_value("5+ years of experience") == "5"
+
+
+def test_numeric_value_returns_none_when_the_answer_has_no_digits():
+    assert ExternalApplyAdapter._numeric_value("Not applicable") is None
 
 
 def test_never_solves_a_captcha_and_raises_a_clear_error(playwright_page):
