@@ -39,3 +39,58 @@ class AuditLogger:
         }
         with self._path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
+
+    def read_entries(self, *, search: str | None = None, action: str | None = None) -> list[dict[str, Any]]:
+        """Every logged entry, most recent first - the read counterpart to
+        log() above, for `job-bot audit-log` to browse the trail log()
+        writes on every action cmd_run/gmail_sync take. `job-bot doctor`'s
+        own "Audit log writable" check proves this file CAN be written to;
+        until this method existed there was no way to read it back short
+        of grepping the raw JSONL file by hand.
+
+        Each line is one independent JSON object (see log()) - a single
+        truncated or corrupted line (e.g. a killed process mid-write) is
+        skipped rather than failing the read of every other, valid line.
+        This is different from the JSON *stores* elsewhere (CompanyBlacklist,
+        AnswerGapStore, ResumeStore.faq_answers()), where one corrupted file
+        means the whole thing degrades to empty: those are each a single
+        JSON document, but this is an append-only log of independent
+        entries, so a partial read is both possible and the right behavior
+        - losing one bad line shouldn't hide every entry logged before or
+        after it. A non-UTF-8 file (the one corruption shape a single bad
+        line can't explain, since it usually affects the whole file) still
+        degrades to no entries, the same as those JSON stores.
+
+        `action` is an exact match (e.g. "applied", "skip_blacklisted",
+        "gmail_sync_update" - see every audit.log(...)/failure_log.log(...)
+        call site in cli.py/gmail_sync.py for the full vocabulary);
+        `search` is a case-insensitive substring match against the whole
+        entry (action name and every detail value) serialized to text, so
+        a company name, job_id, or error message anywhere in an entry can
+        be found without knowing which action logged it.
+        """
+        try:
+            raw = self._path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return []
+        except UnicodeDecodeError:
+            return []
+
+        entries = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if action is not None and entry.get("action") != action:
+                continue
+            if search is not None and search.lower() not in json.dumps(entry, default=str).lower():
+                continue
+            entries.append(entry)
+        entries.reverse()
+        return entries

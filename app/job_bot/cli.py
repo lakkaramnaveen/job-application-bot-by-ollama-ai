@@ -1007,22 +1007,28 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
             sys.stdout.write(text)
 
 
-def _no_history_message(kind: str, search: str | None, company: str | None) -> str:
-    """Shared "nothing found" wording for cmd_qa_history/cmd_resume_history
-    - `kind` is e.g. "Q&A history"/"resume generations". Preserves the
-    exact "No {kind} matching \"{search}\"." wording those commands already
-    had before --company existed (search-only is the common case, and
-    changing established message text would be a needless breaking change
-    for a script grepping it), while still describing --company too when
-    it's given, combined or alone.
+def _no_history_message(
+    kind: str, search: str | None, exact: str | None, *, exact_label: str = "company"
+) -> str:
+    """Shared "nothing found" wording for cmd_qa_history/cmd_resume_history/
+    cmd_audit_log - `kind` is e.g. "Q&A history"/"resume generations"/
+    "audit log entries". Preserves the exact "No {kind} matching
+    \"{search}\"." wording qa-history/resume-history already had before
+    --company existed (search-only is the common case, and changing
+    established message text would be a needless breaking change for a
+    script grepping it), while still describing the second, exact-match
+    filter too when it's given, combined or alone. `exact_label` names
+    that filter in the message ("company" by default, matching
+    qa-history/resume-history's own --company; cmd_audit_log passes
+    "action" for its own --action).
     """
-    if not search and not company:
+    if not search and not exact:
         return f"No {kind} recorded yet."
     parts = []
     if search:
         parts.append(f'"{search}"')
-    if company:
-        parts.append(f'company "{company}"')
+    if exact:
+        parts.append(f'{exact_label} "{exact}"')
     return f"No {kind} matching {' and '.join(parts)}."
 
 
@@ -1083,6 +1089,34 @@ def cmd_resume_history(settings: Settings, args: argparse.Namespace) -> None:
         print(f"[{gen['job_id']}] {gen['company']} - {gen['title']} ({status}, {gen['created_at']})")
         print(f"  Summary: {gen['summary']}")
         print(f"  Skills:  {', '.join(gen['skills'])}\n")
+
+
+def cmd_audit_log(settings: Settings, args: argparse.Namespace) -> None:
+    """Every logged action from the safety-critical audit trail
+    (safety/audit_log.py's own module docstring: "Append-only, secret-
+    redacted log of every action the bot takes"), most recent first -
+    `job-bot doctor`'s "Audit log writable" check only ever proves this
+    file can be written to; until this command existed there was no way
+    to read it back short of grepping the raw JSONL file by hand.
+    `--search` matches the whole entry (action and every detail value),
+    the same semantics `qa-history`/`resume-history --search` already use.
+    `--action` is the exact-match equivalent of those two commands' own
+    `--company` - e.g. `--action applied`, `--action skip_blacklisted` (see
+    AuditLogger.read_entries()'s own docstring for where to find the full
+    action vocabulary).
+    """
+    audit = AuditLogger(settings.audit_log_path)
+    entries = audit.read_entries(search=args.search, action=args.action)
+    if args.format == "json":
+        print(json.dumps(entries, indent=2))
+        return
+    if not entries:
+        print(_no_history_message("audit log entries", args.search, args.action, exact_label="action"))
+        return
+    for entry in entries:
+        details = ", ".join(f"{k}={v}" for k, v in entry.get("details", {}).items())
+        line = f"[{entry.get('timestamp', '?')}] {entry.get('action', '?')}"
+        print(f"{line}  {details}" if details else line)
 
 
 # Score buckets for `job-bot report --by-score`'s outcome breakdown, widest
@@ -2097,6 +2131,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the generations as one JSON array instead.",
     )
 
+    audit_log_p = sub.add_parser(
+        "audit-log",
+        help="Print every logged action from the safety audit trail, most recent first.",
+    )
+    audit_log_p.add_argument(
+        "--search",
+        default=None,
+        help="Only print entries whose action or details contain this text (case-insensitive).",
+    )
+    audit_log_p.add_argument(
+        "--action",
+        default=None,
+        help="Only print entries with this exact action (e.g. applied, skip_blacklisted, "
+        "gmail_sync_update).",
+    )
+    audit_log_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Print the entries as one JSON array instead.",
+    )
+
     report_p = sub.add_parser("report", help="Print a count of tracked jobs by status.")
     report_p.add_argument(
         "--stale-days",
@@ -2268,6 +2324,8 @@ def main() -> None:
             cmd_qa_history(settings, args)
         elif args.command == "resume-history":
             cmd_resume_history(settings, args)
+        elif args.command == "audit-log":
+            cmd_audit_log(settings, args)
     except EXPECTED_ERRORS as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

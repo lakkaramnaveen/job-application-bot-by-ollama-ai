@@ -19,6 +19,7 @@ from job_bot.cli import (
     _apply_provider_overrides,
     _score_bucket_label,
     build_parser,
+    cmd_audit_log,
     cmd_blacklist,
     cmd_dashboard,
     cmd_doctor,
@@ -38,6 +39,7 @@ from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import JobMatchScore
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
+from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.safety.rate_limiter import RateLimiter
 from job_bot.tracker.db import Tracker
@@ -136,6 +138,12 @@ def qa_history_args(**overrides) -> argparse.Namespace:
 
 def resume_history_args(**overrides) -> argparse.Namespace:
     defaults = dict(search=None, company=None, format="text")
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+def audit_log_args(**overrides) -> argparse.Namespace:
+    defaults = dict(search=None, action=None, format="text")
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -2956,6 +2964,110 @@ def test_resume_history_format_json_on_empty_history_is_still_valid_json(tmp_pat
     assert json.loads(capsys.readouterr().out) == []
 
 
+# --- audit-log ---
+
+
+def test_audit_log_says_so_when_nothing_recorded(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_audit_log(settings, audit_log_args())
+
+    assert "No audit log entries recorded yet." in capsys.readouterr().out
+
+
+def test_audit_log_prints_every_entry_most_recent_first(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    audit = AuditLogger(settings.audit_log_path)
+    audit.log("scored", job_id="1", score=90)
+    audit.log("applied", job_id="1", company="Acme")
+
+    cmd_audit_log(settings, audit_log_args())
+
+    out = capsys.readouterr().out
+    assert out.index("applied") < out.index("scored")
+    assert "job_id=1" in out
+    assert "company=Acme" in out
+
+
+def test_audit_log_search_matches_action_or_details(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    audit = AuditLogger(settings.audit_log_path)
+    audit.log("applied", job_id="1", company="Acme Corp")
+    audit.log("applied", job_id="2", company="Beta Inc")
+
+    cmd_audit_log(settings, audit_log_args(search="acme"))
+
+    out = capsys.readouterr().out
+    assert "Acme Corp" in out
+    assert "Beta Inc" not in out
+
+
+def test_audit_log_search_says_so_when_nothing_matches(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    AuditLogger(settings.audit_log_path).log("applied", job_id="1", company="Acme")
+
+    cmd_audit_log(settings, audit_log_args(search="nonexistent"))
+
+    assert 'No audit log entries matching "nonexistent".' in capsys.readouterr().out
+
+
+def test_audit_log_action_is_an_exact_match_not_a_substring(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    audit = AuditLogger(settings.audit_log_path)
+    audit.log("applied", job_id="1")
+    audit.log("dry_run_stopped", job_id="2")
+
+    cmd_audit_log(settings, audit_log_args(action="applied"))
+
+    out = capsys.readouterr().out
+    assert "job_id=1" in out
+    assert "job_id=2" not in out
+
+
+def test_audit_log_action_says_so_when_nothing_matches(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    AuditLogger(settings.audit_log_path).log("applied", job_id="1")
+
+    cmd_audit_log(settings, audit_log_args(action="nonexistent_action"))
+
+    assert 'No audit log entries matching action "nonexistent_action".' in capsys.readouterr().out
+
+
+def test_audit_log_search_and_action_combine(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    audit = AuditLogger(settings.audit_log_path)
+    audit.log("applied", job_id="1", company="Acme Corp")
+    audit.log("scored", job_id="2", score=40, error="Acme Corp mismatch")
+    audit.log("applied", job_id="3", company="Beta Inc")
+
+    cmd_audit_log(settings, audit_log_args(search="acme", action="applied"))
+
+    out = capsys.readouterr().out
+    assert "job_id=1" in out
+    assert "job_id=2" not in out
+    assert "job_id=3" not in out
+
+
+def test_audit_log_format_json_prints_entries(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    AuditLogger(settings.audit_log_path).log("applied", job_id="1", company="Acme")
+
+    cmd_audit_log(settings, audit_log_args(format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload) == 1
+    assert payload[0]["action"] == "applied"
+    assert payload[0]["details"] == {"job_id": "1", "company": "Acme"}
+
+
+def test_audit_log_format_json_on_empty_log_is_still_valid_json(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_audit_log(settings, audit_log_args(format="json"))
+
+    assert json.loads(capsys.readouterr().out) == []
+
+
 # --- main() ---
 
 
@@ -3051,6 +3163,7 @@ def test_main_reports_a_corrupted_tracker_database_cleanly(tmp_path, monkeypatch
         (["job-bot", "faq", "list"], "cmd_faq"),
         (["job-bot", "qa-history"], "cmd_qa_history"),
         (["job-bot", "resume-history"], "cmd_resume_history"),
+        (["job-bot", "audit-log"], "cmd_audit_log"),
     ],
 )
 def test_main_dispatches_each_subcommand_to_its_own_handler(tmp_path, monkeypatch, argv, cmd_name):
@@ -3266,6 +3379,7 @@ def test_every_cli_flag_is_documented_in_the_readme():
         (review_answers_args, ["review-answers"]),
         (qa_history_args, ["qa-history"]),
         (resume_history_args, ["resume-history"]),
+        (audit_log_args, ["audit-log"]),
     ],
 )
 def test_args_helper_stays_in_sync_with_the_real_parser(helper, argv):

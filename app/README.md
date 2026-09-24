@@ -539,6 +539,25 @@ company names, one per line).
 Backed by `BLACKLIST_PATH` (default `data/company_blacklist.json`); matching
 is case-insensitive.
 
+## Audit log
+
+Every action `job-bot run`/`gmail-sync` takes - a search, a score, an apply,
+a skip and why, a blacklist-driven status update - is logged, redacted of
+secrets, to `AUDIT_LOG_PATH` (default `data/audit.log`; `job-bot doctor`'s
+"Audit log writable" check confirms it can actually be written to). It's
+readable directly:
+
+```bash
+job-bot audit-log                        # every logged action, most recent first
+job-bot audit-log --search "Acme Corp"   # only entries whose action or details mention "Acme Corp"
+job-bot audit-log --action applied       # only entries with this exact action (e.g. applied, skip_blacklisted, scored)
+job-bot audit-log --format json          # same entries as one JSON array instead
+```
+
+See `job_bot/safety/audit_log.py`'s module docstring for exactly what is
+and isn't recorded (metadata only - never full resume text or raw LLM
+prompts).
+
 ## Dashboard
 
 A live, one-page view of every tracked application:
