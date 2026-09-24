@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from job_bot.dashboard.server import DashboardPortInUse, make_handler, run_dashboard
+from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import Tracker
 
@@ -24,6 +25,7 @@ def live_server(tmp_path):
     # URL string so the many existing f"{live_server}/..." call sites in
     # this file don't all need to change shape for one feature.
     blacklist_path = tmp_path / "blacklist.json"
+    audit_log_path = tmp_path / "audit.log"
     tracker = Tracker(db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://example.com/job1", match_score=80)
     tracker.mark_applied("job1")
@@ -31,7 +33,7 @@ def live_server(tmp_path):
     # encodeURIComponent(job_id) round-tripping through the server.
     tracker.upsert_job("job 2", "Frontend Engineer", "Acme Corp", "https://example.com/job2")
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db_path, blacklist_path))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db_path, blacklist_path, audit_log_path))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -793,6 +795,36 @@ def test_get_missing_qualifications_shows_the_most_common_gaps(live_server, tmp_
     assert body.index("Kubernetes experience") < body.index("Docker")
 
 
+def test_get_audit_log_is_empty_by_default(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/audit-log") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+    assert "No audit log entries recorded yet." in body
+
+
+def test_get_audit_log_shows_entries_most_recent_first(live_server, tmp_path):
+    audit = AuditLogger(tmp_path / "audit.log")
+    audit.log("search", keywords="backend engineer")
+    audit.log("applied", job_id="1", company="Acme")
+
+    with urllib.request.urlopen(f"{live_server}/api/audit-log") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert body.index("applied") < body.index("search")
+
+
+def test_get_audit_log_search_filters_entries(live_server, tmp_path):
+    audit = AuditLogger(tmp_path / "audit.log")
+    audit.log("applied", job_id="1", company="Acme Corp")
+    audit.log("applied", job_id="2", company="Beta Inc")
+
+    with urllib.request.urlopen(f"{live_server}/api/audit-log?q=acme") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "Acme Corp" in body
+    assert "Beta Inc" not in body
+
+
 def test_post_blacklist_remove_removes_the_company(live_server, tmp_path):
     CompanyBlacklist(tmp_path / "blacklist.json").add("Acme Corp")
 
@@ -902,7 +934,9 @@ def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatc
 
     monkeypatch.setattr(ThreadingHTTPServer, "serve_forever", fake_serve_forever)
 
-    run_dashboard(tmp_path / "db.sqlite3", tmp_path / "blacklist.json", port=0, open_browser=True)
+    run_dashboard(
+        tmp_path / "db.sqlite3", tmp_path / "blacklist.json", tmp_path / "audit.log", port=0, open_browser=True
+    )
 
     assert len(opened_urls) == 1
     assert opened_urls[0].startswith("http://127.0.0.1:")
@@ -921,7 +955,9 @@ def test_run_dashboard_raises_a_clear_error_when_the_port_is_already_in_use(tmp_
     try:
         taken_port = blocker.getsockname()[1]
         with pytest.raises(DashboardPortInUse, match=r"already running"):
-            run_dashboard(tmp_path / "db.sqlite3", tmp_path / "blacklist.json", port=taken_port)
+            run_dashboard(
+                tmp_path / "db.sqlite3", tmp_path / "blacklist.json", tmp_path / "audit.log", port=taken_port
+            )
     finally:
         blocker.close()
 
@@ -932,7 +968,9 @@ def test_run_dashboard_raises_a_clear_error_for_an_out_of_range_port(tmp_path):
     OverflowError traceback instead of DashboardPortInUse's clean message.
     """
     with pytest.raises(DashboardPortInUse):
-        run_dashboard(tmp_path / "db.sqlite3", tmp_path / "blacklist.json", port=99999999)
+        run_dashboard(
+            tmp_path / "db.sqlite3", tmp_path / "blacklist.json", tmp_path / "audit.log", port=99999999
+        )
 
 
 def test_qa_endpoint_decodes_percent_encoded_job_id(live_server):

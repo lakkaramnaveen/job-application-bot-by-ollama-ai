@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from job_bot.dashboard.render import (
+    render_audit_log_html,
     render_blacklist_html,
     render_missing_qualifications_html,
     render_page_html,
@@ -440,6 +441,61 @@ def test_render_page_html_includes_the_missing_qualifications_button_and_dialog(
     assert 'id="showMissingQualifications"' in html
     assert 'id="missingQualificationsDialog"' in html
     assert 'id="missingQualificationsContent"' in html
+
+
+def test_render_audit_log_html_empty_state():
+    html = render_audit_log_html([])
+    assert "No audit log entries recorded yet." in html
+
+
+def test_render_audit_log_html_renders_timestamp_action_and_details():
+    entries = [{"timestamp": "2026-01-01T00:00:00", "action": "applied", "details": {"job_id": "1"}}]
+    html = render_audit_log_html(entries)
+    assert "2026-01-01T00:00:00" in html
+    assert "applied" in html
+    assert "job_id=1" in html
+
+
+def test_render_audit_log_html_preserves_entry_order():
+    """render_audit_log_html doesn't re-sort - AuditLogger.read_entries()
+    already returns most-recent-first, and re-sorting here (by what key?
+    entries have no globally comparable field beyond timestamp, which
+    read_entries already orders by) would just be redundant work at best.
+    """
+    entries = [
+        {"timestamp": "2", "action": "second", "details": {}},
+        {"timestamp": "1", "action": "first", "details": {}},
+    ]
+    html = render_audit_log_html(entries)
+    assert html.index("second") < html.index("first")
+
+
+def test_render_audit_log_html_omits_details_span_when_there_are_none():
+    entries = [{"timestamp": "t", "action": "search", "details": {}}]
+    html = render_audit_log_html(entries)
+    assert "audit-log-details" not in html
+
+
+def test_render_audit_log_html_escapes_action_and_details_to_prevent_xss():
+    entries = [
+        {
+            "timestamp": "t",
+            "action": '<script>alert(1)</script>',
+            "details": {"company": '<script>alert(2)</script>'},
+        }
+    ]
+    html = render_audit_log_html(entries)
+    assert "<script>alert(1)</script>" not in html
+    assert "<script>alert(2)</script>" not in html
+    assert html.count("&lt;script&gt;") == 2
+
+
+def test_render_page_html_includes_the_audit_log_button_and_dialog():
+    html = render_page_html([make_job()])
+    assert 'id="showAuditLog"' in html
+    assert 'id="auditLogDialog"' in html
+    assert 'id="auditLogContent"' in html
+    assert 'id="auditLogSearch"' in html
 
 
 def test_render_page_html_includes_the_note_dialog():

@@ -323,6 +323,32 @@ def render_missing_qualifications_html(breakdown: dict[str, int]) -> str:
     return f'<ul class="mq-list">{items}</ul>'
 
 
+def render_audit_log_html(entries: list[dict[str, Any]]) -> str:
+    """Logged actions (AuditLogger.read_entries(), already most-recent-first
+    and already capped by the caller - see server.py's _AUDIT_LOG_LIMIT) as
+    an HTML fragment, for the dashboard's Audit Log modal - the dashboard
+    counterpart to `job-bot audit-log`, read-only the same way
+    render_missing_qualifications_html/render_blacklist_html are. Every
+    piece (timestamp, action, and each detail value) is untrusted-enough to
+    escape: `details` values can include scraped job postings' own company/
+    title text, the same reason render_rows_html escapes those.
+    """
+    if not entries:
+        return '<p class="empty">No audit log entries recorded yet.</p>'
+    items = []
+    for entry in entries:
+        timestamp = html.escape(str(entry.get("timestamp", "?")))
+        action = html.escape(str(entry.get("action", "?")))
+        details = entry.get("details") or {}
+        details_text = ", ".join(f"{k}={v}" for k, v in details.items())
+        details_html = f' <span class="audit-log-details">{html.escape(details_text)}</span>' if details_text else ""
+        items.append(
+            f'<li><span class="audit-log-time">{timestamp}</span> '
+            f'<span class="audit-log-action">{action}</span>{details_html}</li>'
+        )
+    return f'<ul class="audit-log-list">{"".join(items)}</ul>'
+
+
 def _options_html(options: list[tuple[str, str]], selected: str) -> str:
     return "\n".join(
         f'<option value="{html.escape(value, quote=True)}"{" selected" if value == selected else ""}>'
@@ -453,6 +479,15 @@ def render_page_html(
   .mq-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
   .mq-list li:last-child {{ border-bottom: none; }}
   .mq-count {{ display: inline-block; min-width: 1.75rem; font-weight: 600; color: var(--muted); }}
+  .audit-log-list {{ list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }}
+  .audit-log-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }}
+  .audit-log-list li:last-child {{ border-bottom: none; }}
+  .audit-log-time {{ color: var(--muted); font-size: 0.8em; }}
+  .audit-log-action {{ font-weight: 600; }}
+  .audit-log-details {{ color: var(--muted); }}
+  #auditLogSearch {{ width: 100%; box-sizing: border-box; font-size: 0.85rem; padding: 0.4rem 0.6rem;
+              margin-bottom: 0.75rem; border: 1px solid var(--border); border-radius: 6px;
+              background: var(--surface); color: var(--fg); }}
 </style>
 </head>
 <body>
@@ -480,6 +515,7 @@ def render_page_html(
   <a id="exportJson" class="export-link" href="/api/export.json">Export JSON</a>
   <button type="button" id="manageBlacklist" class="export-link">Manage Blacklist</button>
   <button type="button" id="showMissingQualifications" class="export-link">Missing Qualifications</button>
+  <button type="button" id="showAuditLog" class="export-link">Audit Log</button>
 </form>
 
 <div class="table-wrap">
@@ -521,6 +557,13 @@ def render_page_html(
   <h2>Most common missing qualifications</h2>
   <div id="missingQualificationsContent"></div>
   <button type="button" id="missingQualificationsClose">Close</button>
+</dialog>
+
+<dialog id="auditLogDialog">
+  <h2>Audit log</h2>
+  <input type="search" id="auditLogSearch" placeholder="Search action or details...">
+  <div id="auditLogContent"></div>
+  <button type="button" id="auditLogClose">Close</button>
 </dialog>
 
 <dialog id="noteDialog">
@@ -779,6 +822,31 @@ document.getElementById('showMissingQualifications').addEventListener('click', a
 document.getElementById('missingQualificationsClose').addEventListener(
   'click', () => missingQualificationsDialog.close()
 );
+
+const auditLogDialog = document.getElementById('auditLogDialog');
+const auditLogSearch = document.getElementById('auditLogSearch');
+async function loadAuditLog() {{
+  const content = document.getElementById('auditLogContent');
+  content.innerHTML = 'Loading...';
+  const params = new URLSearchParams();
+  if (auditLogSearch.value) params.set('q', auditLogSearch.value);
+  try {{
+    const res = await fetch('/api/audit-log?' + params.toString());
+    content.innerHTML = res.ok ? await res.text() : 'Could not load the audit log.';
+  }} catch (err) {{
+    content.innerHTML = 'Could not load the audit log (network error).';
+  }}
+}}
+document.getElementById('showAuditLog').addEventListener('click', () => {{
+  auditLogDialog.showModal();
+  loadAuditLog();
+}});
+document.getElementById('auditLogClose').addEventListener('click', () => auditLogDialog.close());
+let auditLogSearchTimer = null;
+auditLogSearch.addEventListener('input', () => {{
+  clearTimeout(auditLogSearchTimer);
+  auditLogSearchTimer = setTimeout(loadAuditLog, 300);
+}});
 
 // The periodic refresh below replaces the whole <tbody>, which would
 // otherwise yank a status <select> out from under a user mid-interaction

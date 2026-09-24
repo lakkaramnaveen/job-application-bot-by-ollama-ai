@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from job_bot.dashboard.render import (
     PAGE_SIZE,
+    render_audit_log_html,
     render_blacklist_html,
     render_missing_qualifications_html,
     render_page_html,
@@ -31,6 +32,7 @@ from job_bot.dashboard.render import (
     render_rows_html,
     render_stats_html,
 )
+from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import (
     InvalidSort,
@@ -68,6 +70,14 @@ _DEFAULT_DIRECTION = "desc"
 # a control for a value nobody's likely to need to change interactively.
 _MISSING_QUALIFICATIONS_LIMIT = 20
 
+# Same reasoning as _MISSING_QUALIFICATIONS_LIMIT: no dashboard control to
+# page or otherwise narrow this down, so a fixed cap keeps the Audit Log
+# panel readable rather than dumping a run's entire, potentially very long
+# history into one modal. Higher than the missing-qualifications cap since
+# an audit log entry is one line, not a paragraph, and `job-bot audit-log`
+# (no cap at all) is right there for anyone who needs the full history.
+_AUDIT_LOG_LIMIT = 50
+
 
 def _parse_list_params(query: dict[str, list[str]]) -> dict:
     """Shared query-string parsing for `/` and `/api/rows` - keeps the two
@@ -93,7 +103,7 @@ def _parse_list_params(query: dict[str, list[str]]) -> dict:
 
 
 def make_handler(
-    db_path: Path, blacklist_path: Path, *, stale_after_days: int = 14
+    db_path: Path, blacklist_path: Path, audit_log_path: Path, *, stale_after_days: int = 14
 ) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
         def _send(self, status: HTTPStatus | int, content_type: str, body: bytes, headers: dict | None = None) -> None:
@@ -172,6 +182,8 @@ def make_handler(
                 self._handle_blacklist_list()
             elif parsed.path == "/api/missing-qualifications":
                 self._handle_missing_qualifications(tracker)
+            elif parsed.path == "/api/audit-log":
+                self._handle_audit_log(parse_qs(parsed.query))
             else:
                 self._send_text(404, "Not found")
 
@@ -462,6 +474,21 @@ def make_handler(
             body = render_missing_qualifications_html(breakdown).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
+        def _handle_audit_log(self, query: dict[str, list[str]]) -> None:
+            """The dashboard counterpart to `job-bot audit-log` - read-only
+            the same way _handle_blacklist_list/_handle_missing_qualifications
+            are. `q` (the same query param name the main search box already
+            uses) matches AuditLogger.read_entries()'s own `search` - the
+            whole entry (action and every detail value), not just the action
+            name - capped to the _AUDIT_LOG_LIMIT most recent matching
+            entries; `job-bot audit-log` itself has no such cap for anyone
+            who needs the full history.
+            """
+            search = (query.get("q") or [""])[0].strip() or None
+            entries = AuditLogger(audit_log_path).read_entries(search=search)[:_AUDIT_LOG_LIMIT]
+            body = render_audit_log_html(entries).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+
         def _handle_blacklist_remove(self) -> None:
             if not self._is_same_origin():
                 self._send_text(403, "Cross-origin request rejected")
@@ -500,12 +527,13 @@ def make_handler(
 def run_dashboard(
     db_path: Path,
     blacklist_path: Path,
+    audit_log_path: Path,
     port: int = 8765,
     open_browser: bool = True,
     *,
     stale_after_days: int = 14,
 ) -> None:
-    handler = make_handler(db_path, blacklist_path, stale_after_days=stale_after_days)
+    handler = make_handler(db_path, blacklist_path, audit_log_path, stale_after_days=stale_after_days)
     try:
         server = ThreadingHTTPServer((DASHBOARD_HOST, port), handler)
     except (OSError, OverflowError) as e:

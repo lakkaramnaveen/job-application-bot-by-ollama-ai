@@ -1562,6 +1562,7 @@ def cmd_dashboard(settings: Settings, args: argparse.Namespace) -> None:
     run_dashboard(
         settings.db_path,
         settings.blacklist_path,
+        settings.audit_log_path,
         port=port,
         open_browser=not args.no_open,
         stale_after_days=settings.stale_after_days,
