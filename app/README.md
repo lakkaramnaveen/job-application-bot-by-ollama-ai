@@ -581,8 +581,11 @@ seen, and lets you:
   the same warning if that company still has a tracked application
   `applied`/`interviewing`/`offer` at (blacklisting only stops future
   applications, it never touches anything already tracked).
-- **Manage the blacklist** (view and remove entries) from a modal, without
-  dropping to `job-bot blacklist list`/`remove`.
+- **Manage the blacklist** (view, with each company's reason if one was set
+  via `job-bot blacklist add --reason`, and remove entries) from a modal,
+  without dropping to `job-bot blacklist list`/`remove`. The one-click
+  blacklist button above doesn't prompt for a reason itself (it's meant to
+  stay a single click) - set one from the CLI and it shows up here.
 - **View a job's Q&A history** (every application-question answer the bot
   gave, and what it was based on) in a modal, without querying the DB by hand.
 - **View a job's tailored resume** (the summary/skills/bullets actually

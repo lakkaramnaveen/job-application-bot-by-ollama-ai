@@ -373,7 +373,9 @@ def test_render_blacklist_html_empty_state():
 
 
 def test_render_blacklist_html_renders_a_remove_button_per_company():
-    html = render_blacklist_html(["Acme Corp", "Beta Inc"])
+    html = render_blacklist_html(
+        [{"name": "Acme Corp", "reason": ""}, {"name": "Beta Inc", "reason": ""}]
+    )
     assert "Acme Corp" in html
     assert "Beta Inc" in html
     assert html.count("blacklist-remove-button") == 2
@@ -381,8 +383,25 @@ def test_render_blacklist_html_renders_a_remove_button_per_company():
     assert 'data-company="Beta Inc"' in html
 
 
+def test_render_blacklist_html_shows_the_reason_when_set():
+    html = render_blacklist_html([{"name": "Acme Corp", "reason": "no H1B sponsorship"}])
+    assert "no H1B sponsorship" in html
+    assert 'class="blacklist-reason"' in html
+
+
+def test_render_blacklist_html_omits_the_reason_span_when_not_set():
+    html = render_blacklist_html([{"name": "Acme Corp", "reason": ""}])
+    assert 'class="blacklist-reason"' not in html
+
+
 def test_render_blacklist_html_escapes_company_name_to_prevent_xss():
-    html = render_blacklist_html(['<script>alert(1)</script>Acme"'])
+    html = render_blacklist_html([{"name": '<script>alert(1)</script>Acme"', "reason": ""}])
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_render_blacklist_html_escapes_reason_to_prevent_xss():
+    html = render_blacklist_html([{"name": "Acme Corp", "reason": '<script>alert(1)</script>'}])
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
 

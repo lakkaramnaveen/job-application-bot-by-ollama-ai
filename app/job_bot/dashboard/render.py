@@ -277,21 +277,29 @@ def render_resume_html(generation: dict[str, Any] | None) -> str:
     )
 
 
-def render_blacklist_html(companies: list[str]) -> str:
-    """The blacklisted-companies list as an HTML fragment, for the
+def render_blacklist_html(entries: list[dict[str, str]]) -> str:
+    """The blacklisted companies (each {"name", "reason"} - see
+    CompanyBlacklist.list_entries()) as an HTML fragment, for the
     dashboard's Manage Blacklist modal - same shape as render_qa_html
     above (a server-rendered fragment the client just drops into the
     dialog), with one remove button per company wired the same
     data-attribute way status-select/qa-button/blacklist-button already
-    are, rather than an inline onclick with interpolated data.
+    are, rather than an inline onclick with interpolated data. The reason
+    (when set - via `job-bot blacklist add --reason`, the only way to set
+    one; see _handle_blacklist's own docstring for why the dashboard's
+    one-click blacklist button deliberately doesn't prompt for one) prints
+    dimmed after the name, the same treatment render_rows_html already
+    gives less-important secondary text.
     """
-    if not companies:
+    if not entries:
         return '<p class="empty">Blacklist is empty.</p>'
     items = []
-    for company in companies:
-        safe_company = html.escape(company, quote=True)
+    for entry in entries:
+        name = entry["name"]
+        safe_company = html.escape(name, quote=True)
+        reason_html = f' <span class="blacklist-reason">- {html.escape(entry["reason"])}</span>' if entry["reason"] else ""
         items.append(
-            f"<li>{html.escape(company)} "
+            f"<li><span>{html.escape(name)}{reason_html}</span> "
             f'<button type="button" class="blacklist-remove-button" data-company="{safe_company}">'
             "Remove</button></li>"
         )
@@ -440,6 +448,7 @@ def render_page_html(
   .blacklist-remove-button {{ font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}
   .blacklist-remove-button:hover {{ border-color: #ef4444; color: #ef4444; }}
+  .blacklist-reason {{ color: var(--muted); font-size: 0.85em; }}
   .mq-list {{ list-style: none; margin: 0; padding: 0; }}
   .mq-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
   .mq-list li:last-child {{ border-bottom: none; }}

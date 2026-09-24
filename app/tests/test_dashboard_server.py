@@ -750,6 +750,15 @@ def test_get_blacklist_lists_added_companies(live_server, tmp_path):
     assert 'data-company="Acme Corp"' in body
 
 
+def test_get_blacklist_shows_the_reason_when_set(live_server, tmp_path):
+    CompanyBlacklist(tmp_path / "blacklist.json").add("Acme Corp", reason="no H1B sponsorship")
+
+    with urllib.request.urlopen(f"{live_server}/api/blacklist") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "no H1B sponsorship" in body
+
+
 def test_get_missing_qualifications_is_empty_by_default(live_server):
     with urllib.request.urlopen(f"{live_server}/api/missing-qualifications") as resp:
         assert resp.headers["Content-Type"].startswith("text/html")

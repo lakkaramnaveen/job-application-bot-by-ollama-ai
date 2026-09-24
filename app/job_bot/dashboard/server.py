@@ -406,6 +406,20 @@ def make_handler(
             silently diverge): blacklisting only stops future applications,
             so a company you're still actively interviewing at deserves a
             heads-up here too, not just from the CLI.
+
+            Deliberately doesn't take a --reason equivalent the way
+            `job-bot blacklist add --reason` does: a client-side prompt()
+            before every click would turn "one click away from a row" into
+            a two-step interaction for what's an optional, low-stakes
+            field, for a button whole point is being the fast path.
+            `add()` already updates a company's reason on a re-add (a
+            second `add` call for an already-blacklisted company overwrites
+            its stored reason the same way it already overwrites its
+            display-name casing), so attaching one after the fact is still
+            just `job-bot blacklist add "<company>" --reason "..."` - the
+            reason still shows up here afterward,
+            via render_blacklist_html's own reason display, next time the
+            Manage Blacklist modal is opened.
             """
             if not self._is_same_origin():
                 self._send_text(403, "Cross-origin request rejected")
@@ -427,14 +441,14 @@ def make_handler(
             self._send_json(200, {"ok": True, "job_id": job_id, "company": company, "warning": warning})
 
         def _handle_blacklist_list(self) -> None:
-            """Every blacklisted company, for the dashboard's Manage
-            Blacklist modal - the read-only counterpart to _handle_blacklist
-            above and _handle_blacklist_remove below, together giving the
-            dashboard the same add/view/remove blacklist actions
-            `job-bot blacklist` already has on the CLI.
+            """Every blacklisted company and its reason (if any), for the
+            dashboard's Manage Blacklist modal - the read-only counterpart
+            to _handle_blacklist above and _handle_blacklist_remove below,
+            together giving the dashboard the same add/view/remove
+            blacklist actions `job-bot blacklist` already has on the CLI.
             """
-            companies = CompanyBlacklist(blacklist_path).list_companies()
-            body = render_blacklist_html(companies).encode("utf-8")
+            entries = CompanyBlacklist(blacklist_path).list_entries()
+            body = render_blacklist_html(entries).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
         def _handle_missing_qualifications(self, tracker: Tracker) -> None:
