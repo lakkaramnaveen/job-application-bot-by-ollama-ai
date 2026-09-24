@@ -207,6 +207,36 @@ def test_loads_a_mix_of_plain_strings_and_reason_objects(tmp_path):
     ]
 
 
+def test_skips_a_list_item_that_is_neither_a_string_nor_an_object(tmp_path):
+    """A hand-edited file with a stray non-string, non-object item (a
+    number, null, a nested list, ...) must not crash loading - skip just
+    that one malformed entry, the same tolerance a plain non-string item
+    already had before {"name", "reason"} objects were a valid shape too.
+    """
+    path = tmp_path / "blacklist.json"
+    path.write_text(json.dumps([123, None, ["nested"], "Acme Corp"]), encoding="utf-8")
+
+    blacklist = CompanyBlacklist(path)
+
+    assert blacklist.list_entries() == [{"name": "Acme Corp", "reason": ""}]
+
+
+def test_skips_an_entry_with_a_blank_or_missing_name(tmp_path):
+    """A whitespace-only string entry, and an object entry with no "name"
+    key (or a blank one) - both must be skipped rather than adding a
+    company with an empty display name.
+    """
+    path = tmp_path / "blacklist.json"
+    path.write_text(
+        json.dumps(["   ", {"reason": "no name given"}, {"name": "  ", "reason": "blank"}, "Acme Corp"]),
+        encoding="utf-8",
+    )
+
+    blacklist = CompanyBlacklist(path)
+
+    assert blacklist.list_entries() == [{"name": "Acme Corp", "reason": ""}]
+
+
 def test_is_blocked_collapses_internal_whitespace_like_gmail_sync_does(tmp_path):
     """blacklist.py and gmail_sync.py both normalize company names to decide
     whether two strings mean the same company - they must agree, or a
