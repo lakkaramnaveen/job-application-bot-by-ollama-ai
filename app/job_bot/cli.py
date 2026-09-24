@@ -1677,6 +1677,35 @@ def _applications_dir_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, True, str(settings.applications_dir))
 
 
+def _audit_log_check(settings: Settings) -> tuple[str, bool, str]:
+    """AuditLogger.__init__() only creates AUDIT_LOG_PATH's parent
+    directory (mkdir) - it never opens or writes the file itself, so an
+    unwritable directory (permissions, a full disk, audit_log_path
+    colliding with an existing directory of the same name) wasn't caught
+    until the very first real action `job-bot run` took tried to log it,
+    deep into a run, rather than upfront here the way
+    _applications_dir_check already catches the equivalent problem for
+    APPLICATIONS_DIR. Not optional the way the Gmail checks are: every
+    apply/skip decision cmd_run makes is meant to go through here (see
+    safety/audit_log.py's own module docstring), so a silently-unwritable
+    audit log is a real gap in the safety trail, not a missing nice-to-have.
+
+    Opens the file in append mode and immediately closes it without
+    writing anything - proves it's writable (and, on a fresh install,
+    creates the empty file the same way the very first real log() call
+    would) without adding a stray probe entry to an otherwise meaningful
+    audit trail.
+    """
+    label = "Audit log writable"
+    try:
+        settings.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with settings.audit_log_path.open("a", encoding="utf-8"):
+            pass
+    except OSError as e:
+        return (label, False, f"{settings.audit_log_path}: {e}")
+    return (label, True, str(settings.audit_log_path))
+
+
 def _tracker_db_check(settings: Settings) -> tuple[str, bool, str]:
     """Every other command opens the tracker eagerly (Tracker.__init__()'s
     _init_db() runs a schema migration on every construction), so a
@@ -1747,6 +1776,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         _faq_check(settings),
         _answer_gaps_check(settings),
         _applications_dir_check(settings),
+        _audit_log_check(settings),
         _tracker_db_check(settings),
     ]
 
