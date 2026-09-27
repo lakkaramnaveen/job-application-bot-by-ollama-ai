@@ -646,9 +646,11 @@ seen, and lets you:
 - **View unanswered required questions** in a modal, most-frequently-seen
   first - the dashboard counterpart to `job-bot review-answers`, so you can
   see how many are piling up (and which ones) without a separate terminal.
-  Actually answering one still needs `job-bot review-answers` itself - this
-  view is read-only, the same way the missing-qualifications and audit-log
-  modals are.
+  Actually answering one still needs `job-bot review-answers` itself, but
+  **dismiss** one with a click - the same permanent-discard effect
+  `job-bot review-answers --dismiss` has from the command line, for a
+  gap that's noise (a garbled/duplicate question, or one not worth
+  caching an FAQ answer for) rather than one you intend to answer.
 
 The dashboard has no login (it's a local tool over your own data), so every
 state-changing endpoint (the inline status update, blacklisting a company,

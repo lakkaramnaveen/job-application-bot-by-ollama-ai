@@ -473,6 +473,24 @@ def test_render_answer_gaps_html_escapes_the_question_to_prevent_xss():
     assert "&lt;script&gt;" in html
 
 
+def test_render_answer_gaps_html_renders_a_dismiss_button_per_gap():
+    gaps = {
+        "Willing to relocate?": {"count": 1, "example_title": "X", "example_company": "Y"},
+        "Sponsorship required?": {"count": 1, "example_title": "X", "example_company": "Y"},
+    }
+    html = render_answer_gaps_html(gaps)
+    assert html.count("gap-dismiss-button") == 2
+    assert 'data-question="Willing to relocate?"' in html
+    assert 'data-question="Sponsorship required?"' in html
+
+
+def test_render_answer_gaps_html_escapes_the_dismiss_buttons_data_question_attribute():
+    gaps = {'"><script>alert(1)</script>': {"count": 1, "example_title": "X", "example_company": "Y"}}
+    html = render_answer_gaps_html(gaps)
+    assert "<script>alert(1)</script>" not in html
+    assert 'data-question="&quot;&gt;&lt;script&gt;' in html
+
+
 def test_render_page_html_includes_the_answer_gaps_button_and_dialog():
     html = render_page_html([make_job()])
     assert 'id="showAnswerGaps"' in html

@@ -326,19 +326,22 @@ def render_missing_qualifications_html(breakdown: dict[str, int]) -> str:
 def render_answer_gaps_html(gaps: dict[str, dict[str, Any]]) -> str:
     """Unanswered required-question gaps (AnswerGapStore.list_unanswered())
     as an HTML fragment, for the dashboard's Unanswered Questions modal -
-    the dashboard counterpart to `job-bot review-answers`, read-only the
-    same way render_missing_qualifications_html/render_blacklist_html are:
-    actually answering one still needs review-answers' interactive
-    input() prompt, which a passive dashboard page can't do, but seeing
-    how many are piling up (and which ones) previously needed a separate
-    terminal even just to check - the same gap `job-bot report
-    --by-missing-qualifications` closed for scorer-flagged gaps, here for
-    the answer-side ones. Sorted most-frequently-seen first, ties broken
-    alphabetically for a stable order - same sort as `job-bot
-    review-answers` uses (see cmd_review_answers), plus the alphabetical
-    tiebreak render_missing_qualifications_html already uses for the same
-    reason: a deterministic render order rather than whatever order the
-    underlying dict happens to iterate in.
+    the dashboard counterpart to `job-bot review-answers`, mostly
+    read-only the same way render_missing_qualifications_html is:
+    actually *answering* one still needs review-answers' interactive
+    input() prompt, which a passive dashboard page can't do. But
+    *dismissing* one (job-bot review-answers --dismiss's permanent-discard
+    escape hatch for a gap that's noise - a garbled/duplicate question, or
+    one not worth caching an FAQ answer for) needs no such prompt, so each
+    gap gets a Dismiss button the same one-click way render_blacklist_html
+    already gives each blacklist entry a Remove button, wired to
+    _handle_answer_gaps_dismiss()/POST /api/answer-gaps/dismiss. Sorted
+    most-frequently-seen first, ties broken alphabetically for a stable
+    order - same sort as `job-bot review-answers` uses (see
+    cmd_review_answers), plus the alphabetical tiebreak
+    render_missing_qualifications_html already uses for the same reason: a
+    deterministic render order rather than whatever order the underlying
+    dict happens to iterate in.
     """
     if not gaps:
         return '<p class="empty">No unanswered required questions recorded.</p>'
@@ -347,9 +350,12 @@ def render_answer_gaps_html(gaps: dict[str, dict[str, Any]]) -> str:
     for question, info in ordered:
         count = info.get("count", 1)
         example = f"{info.get('example_title', '')} at {info.get('example_company', '')}"
+        safe_question = html.escape(question, quote=True)
         items.append(
-            f'<li><span class="gap-count">{count}</span> {html.escape(question)} '
-            f'<span class="gap-example">e.g. {html.escape(example)}</span></li>'
+            f'<li><span class="gap-text"><span class="gap-count">{count}</span> {html.escape(question)} '
+            f'<span class="gap-example">e.g. {html.escape(example)}</span></span> '
+            f'<button type="button" class="gap-dismiss-button" data-question="{safe_question}">'
+            "Dismiss</button></li>"
         )
     return f'<ul class="gap-list">{"".join(items)}</ul>'
 
@@ -511,10 +517,14 @@ def render_page_html(
   .mq-list li:last-child {{ border-bottom: none; }}
   .mq-count {{ display: inline-block; min-width: 1.75rem; font-weight: 600; color: var(--muted); }}
   .gap-list {{ list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }}
-  .gap-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
+  .gap-list li {{ display: flex; justify-content: space-between; align-items: flex-start;
+              gap: 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
   .gap-list li:last-child {{ border-bottom: none; }}
   .gap-count {{ display: inline-block; min-width: 1.75rem; font-weight: 600; color: var(--muted); }}
   .gap-example {{ display: block; color: var(--muted); font-size: 0.85em; }}
+  .gap-dismiss-button {{ flex-shrink: 0; font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px;
+              border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}
+  .gap-dismiss-button:hover {{ border-color: #ef4444; color: #ef4444; }}
   .audit-log-list {{ list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }}
   .audit-log-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }}
   .audit-log-list li:last-child {{ border-bottom: none; }}
@@ -872,18 +882,37 @@ document.getElementById('missingQualificationsClose').addEventListener(
 );
 
 const answerGapsDialog = document.getElementById('answerGapsDialog');
-document.getElementById('showAnswerGaps').addEventListener('click', async () => {{
+async function loadAnswerGaps() {{
   const content = document.getElementById('answerGapsContent');
   content.innerHTML = 'Loading...';
-  answerGapsDialog.showModal();
   try {{
     const res = await fetch('/api/answer-gaps');
     content.innerHTML = res.ok ? await res.text() : 'Could not load unanswered questions.';
   }} catch (err) {{
     content.innerHTML = 'Could not load unanswered questions (network error).';
   }}
+}}
+document.getElementById('showAnswerGaps').addEventListener('click', () => {{
+  answerGapsDialog.showModal();
+  loadAnswerGaps();
 }});
 document.getElementById('answerGapsClose').addEventListener('click', () => answerGapsDialog.close());
+document.getElementById('answerGapsContent').addEventListener('click', async (e) => {{
+  if (!e.target.classList.contains('gap-dismiss-button')) return;
+  const question = e.target.dataset.question;
+  try {{
+    const res = await fetch('/api/answer-gaps/dismiss', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ question }}),
+    }});
+    if (!res.ok) alert('Could not dismiss: ' + (await res.text()));
+  }} catch (err) {{
+    alert('Could not dismiss (network error).');
+  }} finally {{
+    loadAnswerGaps();
+  }}
+}});
 
 const auditLogDialog = document.getElementById('auditLogDialog');
 const auditLogSearch = document.getElementById('auditLogSearch');

@@ -2,14 +2,15 @@
 localhost only (never 0.0.0.0) since it serves your application data with
 no access control. See render.py for the HTML/escaping logic this wraps.
 
-The dashboard also accepts four state-changing requests: POST status
-update, POST blacklist (add), POST blacklist/remove, and POST note. Because
-the server has no auth, any page open in the same browser could in
-principle try to trigger one (a "drive-by localhost" request) -
-_is_same_origin (all four) plus the browser's own CORS preflight (triggered
-by the JSON Content-Type each of them requires) are what stand in for auth
-here. See _is_same_origin, _handle_status_update, _handle_blacklist,
-_handle_blacklist_remove, and _handle_note_set below.
+The dashboard also accepts five state-changing requests: POST status
+update, POST blacklist (add), POST blacklist/remove, POST note, and POST
+answer-gaps/dismiss. Because the server has no auth, any page open in the
+same browser could in principle try to trigger one (a "drive-by localhost"
+request) - _is_same_origin (all five) plus the browser's own CORS
+preflight (triggered by the JSON Content-Type each of them requires) are
+what stand in for auth here. See _is_same_origin, _handle_status_update,
+_handle_blacklist, _handle_blacklist_remove, _handle_note_set, and
+_handle_answer_gaps_dismiss below.
 """
 
 import io
@@ -206,6 +207,8 @@ def make_handler(
                 self._handle_note_set(Tracker(db_path), job_id)
             elif urlparse(self.path).path == "/api/blacklist/remove":
                 self._handle_blacklist_remove()
+            elif urlparse(self.path).path == "/api/answer-gaps/dismiss":
+                self._handle_answer_gaps_dismiss()
             else:
                 self._send_text(404, "Not found")
 
@@ -543,6 +546,41 @@ def make_handler(
 
             removed = CompanyBlacklist(blacklist_path).remove(company)
             self._send_json(200, {"ok": True, "company": company, "removed": removed})
+
+        def _handle_answer_gaps_dismiss(self) -> None:
+            """The dashboard counterpart to `job-bot review-answers
+            --dismiss` - same shape (same-origin check, Content-Type/body-
+            size validation, JSON body) as _handle_blacklist_remove above,
+            for the Dismiss button render_answer_gaps_html() gives each
+            gap.
+            """
+            if not self._is_same_origin():
+                self._send_text(403, "Cross-origin request rejected")
+                return
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                self._send_text(400, "Content-Type must be application/json")
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._send_text(400, "Invalid Content-Length header")
+                return
+            if length <= 0 or length > MAX_BODY_BYTES:
+                self._send_text(400, "Request body missing or too large")
+                return
+            raw_body = self.rfile.read(length)
+
+            try:
+                payload = json.loads(raw_body)
+                question = payload["question"]
+                if not isinstance(question, str):
+                    raise ValueError("question must be a string")
+            except (json.JSONDecodeError, KeyError, ValueError):
+                self._send_text(400, "Body must be JSON: {\"question\": \"<question>\"}")
+                return
+
+            dismissed = AnswerGapStore(answer_gaps_path).resolve(question)
+            self._send_json(200, {"ok": True, "question": question, "dismissed": dismissed})
 
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             pass  # quiet by default; the CLI prints the one line that matters

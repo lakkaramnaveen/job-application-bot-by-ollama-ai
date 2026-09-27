@@ -821,6 +821,63 @@ def test_get_answer_gaps_shows_the_most_frequently_seen_question_first(live_serv
     assert "Backend Engineer at Acme" in body
 
 
+def test_post_answer_gaps_dismiss_removes_the_gap(live_server, tmp_path):
+    store = AnswerGapStore(tmp_path / "answer_gaps.json")
+    store.record("Willing to relocate?", job_id="1", company="Acme", title="X")
+
+    resp = _post_json(f"{live_server}/api/answer-gaps/dismiss", {"question": "Willing to relocate?"})
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "question": "Willing to relocate?", "dismissed": True}
+    assert AnswerGapStore(tmp_path / "answer_gaps.json").list_unanswered() == {}
+
+
+def test_post_answer_gaps_dismiss_of_absent_question_reports_not_dismissed(live_server):
+    resp = _post_json(f"{live_server}/api/answer-gaps/dismiss", {"question": "Never recorded"})
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "question": "Never recorded", "dismissed": False}
+
+
+def test_post_answer_gaps_dismiss_rejects_a_cross_origin_request(live_server, tmp_path):
+    store = AnswerGapStore(tmp_path / "answer_gaps.json")
+    store.record("Willing to relocate?", job_id="1", company="Acme", title="X")
+
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(
+            f"{live_server}/api/answer-gaps/dismiss", {"question": "Willing to relocate?"}, same_origin=False
+        )
+    assert exc_info.value.code == 403
+    assert "Willing to relocate?" in AnswerGapStore(tmp_path / "answer_gaps.json").list_unanswered()
+
+
+def test_post_answer_gaps_dismiss_rejects_a_non_string_question_value(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/answer-gaps/dismiss", {"question": 123})
+    assert exc_info.value.code == 400
+
+
+def test_post_answer_gaps_dismiss_rejects_malformed_json_body(live_server):
+    req = urllib.request.Request(
+        f"{live_server}/api/answer-gaps/dismiss",
+        data=b"{not valid json",
+        method="POST",
+        headers={"Content-Type": "application/json", "Origin": live_server},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 400
+
+
+def test_post_answer_gaps_dismiss_rejects_oversized_body(live_server):
+    huge_payload = {"question": "x" * 10_000}
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/answer-gaps/dismiss", huge_payload)
+    assert exc_info.value.code == 400
+
+
 def test_get_audit_log_is_empty_by_default(live_server):
     with urllib.request.urlopen(f"{live_server}/api/audit-log") as resp:
         assert resp.headers["Content-Type"].startswith("text/html")
