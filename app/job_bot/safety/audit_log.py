@@ -68,6 +68,12 @@ class AuditLogger:
         entry (action name and every detail value) serialized to text, so
         a company name, job_id, or error message anywhere in an entry can
         be found without knowing which action logged it.
+
+        Every returned entry's "details" is guaranteed to be a real dict,
+        never missing, null, or some other JSON type a hand-edited or
+        externally-authored line might carry - normalized to {} otherwise -
+        so every caller (cmd_audit_log, render_audit_log_html) can safely
+        call .items() on it without its own defensive check.
         """
         try:
             raw = self._path.read_text(encoding="utf-8")
@@ -87,6 +93,21 @@ class AuditLogger:
                 continue
             if not isinstance(entry, dict):
                 continue
+            if not isinstance(entry.get("details"), dict):
+                # log() always writes "details" as a dict (the redacted
+                # **details kwargs) - but this reads back whatever's
+                # actually on disk, including a hand-edited or externally-
+                # authored line where "details" is null, a string, or
+                # anything else JSON allows. Normalizing it here means
+                # every caller (cmd_audit_log's text/JSON output,
+                # render_audit_log_html) can trust entry["details"] is
+                # always a real dict and safely call .items() on it,
+                # without each needing its own defensive check - the same
+                # single-source-of-truth reasoning Tracker.missing_
+                # qualifications_counts() already gets for being shared
+                # by cli.py and dashboard/server.py instead of each
+                # reimplementing the same logic.
+                entry["details"] = {}
             if action is not None and entry.get("action") != action:
                 continue
             if search is not None and search.lower() not in json.dumps(entry, default=str).lower():

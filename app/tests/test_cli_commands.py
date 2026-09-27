@@ -3068,6 +3068,24 @@ def test_audit_log_format_json_on_empty_log_is_still_valid_json(tmp_path, capsys
     assert json.loads(capsys.readouterr().out) == []
 
 
+def test_audit_log_does_not_crash_on_an_entry_with_a_null_details_field(tmp_path, capsys):
+    """Real bug this guards against: a hand-edited or externally-authored
+    audit.log line with "details": null (valid JSON, a valid entry -
+    AuditLogger.read_entries() accepts it) previously crashed this
+    command's text output with a raw AttributeError from calling .items()
+    directly on None.
+    """
+    settings = make_settings(tmp_path)
+    settings.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.audit_log_path.write_text(
+        '{"timestamp": "t", "action": "manual_note", "details": null}\n', encoding="utf-8"
+    )
+
+    cmd_audit_log(settings, audit_log_args())  # must not raise
+
+    assert "manual_note" in capsys.readouterr().out
+
+
 # --- main() ---
 
 

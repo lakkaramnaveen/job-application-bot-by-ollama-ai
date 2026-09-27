@@ -88,6 +88,37 @@ def test_read_entries_skips_a_corrupted_line_but_keeps_the_valid_ones(tmp_path):
     assert [e["details"]["job_id"] for e in entries] == ["2", "1"]
 
 
+def test_read_entries_normalizes_a_null_details_field(tmp_path):
+    """Real bug this guards against: log() always writes "details" as a
+    dict, but a hand-edited or externally-authored line could have
+    "details": null (valid JSON, a valid top-level entry object) - both
+    cmd_audit_log's text output and render_audit_log_html previously
+    called .items() directly on whatever entry["details"] came back,
+    crashing with a raw AttributeError on this exact shape.
+    """
+    path = tmp_path / "audit.log"
+    path.write_text('{"timestamp": "t", "action": "manual_note", "details": null}\n', encoding="utf-8")
+    logger = AuditLogger(path)
+
+    entries = logger.read_entries()
+
+    assert entries == [{"timestamp": "t", "action": "manual_note", "details": {}}]
+
+
+def test_read_entries_normalizes_a_non_dict_details_field(tmp_path):
+    """Same reasoning as the null-details case above, for a "details" value
+    that's valid JSON but not an object at all (a string, here) - also not
+    something .items() can be called on directly.
+    """
+    path = tmp_path / "audit.log"
+    path.write_text('{"timestamp": "t", "action": "manual_note", "details": "oops"}\n', encoding="utf-8")
+    logger = AuditLogger(path)
+
+    entries = logger.read_entries()
+
+    assert entries == [{"timestamp": "t", "action": "manual_note", "details": {}}]
+
+
 def test_read_entries_returns_empty_for_a_non_utf8_file(tmp_path):
     """Same graceful-degrade reasoning the other JSON stores already use
     for a non-UTF-8 file - a corrupted audit.log must not crash `job-bot
