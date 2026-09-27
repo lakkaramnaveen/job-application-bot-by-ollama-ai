@@ -311,8 +311,8 @@ def _print_cycle_summary(applied: int, failed: int, rate_limiter: RateLimiter, s
     print(f"Done. Applied to {applied} job(s). {rate_limiter.remaining_today()} remaining today.")
     if failed:
         print(
-            f"{failed} posting(s) could not be completed - see "
-            f"{settings.failed_applications_log_path} for what happened and why."
+            f"{failed} posting(s) could not be completed - run `job-bot audit-log --failures` "
+            f"(or see {settings.failed_applications_log_path} directly) for what happened and why."
         )
 
 
@@ -1104,14 +1104,25 @@ def cmd_audit_log(settings: Settings, args: argparse.Namespace) -> None:
     `--company` - e.g. `--action applied`, `--action skip_blacklisted` (see
     AuditLogger.read_entries()'s own docstring for where to find the full
     action vocabulary).
+
+    `--failures` points this at FAILED_APPLICATIONS_LOG_PATH instead of
+    AUDIT_LOG_PATH - the very file `_print_cycle_summary()` below tells the
+    user to go read by hand after a `job-bot run` that couldn't finish some
+    postings (confirmed live: this exact message is what a real user saw).
+    It's the same AuditLogger-backed JSONL shape (search_error/prep_error/
+    apply_error entries - see cmd_run's own failure_log.log(...) call
+    sites), so every other flag here works identically against it; the
+    only difference is which file gets opened.
     """
-    audit = AuditLogger(settings.audit_log_path)
+    path = settings.failed_applications_log_path if args.failures else settings.audit_log_path
+    audit = AuditLogger(path)
     entries = audit.read_entries(search=args.search, action=args.action)
+    kind = "failed-application entries" if args.failures else "audit log entries"
     if args.format == "json":
         print(json.dumps(entries, indent=2))
         return
     if not entries:
-        print(_no_history_message("audit log entries", args.search, args.action, exact_label="action"))
+        print(_no_history_message(kind, args.search, args.action, exact_label="action"))
         return
     for entry in entries:
         details = ", ".join(f"{k}={v}" for k, v in entry.get("details", {}).items())
@@ -2146,6 +2157,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Only print entries with this exact action (e.g. applied, skip_blacklisted, "
         "gmail_sync_update).",
+    )
+    audit_log_p.add_argument(
+        "--failures",
+        action="store_true",
+        help="Read FAILED_APPLICATIONS_LOG_PATH instead of AUDIT_LOG_PATH - the postings a run "
+        "couldn't finish and why, the same file a failed run tells you to check by hand.",
     )
     audit_log_p.add_argument(
         "--format",

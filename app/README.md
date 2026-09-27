@@ -552,7 +552,14 @@ job-bot audit-log                        # every logged action, most recent firs
 job-bot audit-log --search "Acme Corp"   # only entries whose action or details mention "Acme Corp"
 job-bot audit-log --action applied       # only entries with this exact action (e.g. applied, skip_blacklisted, scored)
 job-bot audit-log --format json          # same entries as one JSON array instead
+job-bot audit-log --failures             # reads FAILED_APPLICATIONS_LOG_PATH instead - the postings a run couldn't finish and why
 ```
+
+`--failures` points every flag above at `data/failed_applications.log`
+instead - the same file a `job-bot run` that couldn't finish some
+postings tells you to check by hand ("N posting(s) could not be
+completed..."), now readable the same way as the main audit log rather
+than only by opening the raw JSONL file.
 
 See `job_bot/safety/audit_log.py`'s module docstring for exactly what is
 and isn't recorded (metadata only - never full resume text or raw LLM

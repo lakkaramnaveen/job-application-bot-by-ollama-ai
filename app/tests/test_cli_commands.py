@@ -143,7 +143,7 @@ def resume_history_args(**overrides) -> argparse.Namespace:
 
 
 def audit_log_args(**overrides) -> argparse.Namespace:
-    defaults = dict(search=None, action=None, format="text")
+    defaults = dict(search=None, action=None, failures=False, format="text")
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -3084,6 +3084,43 @@ def test_audit_log_does_not_crash_on_an_entry_with_a_null_details_field(tmp_path
     cmd_audit_log(settings, audit_log_args())  # must not raise
 
     assert "manual_note" in capsys.readouterr().out
+
+
+def test_audit_log_failures_reads_the_failed_applications_log_instead(tmp_path, capsys):
+    """--failures points this at FAILED_APPLICATIONS_LOG_PATH instead of
+    AUDIT_LOG_PATH - the exact file `_print_cycle_summary` tells a user to
+    check by hand after a run that couldn't finish some postings. An entry
+    only in one of the two files must never show up when reading the other.
+    """
+    settings = make_settings(tmp_path)
+    AuditLogger(settings.audit_log_path).log("applied", job_id="1", company="Acme")
+    AuditLogger(settings.failed_applications_log_path).log("prep_error", job_id="2", error="boom")
+
+    cmd_audit_log(settings, audit_log_args(failures=True))
+
+    out = capsys.readouterr().out
+    assert "prep_error" in out
+    assert "applied" not in out
+
+
+def test_audit_log_failures_says_so_when_nothing_recorded(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_audit_log(settings, audit_log_args(failures=True))
+
+    assert "No failed-application entries recorded yet." in capsys.readouterr().out
+
+
+def test_audit_log_failures_supports_search_and_format_json(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    AuditLogger(settings.failed_applications_log_path).log("prep_error", job_id="1", error="Acme Corp boom")
+    AuditLogger(settings.failed_applications_log_path).log("apply_error", job_id="2", error="unrelated")
+
+    cmd_audit_log(settings, audit_log_args(failures=True, search="acme", format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload) == 1
+    assert payload[0]["action"] == "prep_error"
 
 
 # --- main() ---
