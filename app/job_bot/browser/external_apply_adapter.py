@@ -24,6 +24,7 @@ import time
 from collections.abc import Callable
 
 from playwright.sync_api import Locator, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from job_bot.browser.base_adapter import (
     NON_RESUME_FILE_LABEL_MARKERS,
@@ -273,20 +274,37 @@ class ExternalApplyAdapter:
 
     @staticmethod
     def _label_for(el: Locator) -> str:
-        el_id = el.get_attribute("id")
-        if el_id:
-            label = el.page.locator(f'label[for="{el_id}"]')
-            if label.count() > 0:
-                return label.first.inner_text().strip()
-        wrapping_label = el.locator("xpath=ancestor::label[1]")
-        if wrapping_label.count() > 0:
-            return wrapping_label.first.inner_text().strip()
-        aria = el.get_attribute("aria-label")
-        if aria:
-            return aria.strip()
-        placeholder = el.get_attribute("placeholder")
-        if placeholder:
-            return placeholder.strip()
+        """Same defensive shape as linkedin_adapter.py's own _label_for():
+        a timeout anywhere in this lookup (e.g. a field mid-transition on
+        an animated multi-step form, or one that goes stale between the
+        .count() check and the .inner_text() call right after) previously
+        propagated straight out of here as a raw PlaywrightTimeoutError -
+        uncaught not just in this method but all the way up through
+        _fill_visible_fields()/_upload_resume_if_requested(), aborting the
+        whole fill_and_submit() call (and with it every field this hadn't
+        gotten to yet) over what should only ever cost this one field its
+        label. Every third-party site this adapter fills is explicitly
+        untuned-for DOM (unlike linkedin_adapter.py's own well-exercised
+        LinkedIn markup - see this class's docstring), so this failure mode
+        is if anything more likely to occur here, not less.
+        """
+        try:
+            el_id = el.get_attribute("id")
+            if el_id:
+                label = el.page.locator(f'label[for="{el_id}"]')
+                if label.count() > 0:
+                    return label.first.inner_text().strip()
+            wrapping_label = el.locator("xpath=ancestor::label[1]")
+            if wrapping_label.count() > 0:
+                return wrapping_label.first.inner_text().strip()
+            aria = el.get_attribute("aria-label")
+            if aria:
+                return aria.strip()
+            placeholder = el.get_attribute("placeholder")
+            if placeholder:
+                return placeholder.strip()
+        except PlaywrightTimeoutError:
+            pass
         return ""
 
     @staticmethod

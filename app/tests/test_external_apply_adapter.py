@@ -8,7 +8,8 @@ never cross these specific lines regardless of what a form asks for.
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Locator, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from job_bot.browser.external_apply_adapter import (
     AccountCreationRequired,
@@ -27,6 +28,7 @@ RADIO_DEFAULT_CHECKED_FIXTURE = FIXTURES / "external_apply_form_radio_group_defa
 RADIO_UNANSWERED_FIXTURE = FIXTURES / "external_apply_form_radio_group_unanswered.html"
 NON_RESUME_FILE_FIELD_FIXTURE = FIXTURES / "external_apply_form_non_resume_file_field.html"
 MULTIPLE_FILE_FIELDS_FIXTURE = FIXTURES / "external_apply_form_multiple_file_fields.html"
+OPTIONAL_TEXT_FIELD_FIXTURE = FIXTURES / "external_apply_form_optional_text_field.html"
 RESUME_FIXTURE_PATH = FIXTURES / "sample_resume.txt"
 
 
@@ -67,6 +69,56 @@ def test_submits_for_real_when_not_a_dry_run(playwright_page):
     )
 
     assert submitted is True
+
+
+def test_label_lookup_timeout_leaves_the_field_unlabeled_instead_of_aborting_the_whole_form(
+    playwright_page, monkeypatch
+):
+    """Real gap: a label lookup timing out anywhere in _label_for() (e.g. a
+    field mid-transition on an animated multi-step form, or one that goes
+    stale between the .count() check and the .inner_text() call right
+    after) previously propagated straight out as a raw
+    PlaywrightTimeoutError - uncaught not just in _label_for() but all the
+    way up through _fill_visible_fields()/fill_and_submit(), aborting the
+    whole application over what should only ever cost one field its
+    label. linkedin_adapter.py's own _label_for() already catches this and
+    falls back to "" instead of crashing; this adapter's copy didn't -
+    despite every third-party site it fills being explicitly untuned-for
+    DOM (see this class's own docstring), making this failure mode if
+    anything more likely to occur here, not less.
+
+    Uses an optional (non-required) field so a successful, unlabeled fill
+    is what's under test here, not the separate required-field-missing
+    failure path _first_unanswered_required_field_label() already covers
+    elsewhere - that path already raises a clear, specific RuntimeError
+    once a field is genuinely unlabeled, which is the intended behavior,
+    not the bug.
+    """
+    playwright_page.goto(f"file://{OPTIONAL_TEXT_FIELD_FIXTURE}")
+    real_get_attribute = Locator.get_attribute
+
+    def flaky_get_attribute(self, name, **kwargs):
+        value = real_get_attribute(self, name, **kwargs)
+        if name == "id" and value == "nickname":
+            raise PlaywrightTimeoutError("forced timeout for nickname id lookup")
+        return value
+
+    monkeypatch.setattr(Locator, "get_attribute", flaky_get_attribute)
+    adapter = ExternalApplyAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        answer_question=lambda label: "Jane Doe" if "name" in label.casefold() else "",
+        resume_path=None,
+        cover_letter_text=None,
+        dry_run=True,
+    )  # must not raise
+
+    assert submitted is False
+    # The timed-out lookup was treated as unlabeled ("") - answer_question
+    # is never even called for it (see _fill_visible_fields' own
+    # `answer_question(label) if label else ""`) - so the field is left
+    # blank rather than filled with "Jane Doe".
+    assert playwright_page.locator("#nickname").input_value() == ""
 
 
 def test_selects_the_best_matching_option(playwright_page):
