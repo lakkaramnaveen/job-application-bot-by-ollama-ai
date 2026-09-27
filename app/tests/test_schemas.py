@@ -299,3 +299,25 @@ def test_email_classification_normalizes_a_percent_scale_confidence():
 def test_email_classification_rejects_a_negative_confidence():
     with pytest.raises(ValidationError):
         EmailClassification(is_job_related=True, category="offer", confidence=-0.1)
+
+
+def test_email_classification_company_guess_rejects_leaked_reasoning():
+    """company_guess is real, user-facing output: gmail_sync.py logs it
+    verbatim into a "gmail_sync_unmatched" audit-log entry whenever it
+    can't tie the guess to a tracked job, and that entry is directly
+    readable via `job-bot audit-log`/the dashboard's audit view - the same
+    "became worth guarding once it became real output" reasoning already
+    covers JobMatchScore.reasoning/.eligibility_note/.missing_qualifications.
+    """
+    contaminated = "Let me check which company this email is from before guessing."
+    with pytest.raises(ValidationError, match="leaked reasoning"):
+        EmailClassification(
+            is_job_related=True, category="interview_invite", company_guess=contaminated, confidence=0.9
+        )
+
+
+def test_email_classification_company_guess_accepts_a_genuine_name():
+    classification = EmailClassification(
+        is_job_related=True, category="interview_invite", company_guess="Acme Corp", confidence=0.9
+    )
+    assert classification.company_guess == "Acme Corp"

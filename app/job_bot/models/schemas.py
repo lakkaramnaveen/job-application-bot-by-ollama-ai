@@ -276,4 +276,21 @@ class EmailClassification(BaseModel):
     role_guess: str = Field(default="", description="Job title this email appears to reference, if any")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence in is_job_related and category")
 
+    # company_guess is real, user-facing output now, the same way
+    # JobMatchScore.reasoning/.eligibility_note/.missing_qualifications
+    # became worth this guard once they stopped being purely internal (see
+    # those fields' own comment above): gmail_sync.py logs it verbatim into
+    # a "gmail_sync_unmatched" audit-log entry whenever it can't tie the
+    # guess to exactly one tracked job (integrations/gmail_sync.py's
+    # sync_gmail()), and that entry is directly readable via `job-bot
+    # audit-log`/the dashboard's audit view - so leaked reasoning here would
+    # show up in front of the user exactly like it would in any of those
+    # other fields. role_guess, by contrast, is set but never read anywhere
+    # in gmail_sync.py's matching logic and never logged or displayed - it
+    # stays unguarded for the same reason those fields started out
+    # unguarded too, until it becomes real output.
+    _reject_leaked_reasoning_company_guess = field_validator("company_guess", mode="before")(
+        _reject_leaked_reasoning
+    )
+
     _normalize_confidence = field_validator("confidence", mode="before")(_normalize_percent_as_fraction)

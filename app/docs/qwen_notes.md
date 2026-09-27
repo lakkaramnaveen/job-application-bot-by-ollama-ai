@@ -14,7 +14,8 @@ names the fix commit and the file(s) it lives in.
 
 **Symptom:** a structured-output field (`ApplicationAnswer.answer`,
 `CoverLetter.body`, `TailoredResume.summary`/`.bullet_points`/
-`.highlighted_skills`, `JobMatchScore.reasoning`/`.eligibility_note`)
+`.highlighted_skills`, `JobMatchScore.reasoning`/`.eligibility_note`,
+`EmailClassification.company_guess`)
 contains the model's own
 chain-of-thought instead of (or in addition to) the finished content -
 phrasing like "I need to answer the question about X...", "Let me
@@ -45,17 +46,23 @@ letter body.
 - A `field_validator` on `ApplicationAnswer.answer`, `CoverLetter.body`,
   all three `TailoredResume` free-text fields (`summary`, `bullet_points`,
   `highlighted_skills` - the latter two per-list-item, via a shared
-  `_reject_leaked_reasoning_in_list` wrapper), and `JobMatchScore.reasoning`/
-  `.eligibility_note` (models/schemas.py) raises on a shared list of this
+  `_reject_leaked_reasoning_in_list` wrapper), `JobMatchScore.reasoning`/
+  `.eligibility_note`, and `EmailClassification.company_guess`
+  (models/schemas.py) raises on a shared list of this
   model's own consistent reasoning-trace phrasing. The raise routes back
   through `generate_structured()`'s existing retry-on-`ValidationError`
   loop (`ollama_provider.py`), so the model gets another attempt instead of
-  the leak silently going through. `JobMatchScore.reasoning`/
-  `.eligibility_note` only got this once they became real, user-facing
-  output (`job-bot status`/`--format json`/the dashboard's score tooltip -
-  see `568ccd5`/`ef9d6d3`) - they were pure internal/discarded values
-  before that, not worth guarding since nothing ever showed them to
-  anyone.
+  the leak silently going through. Each of these three groups only got
+  this once it became real, user-facing output - `JobMatchScore.reasoning`/
+  `.eligibility_note` via `job-bot status`/`--format json`/the dashboard's
+  score tooltip (see `568ccd5`/`ef9d6d3`), `EmailClassification.
+  company_guess` via the "gmail_sync_unmatched" entry `gmail_sync.py` logs
+  whenever it can't tie a guess to a tracked job, itself readable via
+  `job-bot audit-log`/the dashboard's audit view - they were pure
+  internal/discarded values before that, not worth guarding since nothing
+  ever showed them to anyone. `EmailClassification.role_guess` is still in
+  that pre-output state (set but never read, logged, or displayed
+  anywhere) and stays unguarded for the same reason, until it isn't.
 
 **If you see this again:** a new leak phrasing wasn't in the marker list.
 Add it there (the list is deliberately named/shared across every guarded
