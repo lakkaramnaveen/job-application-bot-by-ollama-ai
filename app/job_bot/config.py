@@ -187,6 +187,19 @@ class Settings(BaseSettings):
                 f"DAILY_APPLICATION_CAP={self.daily_application_cap} exceeds the hard "
                 f"ceiling of {HARD_DAILY_APPLICATION_CEILING}; the ceiling will be used instead."
             )
+        elif self.daily_application_cap <= 0:
+            # RateLimiter.remaining_today() clamps a non-positive cap to 0
+            # remaining, and record_application() then raises DailyCapReached
+            # on the very first job - not a crash, but a `job-bot run` that
+            # opens a real browser window, searches, scores, and then applies
+            # to nothing at all, for a reason this function's own docstring
+            # says it exists to catch before that browser window ever opens:
+            # a misconfigured/mistyped DAILY_APPLICATION_CAP (0, or a
+            # negative value) rather than one deliberately set too high.
+            warnings.append(
+                f"DAILY_APPLICATION_CAP={self.daily_application_cap} means job-bot run will "
+                "never apply to anything today - set it above 0 in .env if that's not intended."
+            )
 
         if errors:
             raise SettingsError("\n".join(f"- {e}" for e in errors))

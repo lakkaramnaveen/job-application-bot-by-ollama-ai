@@ -78,6 +78,41 @@ def test_validate_ready_warns_when_cap_exceeds_ceiling(tmp_path):
     assert any("exceeds the hard ceiling" in w for w in warnings)
 
 
+def test_validate_ready_warns_when_cap_is_zero(tmp_path):
+    """Real gap this guards against: a DAILY_APPLICATION_CAP of 0 (a typo,
+    or a misunderstanding of what "no limit" would look like) means
+    `job-bot run` opens a real browser window, searches, and scores, but
+    then applies to nothing at all - RateLimiter.remaining_today() clamps
+    to 0 and record_application() raises DailyCapReached on the very
+    first job. validate_ready()'s own docstring says its purpose is
+    exactly this: catching a misconfiguration before that browser window
+    ever opens, not partway through a run.
+    """
+    resume = tmp_path / "resume.txt"
+    resume.write_text("Jane Doe\nSoftware Engineer with 5 years of experience.")
+    settings = make_settings(tmp_path, resume_path=resume, daily_application_cap=0)
+
+    warnings = settings.validate_ready()
+    assert any("never apply to anything today" in w for w in warnings)
+
+
+def test_validate_ready_warns_when_cap_is_negative(tmp_path):
+    resume = tmp_path / "resume.txt"
+    resume.write_text("Jane Doe\nSoftware Engineer with 5 years of experience.")
+    settings = make_settings(tmp_path, resume_path=resume, daily_application_cap=-5)
+
+    warnings = settings.validate_ready()
+    assert any("never apply to anything today" in w for w in warnings)
+
+
+def test_validate_ready_has_no_cap_warning_for_a_normal_positive_cap(tmp_path):
+    resume = tmp_path / "resume.txt"
+    resume.write_text("Jane Doe\nSoftware Engineer with 5 years of experience.")
+    settings = make_settings(tmp_path, resume_path=resume, daily_application_cap=20)
+
+    assert settings.validate_ready() == []
+
+
 def test_max_years_experience_and_require_w2_default_to_off(tmp_path):
     """Consistent with the rest of the "Role quality" section
     (min_match_score, exclude_title_keywords, default_experience_levels all
