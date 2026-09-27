@@ -484,7 +484,15 @@ how often it's come up. Review and answer them with:
 job-bot review-answers
 job-bot review-answers --search sponsor  # only review/print gaps whose question mentions "sponsor"
 job-bot review-answers --format json   # list gaps as JSON instead of prompting - for a monitoring script
+job-bot review-answers --dismiss "Some garbled or duplicate question"  # discard without answering
 ```
+
+Leaving the interactive prompt blank just skips a gap for that run - it'll
+keep resurfacing every time you run this. `--dismiss` (accepts one or more
+questions, exact text as shown by this command's own output) permanently
+discards a gap without answering it - for noise, duplicates, or a question
+you've decided isn't worth caching an FAQ answer for. It doesn't touch
+`FAQ_PATH`.
 
 Each answer you give is saved straight to `FAQ_PATH`, so it's reused as
 context on every future posting that asks the same question - this is

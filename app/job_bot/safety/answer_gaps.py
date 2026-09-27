@@ -66,11 +66,18 @@ class AnswerGapStore:
     def list_unanswered(self) -> dict[str, dict[str, Any]]:
         return self._load()
 
-    def resolve(self, question: str) -> None:
-        """Remove a question once it's been answered (see
-        cmd_review_answers()) - it isn't a gap anymore.
+    def resolve(self, question: str) -> bool:
+        """Remove a question, whether because it's been answered (see
+        cmd_review_answers()'s interactive loop) or permanently dismissed
+        without an answer (`job-bot review-answers --dismiss`) - either
+        way it isn't a gap anymore. Returns True if it was present (and is
+        now removed), False if it wasn't there to begin with - the same
+        convention CompanyBlacklist.remove() already uses, so a caller can
+        report which requested dismissal(s) didn't actually match anything.
         """
         gaps = self._load()
-        if question in gaps:
-            del gaps[question]
-            self._save(gaps)
+        if question not in gaps:
+            return False
+        del gaps[question]
+        self._save(gaps)
+        return True

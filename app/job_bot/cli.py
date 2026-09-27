@@ -886,8 +886,26 @@ def cmd_review_answers(settings: Settings, args: argparse.Namespace) -> None:
     interactive terminal to answer from (input() would just hit EOF and
     stop immediately anyway, same as a piped/cron invocation of the
     interactive mode already does).
+
+    `--dismiss` permanently discards one or more gaps without answering
+    them. Real gap this closes: leaving the interactive prompt blank only
+    ever skips a gap *for this run* - AnswerGapStore.resolve() (which
+    actually removes one) was previously only ever called after saving a
+    real answer, so a gap that's noise (a garbled/duplicate question, or
+    one not worth caching an FAQ answer for) had no way to stop
+    resurfacing every single time this command runs, forever, short of
+    typing something into FAQ_PATH just to make it go away. Mirrors
+    `job-bot blacklist remove`/`job-bot faq remove`'s own nargs="+" shape
+    and per-item "removed/not found" feedback.
     """
     answer_gaps = AnswerGapStore(settings.answer_gaps_path)
+    if args.dismiss:
+        for question in args.dismiss:
+            dismissed = answer_gaps.resolve(question)
+            print(
+                f'Dismissed: "{question}"' if dismissed else f'No unanswered gap matching: "{question}"'
+            )
+        return
     gaps = answer_gaps.list_unanswered()
     if args.search:
         needle = args.search.casefold()
@@ -2198,6 +2216,15 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["text", "json"],
         default="text",
         help="Print the unanswered questions as one JSON array instead of prompting for answers.",
+    )
+    review_answers_p.add_argument(
+        "--dismiss",
+        nargs="+",
+        default=None,
+        metavar="QUESTION",
+        help="Permanently discard one or more gaps (exact question text(s), as shown by this "
+        "command's own output) without answering them - unlike leaving the prompt blank, which "
+        "re-queues a gap for next time, this removes it for good. Doesn't touch FAQ_PATH.",
     )
 
     faq_p = sub.add_parser(

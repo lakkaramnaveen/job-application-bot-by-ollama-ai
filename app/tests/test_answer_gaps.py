@@ -44,14 +44,13 @@ def test_resolve_removes_the_gap(tmp_path):
     question = "Are you comfortable commuting to this job's location?"
     store.record(question, job_id="1", company="Acme", title="Backend Engineer")
 
-    store.resolve(question)
-
+    assert store.resolve(question) is True
     assert store.list_unanswered() == {}
 
 
 def test_resolve_of_a_question_never_recorded_is_a_no_op(tmp_path):
     store = AnswerGapStore(tmp_path / "answer_gaps.json")
-    store.resolve("Never recorded")  # must not raise
+    assert store.resolve("Never recorded") is False  # must not raise
     assert store.list_unanswered() == {}
 
 

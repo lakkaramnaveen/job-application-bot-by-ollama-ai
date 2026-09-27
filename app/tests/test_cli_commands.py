@@ -125,7 +125,7 @@ def doctor_args(**overrides) -> argparse.Namespace:
 
 
 def review_answers_args(**overrides) -> argparse.Namespace:
-    defaults = dict(search=None, format="text")
+    defaults = dict(search=None, format="text", dismiss=None)
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -2664,6 +2664,50 @@ def test_review_answers_json_format_on_empty_gaps_is_an_empty_array(tmp_path, ca
     cmd_review_answers(settings, review_answers_args(format="json"))
 
     assert json.loads(capsys.readouterr().out) == []
+
+
+def test_review_answers_dismiss_removes_the_gap_without_touching_faq(tmp_path, monkeypatch, capsys):
+    """Real gap this closes: leaving the interactive prompt blank only
+    skips a gap for this run - it keeps resurfacing every time this
+    command runs. --dismiss is the only way to permanently discard a
+    noise/duplicate/garbled gap without inventing a throwaway FAQ answer
+    just to make it stop showing up.
+    """
+    settings = make_settings(tmp_path)
+    question = "Are you comfortable commuting to this job's location?"
+    AnswerGapStore(settings.answer_gaps_path).record(
+        question, job_id="1", company="Acme", title="Backend Engineer"
+    )
+
+    def fail_if_called(prompt):
+        raise AssertionError("input() must not be called when --dismiss is given")
+
+    monkeypatch.setattr("builtins.input", fail_if_called)
+
+    cmd_review_answers(settings, review_answers_args(dismiss=[question]))
+
+    assert AnswerGapStore(settings.answer_gaps_path).list_unanswered() == {}
+    assert ResumeStore(settings.resume_path, settings.faq_path).faq_answers() == {}
+    assert f'Dismissed: "{question}"' in capsys.readouterr().out
+
+
+def test_review_answers_dismiss_accepts_multiple_questions_in_one_call(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = AnswerGapStore(settings.answer_gaps_path)
+    store.record("Question one", job_id="1", company="Acme", title="X")
+    store.record("Question two", job_id="2", company="Acme", title="X")
+
+    cmd_review_answers(settings, review_answers_args(dismiss=["Question one", "Question two"]))
+
+    assert AnswerGapStore(settings.answer_gaps_path).list_unanswered() == {}
+
+
+def test_review_answers_dismiss_of_a_nonexistent_question_says_so(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_review_answers(settings, review_answers_args(dismiss=["Never recorded"]))
+
+    assert 'No unanswered gap matching: "Never recorded"' in capsys.readouterr().out
 
 
 # --- faq ---
