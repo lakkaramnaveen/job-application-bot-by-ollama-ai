@@ -26,6 +26,7 @@ def live_server(tmp_path):
     # this file don't all need to change shape for one feature.
     blacklist_path = tmp_path / "blacklist.json"
     audit_log_path = tmp_path / "audit.log"
+    failed_applications_log_path = tmp_path / "failed_applications.log"
     tracker = Tracker(db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://example.com/job1", match_score=80)
     tracker.mark_applied("job1")
@@ -33,7 +34,10 @@ def live_server(tmp_path):
     # encodeURIComponent(job_id) round-tripping through the server.
     tracker.upsert_job("job 2", "Frontend Engineer", "Acme Corp", "https://example.com/job2")
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(db_path, blacklist_path, audit_log_path))
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        make_handler(db_path, blacklist_path, audit_log_path, failed_applications_log_path),
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -825,6 +829,32 @@ def test_get_audit_log_search_filters_entries(live_server, tmp_path):
     assert "Beta Inc" not in body
 
 
+def test_get_audit_log_failures_reads_the_failed_applications_log_instead(live_server, tmp_path):
+    """`failures=1` is the dashboard's own switch for `job-bot audit-log
+    --failures` - an entry only in one of the two files must never show up
+    when reading the other.
+    """
+    AuditLogger(tmp_path / "audit.log").log("applied", job_id="1", company="Acme")
+    AuditLogger(tmp_path / "failed_applications.log").log("prep_error", job_id="2", error="boom")
+
+    with urllib.request.urlopen(f"{live_server}/api/audit-log?failures=1") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "prep_error" in body
+    assert "applied" not in body
+
+
+def test_get_audit_log_without_failures_reads_the_main_audit_log(live_server, tmp_path):
+    AuditLogger(tmp_path / "audit.log").log("applied", job_id="1", company="Acme")
+    AuditLogger(tmp_path / "failed_applications.log").log("prep_error", job_id="2", error="boom")
+
+    with urllib.request.urlopen(f"{live_server}/api/audit-log") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "applied" in body
+    assert "prep_error" not in body
+
+
 def test_post_blacklist_remove_removes_the_company(live_server, tmp_path):
     CompanyBlacklist(tmp_path / "blacklist.json").add("Acme Corp")
 
@@ -935,7 +965,12 @@ def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatc
     monkeypatch.setattr(ThreadingHTTPServer, "serve_forever", fake_serve_forever)
 
     run_dashboard(
-        tmp_path / "db.sqlite3", tmp_path / "blacklist.json", tmp_path / "audit.log", port=0, open_browser=True
+        tmp_path / "db.sqlite3",
+        tmp_path / "blacklist.json",
+        tmp_path / "audit.log",
+        tmp_path / "failed_applications.log",
+        port=0,
+        open_browser=True,
     )
 
     assert len(opened_urls) == 1
@@ -956,7 +991,11 @@ def test_run_dashboard_raises_a_clear_error_when_the_port_is_already_in_use(tmp_
         taken_port = blocker.getsockname()[1]
         with pytest.raises(DashboardPortInUse, match=r"already running"):
             run_dashboard(
-                tmp_path / "db.sqlite3", tmp_path / "blacklist.json", tmp_path / "audit.log", port=taken_port
+                tmp_path / "db.sqlite3",
+                tmp_path / "blacklist.json",
+                tmp_path / "audit.log",
+                tmp_path / "failed_applications.log",
+                port=taken_port,
             )
     finally:
         blocker.close()
@@ -969,7 +1008,11 @@ def test_run_dashboard_raises_a_clear_error_for_an_out_of_range_port(tmp_path):
     """
     with pytest.raises(DashboardPortInUse):
         run_dashboard(
-            tmp_path / "db.sqlite3", tmp_path / "blacklist.json", tmp_path / "audit.log", port=99999999
+            tmp_path / "db.sqlite3",
+            tmp_path / "blacklist.json",
+            tmp_path / "audit.log",
+            tmp_path / "failed_applications.log",
+            port=99999999,
         )
 
 

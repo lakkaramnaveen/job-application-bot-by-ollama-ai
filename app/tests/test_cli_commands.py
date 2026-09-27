@@ -3392,56 +3392,72 @@ def test_gmail_sync_format_json_reflects_dry_run(tmp_path, monkeypatch, capsys):
     assert payload["updated"] == [{"job_id": "job1", "company": "Acme", "new_status": "offer"}]
 
 
+def _fake_run_dashboard(calls: list) -> object:
+    """A stand-in for job_bot.cli.run_dashboard that just records every
+    positional/keyword argument it was called with, for the three tests
+    below to assert cmd_dashboard wires settings/args through correctly
+    without starting a real server.
+    """
+
+    def fake(db_path, blacklist_path, audit_log_path, failed_applications_log_path, port, open_browser, stale_after_days):
+        calls.append(
+            (db_path, blacklist_path, audit_log_path, failed_applications_log_path, port, open_browser, stale_after_days)
+        )
+
+    return fake
+
+
 def test_dashboard_passes_port_and_open_browser_through(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     calls = []
-    monkeypatch.setattr(
-        "job_bot.cli.run_dashboard",
-        lambda db_path, blacklist_path, audit_log_path, port, open_browser, stale_after_days: calls.append(
-            (db_path, blacklist_path, audit_log_path, port, open_browser, stale_after_days)
-        ),
-    )
+    monkeypatch.setattr("job_bot.cli.run_dashboard", _fake_run_dashboard(calls))
     args = argparse.Namespace(port=9999, no_open=True)
 
     cmd_dashboard(settings, args)
 
     assert calls == [
-        (settings.db_path, settings.blacklist_path, settings.audit_log_path, 9999, False, settings.stale_after_days)
+        (
+            settings.db_path,
+            settings.blacklist_path,
+            settings.audit_log_path,
+            settings.failed_applications_log_path,
+            9999,
+            False,
+            settings.stale_after_days,
+        )
     ]
 
 
 def test_dashboard_falls_back_to_settings_port_when_not_given(tmp_path, monkeypatch):
     settings = make_settings(tmp_path, dashboard_port=8765)
     calls = []
-    monkeypatch.setattr(
-        "job_bot.cli.run_dashboard",
-        lambda db_path, blacklist_path, audit_log_path, port, open_browser, stale_after_days: calls.append(
-            (db_path, blacklist_path, audit_log_path, port, open_browser, stale_after_days)
-        ),
-    )
+    monkeypatch.setattr("job_bot.cli.run_dashboard", _fake_run_dashboard(calls))
     args = argparse.Namespace(port=None, no_open=False)
 
     cmd_dashboard(settings, args)
 
     assert calls == [
-        (settings.db_path, settings.blacklist_path, settings.audit_log_path, 8765, True, settings.stale_after_days)
+        (
+            settings.db_path,
+            settings.blacklist_path,
+            settings.audit_log_path,
+            settings.failed_applications_log_path,
+            8765,
+            True,
+            settings.stale_after_days,
+        )
     ]
 
 
 def test_dashboard_passes_settings_stale_after_days_through(tmp_path, monkeypatch):
     settings = make_settings(tmp_path, stale_after_days=30)
     calls = []
-    monkeypatch.setattr(
-        "job_bot.cli.run_dashboard",
-        lambda db_path, blacklist_path, audit_log_path, port, open_browser, stale_after_days: calls.append(
-            stale_after_days
-        ),
-    )
+    monkeypatch.setattr("job_bot.cli.run_dashboard", _fake_run_dashboard(calls))
     args = argparse.Namespace(port=None, no_open=False)
 
     cmd_dashboard(settings, args)
 
-    assert calls == [30]
+    assert [call[-1] for call in calls] == [30]
 
 
 # --- docs consistency ---

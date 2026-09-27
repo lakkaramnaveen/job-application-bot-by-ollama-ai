@@ -372,7 +372,13 @@ def test_dashboard_serves_the_run_result_and_accepts_a_status_change(settings, w
     wired_run(settings, provider)
 
     server = ThreadingHTTPServer(
-        ("127.0.0.1", 0), make_handler(settings.db_path, settings.blacklist_path, settings.audit_log_path)
+        ("127.0.0.1", 0),
+        make_handler(
+            settings.db_path,
+            settings.blacklist_path,
+            settings.audit_log_path,
+            settings.failed_applications_log_path,
+        ),
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

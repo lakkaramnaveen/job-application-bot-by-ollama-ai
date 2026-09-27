@@ -625,10 +625,11 @@ seen, and lets you:
   posting in a modal - the dashboard counterpart to `job-bot report
   --by-missing-qualifications`, showing which specific gaps the LLM scorer
   keeps flagging.
-- **Browse the audit log** in a modal, with a live search box - the
-  dashboard counterpart to `job-bot audit-log`, capped to the 50 most
-  recent matching entries (the CLI command has no such cap, for anyone who
-  needs the full history).
+- **Browse the audit log** in a modal, with a live search box and a
+  "Failed applications only" checkbox - the dashboard counterpart to
+  `job-bot audit-log`/`job-bot audit-log --failures`, capped to the 50
+  most recent matching entries (the CLI command has no such cap, for
+  anyone who needs the full history).
 
 The dashboard has no login (it's a local tool over your own data), so every
 state-changing endpoint (the inline status update, blacklisting a company,

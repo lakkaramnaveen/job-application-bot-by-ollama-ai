@@ -103,7 +103,12 @@ def _parse_list_params(query: dict[str, list[str]]) -> dict:
 
 
 def make_handler(
-    db_path: Path, blacklist_path: Path, audit_log_path: Path, *, stale_after_days: int = 14
+    db_path: Path,
+    blacklist_path: Path,
+    audit_log_path: Path,
+    failed_applications_log_path: Path,
+    *,
+    stale_after_days: int = 14,
 ) -> type[BaseHTTPRequestHandler]:
     class DashboardHandler(BaseHTTPRequestHandler):
         def _send(self, status: HTTPStatus | int, content_type: str, body: bytes, headers: dict | None = None) -> None:
@@ -482,10 +487,14 @@ def make_handler(
             whole entry (action and every detail value), not just the action
             name - capped to the _AUDIT_LOG_LIMIT most recent matching
             entries; `job-bot audit-log` itself has no such cap for anyone
-            who needs the full history.
+            who needs the full history. `failures=1` reads
+            FAILED_APPLICATIONS_LOG_PATH instead of AUDIT_LOG_PATH, the same
+            switch `job-bot audit-log --failures` makes on the CLI.
             """
             search = (query.get("q") or [""])[0].strip() or None
-            entries = AuditLogger(audit_log_path).read_entries(search=search)[:_AUDIT_LOG_LIMIT]
+            show_failures = (query.get("failures") or [""])[0] == "1"
+            path = failed_applications_log_path if show_failures else audit_log_path
+            entries = AuditLogger(path).read_entries(search=search)[:_AUDIT_LOG_LIMIT]
             body = render_audit_log_html(entries).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
@@ -528,12 +537,15 @@ def run_dashboard(
     db_path: Path,
     blacklist_path: Path,
     audit_log_path: Path,
+    failed_applications_log_path: Path,
     port: int = 8765,
     open_browser: bool = True,
     *,
     stale_after_days: int = 14,
 ) -> None:
-    handler = make_handler(db_path, blacklist_path, audit_log_path, stale_after_days=stale_after_days)
+    handler = make_handler(
+        db_path, blacklist_path, audit_log_path, failed_applications_log_path, stale_after_days=stale_after_days
+    )
     try:
         server = ThreadingHTTPServer((DASHBOARD_HOST, port), handler)
     except (OSError, OverflowError) as e:

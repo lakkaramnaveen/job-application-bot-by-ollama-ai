@@ -496,6 +496,7 @@ def test_render_page_html_includes_the_audit_log_button_and_dialog():
     assert 'id="auditLogDialog"' in html
     assert 'id="auditLogContent"' in html
     assert 'id="auditLogSearch"' in html
+    assert 'id="auditLogFailures"' in html
 
 
 def test_render_page_html_includes_the_note_dialog():

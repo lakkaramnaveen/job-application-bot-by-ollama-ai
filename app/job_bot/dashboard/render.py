@@ -488,6 +488,8 @@ def render_page_html(
   #auditLogSearch {{ width: 100%; box-sizing: border-box; font-size: 0.85rem; padding: 0.4rem 0.6rem;
               margin-bottom: 0.75rem; border: 1px solid var(--border); border-radius: 6px;
               background: var(--surface); color: var(--fg); }}
+  .audit-log-failures-label {{ display: block; font-size: 0.85rem; margin-bottom: 0.75rem;
+              color: var(--fg); }}
 </style>
 </head>
 <body>
@@ -562,6 +564,9 @@ def render_page_html(
 <dialog id="auditLogDialog">
   <h2>Audit log</h2>
   <input type="search" id="auditLogSearch" placeholder="Search action or details...">
+  <label class="audit-log-failures-label">
+    <input type="checkbox" id="auditLogFailures"> Failed applications only
+  </label>
   <div id="auditLogContent"></div>
   <button type="button" id="auditLogClose">Close</button>
 </dialog>
@@ -825,11 +830,13 @@ document.getElementById('missingQualificationsClose').addEventListener(
 
 const auditLogDialog = document.getElementById('auditLogDialog');
 const auditLogSearch = document.getElementById('auditLogSearch');
+const auditLogFailures = document.getElementById('auditLogFailures');
 async function loadAuditLog() {{
   const content = document.getElementById('auditLogContent');
   content.innerHTML = 'Loading...';
   const params = new URLSearchParams();
   if (auditLogSearch.value) params.set('q', auditLogSearch.value);
+  if (auditLogFailures.checked) params.set('failures', '1');
   try {{
     const res = await fetch('/api/audit-log?' + params.toString());
     content.innerHTML = res.ok ? await res.text() : 'Could not load the audit log.';
@@ -847,6 +854,7 @@ auditLogSearch.addEventListener('input', () => {{
   clearTimeout(auditLogSearchTimer);
   auditLogSearchTimer = setTimeout(loadAuditLog, 300);
 }});
+auditLogFailures.addEventListener('change', loadAuditLog);
 
 // The periodic refresh below replaces the whole <tbody>, which would
 // otherwise yank a status <select> out from under a user mid-interaction
