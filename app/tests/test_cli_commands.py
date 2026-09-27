@@ -3413,11 +3413,22 @@ def test_test_provider_prints_provider_and_result(tmp_path, monkeypatch, capsys)
     settings = make_settings(tmp_path)
     monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
 
-    cmd_test_provider(settings)
+    cmd_test_provider(settings, argparse.Namespace(format="text"))
 
     out = capsys.readouterr().out
     assert "Provider OK: claude" in out
     assert "score=90" in out
+
+
+def test_test_provider_format_json_prints_the_result_as_json(tmp_path, monkeypatch, capsys):
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
+
+    cmd_test_provider(settings, argparse.Namespace(format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["provider"] == "claude"
+    assert payload["result"]["score"] == 90
 
 
 def test_gmail_sync_prints_scanned_count_with_no_emails(tmp_path, monkeypatch, capsys):

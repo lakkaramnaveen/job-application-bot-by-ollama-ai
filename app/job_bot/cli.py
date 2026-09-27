@@ -1610,11 +1610,17 @@ def cmd_dashboard(settings: Settings, args: argparse.Namespace) -> None:
     )
 
 
-def cmd_test_provider(settings: Settings) -> None:
+def cmd_test_provider(settings: Settings, args: argparse.Namespace) -> None:
     """One real API call to the configured LLM provider, to confirm the key/
     model/local server actually work before trusting them to score real
     postings. See also `job-bot doctor`, which checks everything else
     (resume, LinkedIn session, ...) without making a network call.
+    `--format json` prints the result as one JSON object instead - every
+    other check-style command here (doctor, status, report, ...) already
+    has this, for a monitoring script that wants to verify the LLM
+    provider actually responds (not just that config looks sane, which
+    `job-bot doctor --format json` alone can't confirm) without parsing
+    a Pydantic model's default repr.
     """
     provider = get_provider(settings)
     result = provider.generate_structured(
@@ -1625,6 +1631,9 @@ def cmd_test_provider(settings: Settings) -> None:
         ),
         schema=JobMatchScore,
     )
+    if args.format == "json":
+        print(json.dumps({"provider": settings.llm_provider, "result": result.model_dump()}, indent=2))
+        return
     print(f"Provider OK: {settings.llm_provider}")
     print(result)
 
@@ -2110,7 +2119,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    sub.add_parser("test-provider", help="Sanity-check the configured LLM provider with one call.")
+    test_provider_p = sub.add_parser(
+        "test-provider", help="Sanity-check the configured LLM provider with one call."
+    )
+    test_provider_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Print the result as one JSON object instead.",
+    )
 
     doctor_p = sub.add_parser(
         "doctor", help="Check local setup (resume, API key, LinkedIn session, Gmail creds) for problems."
@@ -2424,7 +2441,7 @@ def main() -> None:
         elif args.command == "run":
             cmd_run(settings, args)
         elif args.command == "test-provider":
-            cmd_test_provider(settings)
+            cmd_test_provider(settings, args)
         elif args.command == "doctor":
             cmd_doctor(settings, args)
         elif args.command == "status":

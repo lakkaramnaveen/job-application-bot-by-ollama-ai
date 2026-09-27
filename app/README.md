@@ -179,6 +179,7 @@ Edit `.env`:
    above deliberately doesn't do):
    ```bash
    job-bot test-provider
+   job-bot test-provider --format json   # same result as one JSON object, for a monitoring script
    ```
 4. **Dry run** - does everything (search, score, tailor, fill the form,
    attach your resume) except the actual submit click, so you can verify it's
