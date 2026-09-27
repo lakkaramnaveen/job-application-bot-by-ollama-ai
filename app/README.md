@@ -461,6 +461,7 @@ job-bot faq list                          # every cached question/answer pair
 job-bot faq list --search python          # only pairs whose question or answer mentions "python"
 job-bot faq list --format json            # same (optionally --search-filtered) pairs as one JSON object
 job-bot faq remove "Years of Python experience?"   # e.g. to fix a wrong one
+job-bot faq remove "Question A" "Question B"        # remove several at once, each quoted separately
 job-bot faq import faq_backup.json        # merge in a backup, or another install's FAQ_PATH
 job-bot faq export --out faq_backup.json  # write the cache out as JSON; omit --out to print to stdout
 ```

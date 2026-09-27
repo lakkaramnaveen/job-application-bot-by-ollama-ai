@@ -2739,7 +2739,7 @@ def test_faq_remove_deletes_a_cached_answer(tmp_path, capsys):
     store = ResumeStore(settings.resume_path, settings.faq_path)
     store.save_faq_answer("Years of Python experience?", "5")
 
-    cmd_faq(settings, argparse.Namespace(faq_action="remove", question="Years of Python experience?"))
+    cmd_faq(settings, argparse.Namespace(faq_action="remove", question=["Years of Python experience?"]))
 
     assert 'Removed cached answer for: "Years of Python experience?"' in capsys.readouterr().out
     assert ResumeStore(settings.resume_path, settings.faq_path).faq_answers() == {}
@@ -2748,9 +2748,28 @@ def test_faq_remove_deletes_a_cached_answer(tmp_path, capsys):
 def test_faq_remove_of_uncached_question_says_so(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
-    cmd_faq(settings, argparse.Namespace(faq_action="remove", question="Never asked"))
+    cmd_faq(settings, argparse.Namespace(faq_action="remove", question=["Never asked"]))
 
     assert 'No cached answer for: "Never asked"' in capsys.readouterr().out
+
+
+def test_faq_remove_accepts_multiple_questions_in_one_call(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    store = ResumeStore(settings.resume_path, settings.faq_path)
+    store.save_faq_answer("Years of Python experience?", "5")
+    store.save_faq_answer("Willing to relocate?", "No")
+
+    cmd_faq(
+        settings,
+        argparse.Namespace(
+            faq_action="remove", question=["Years of Python experience?", "Willing to relocate?"]
+        ),
+    )
+
+    out = capsys.readouterr().out
+    assert 'Removed cached answer for: "Years of Python experience?"' in out
+    assert 'Removed cached answer for: "Willing to relocate?"' in out
+    assert ResumeStore(settings.resume_path, settings.faq_path).faq_answers() == {}
 
 
 def test_faq_import_merges_answers_from_a_json_file(tmp_path, capsys):

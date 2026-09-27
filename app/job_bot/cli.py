@@ -941,8 +941,12 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
     what's already cached, remove a wrong one, or back up/share a whole
     set short of hand-editing FAQ_PATH's JSON directly - this gives the
     FAQ cache the same view/remove/import/export shape `job-bot blacklist`
-    already has. export's output is exactly what import reads back, so
-    the two round-trip (e.g. to move a cache to another install).
+    already has, including `remove` taking one or more question texts
+    (nargs="+", the same as `job-bot blacklist remove`'s companies) so
+    cleaning up several wrong/stale answers spotted in one `faq list`
+    review doesn't need a separate invocation per question. export's
+    output is exactly what import reads back, so the two round-trip
+    (e.g. to move a cache to another install).
     """
     resume_store = ResumeStore(settings.resume_path, settings.faq_path)
     if args.faq_action == "list":
@@ -968,12 +972,13 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
             for question, answer in answers.items():
                 print(f'"{question}"\n  -> {answer}\n')
     elif args.faq_action == "remove":
-        removed = resume_store.remove_faq_answer(args.question)
-        print(
-            f'Removed cached answer for: "{args.question}"'
-            if removed
-            else f'No cached answer for: "{args.question}"'
-        )
+        for question in args.question:
+            removed = resume_store.remove_faq_answer(question)
+            print(
+                f'Removed cached answer for: "{question}"'
+                if removed
+                else f'No cached answer for: "{question}"'
+            )
     elif args.faq_action == "import":
         try:
             data = json.loads(args.file.read_text(encoding="utf-8"))
@@ -2195,8 +2200,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="text",
         help="Print the (optionally --search-filtered) pairs as one JSON object instead.",
     )
-    faq_remove_p = faq_sub.add_parser("remove", help="Remove one cached answer, e.g. to fix a wrong one.")
-    faq_remove_p.add_argument("question", help="The exact question text, as shown by `job-bot faq list`.")
+    faq_remove_p = faq_sub.add_parser(
+        "remove", help="Remove one or more cached answers, e.g. to fix a wrong one."
+    )
+    faq_remove_p.add_argument(
+        "question",
+        nargs="+",
+        help="The exact question text(s), as shown by `job-bot faq list`. Quote each separately.",
+    )
     faq_import_p = faq_sub.add_parser(
         "import", help="Merge in answers from a JSON file (a backup, or another install's FAQ_PATH)."
     )
