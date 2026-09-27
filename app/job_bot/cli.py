@@ -1752,6 +1752,28 @@ def _audit_log_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, True, str(settings.audit_log_path))
 
 
+def _failed_applications_log_check(settings: Settings) -> tuple[str, bool, str]:
+    """Same gap as _audit_log_check above, for FAILED_APPLICATIONS_LOG_PATH -
+    cmd_run constructs an AuditLogger for it unconditionally on every
+    `job-bot run` (alongside the main audit log), so the identical
+    unwritable-directory risk applies: previously uncaught until the very
+    first search_error/prep_error/apply_error tried to log to it, deep into
+    a run, rather than upfront here. Now readable via `job-bot audit-log
+    --failures` too - same reasoning as _audit_log_check for why this isn't
+    optional: it's the one place a user is told to look for what happened
+    and why (see _print_cycle_summary()) when postings couldn't be
+    completed, so a silently-unwritable copy of it defeats that entirely.
+    """
+    label = "Failed-applications log writable"
+    try:
+        settings.failed_applications_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with settings.failed_applications_log_path.open("a", encoding="utf-8"):
+            pass
+    except OSError as e:
+        return (label, False, f"{settings.failed_applications_log_path}: {e}")
+    return (label, True, str(settings.failed_applications_log_path))
+
+
 def _tracker_db_check(settings: Settings) -> tuple[str, bool, str]:
     """Every other command opens the tracker eagerly (Tracker.__init__()'s
     _init_db() runs a schema migration on every construction), so a
@@ -1823,6 +1845,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         _answer_gaps_check(settings),
         _applications_dir_check(settings),
         _audit_log_check(settings),
+        _failed_applications_log_check(settings),
         _tracker_db_check(settings),
     ]
 

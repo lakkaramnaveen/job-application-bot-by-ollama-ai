@@ -2096,6 +2096,53 @@ def test_doctor_flags_an_audit_log_that_cannot_be_written(tmp_path, capsys):
     assert "[!!] Audit log writable" in out
 
 
+def test_doctor_creates_and_passes_the_failed_applications_log_check_when_missing(tmp_path, capsys):
+    """Same reasoning as _audit_log_check's own equivalent test -
+    FAILED_APPLICATIONS_LOG_PATH not existing yet is the normal case on a
+    fresh install, so this check proves it's writable rather than failing
+    on something normal.
+    """
+    settings = make_settings(tmp_path)
+    assert not settings.failed_applications_log_path.exists()
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Failed-applications log writable" in capsys.readouterr().out
+    assert settings.failed_applications_log_path.exists()
+
+
+def test_doctor_passes_the_failed_applications_log_check_with_existing_log_entries(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.failed_applications_log_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.failed_applications_log_path.write_text('{"action": "prep_error"}\n', encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    assert "[OK] Failed-applications log writable" in capsys.readouterr().out
+    assert settings.failed_applications_log_path.read_text(encoding="utf-8") == '{"action": "prep_error"}\n'
+
+
+def test_doctor_flags_a_failed_applications_log_that_cannot_be_written(tmp_path, capsys):
+    """Real failure this guards against: a misconfigured
+    FAILED_APPLICATIONS_LOG_PATH (e.g. pointing at a path a regular file
+    already occupies) previously wasn't caught anywhere - cmd_run
+    constructs an AuditLogger for this path unconditionally on every run,
+    so the first real search_error/prep_error/apply_error would fail deep
+    into a run trying to log it, well past `job-bot doctor` giving a clean
+    bill of health.
+    """
+    blocking_file = tmp_path / "failed"
+    blocking_file.write_text("not a directory", encoding="utf-8")
+    settings = make_settings(
+        tmp_path, failed_applications_log_path=blocking_file / "nested" / "failed_applications.log"
+    )
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Failed-applications log writable" in out
+
+
 def test_doctor_passes_tracker_db_check_when_no_db_file_exists(tmp_path, capsys):
     """Unlike the resume/blacklist/FAQ/answer-gaps checks, no db.sqlite3 yet
     is the normal case on a fresh install - job-bot run (or any other

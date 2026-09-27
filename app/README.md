@@ -164,8 +164,8 @@ Edit `.env`:
 2. **Check your local setup for common problems** - the resume file actually
    parses, an API key/Ollama URL configured, a LinkedIn session saved, the
    blacklist/FAQ/answer-gaps files are valid JSON (not silently treated as empty),
-   the applications directory and audit log are actually writable, the
-   tracker database itself isn't corrupted, Gmail credentials
+   the applications directory, audit log, and failed-applications log are
+   all actually writable, the tracker database itself isn't corrupted, Gmail credentials
    present and the one-time OAuth consent actually completed (if you use
    gmail-sync), the daily cap sane and how much of it is already used today.
    File/config checks only, no network
