@@ -521,6 +521,7 @@ job-bot blacklist add "Company Name"      # job-bot run will always skip it
 job-bot blacklist add "Company A" "Company B" "Company C"   # add several at once
 job-bot blacklist add "Company Name" --reason "no H1B sponsorship"  # remembered, shown by `list`
 job-bot blacklist remove "Company Name"
+job-bot blacklist check "Company Name"    # is it blacklisted, and why (case/spacing-insensitive)
 job-bot blacklist list
 job-bot blacklist list --format json          # same entries ({"name", "reason"}) as one JSON array instead
 job-bot blacklist import past_employers.txt   # one company per line; blank/'#'-comment lines skipped

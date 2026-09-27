@@ -76,6 +76,18 @@ class CompanyBlacklist:
     def is_blocked(self, company_name: str) -> bool:
         return self._normalize(company_name) in self._companies
 
+    def get_entry(self, company_name: str) -> dict[str, str] | None:
+        """The {"name", "reason"} entry for `company_name` (matched the
+        same normalized way is_blocked() already does), or None if it
+        isn't blocked - `job-bot blacklist check` needs this to show not
+        just whether a company is blocked but why, without exposing the
+        whole list the way list_entries() does. Returns a fresh dict, not
+        a reference into internal state, so a caller can't accidentally
+        mutate this entry out from under _save()'s next call.
+        """
+        entry = self._companies.get(self._normalize(company_name))
+        return dict(entry) if entry is not None else None
+
     def add(self, company_name: str, *, reason: str = "") -> None:
         self._companies[self._normalize(company_name)] = {
             "name": company_name.strip(),

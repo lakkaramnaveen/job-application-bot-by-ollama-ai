@@ -87,6 +87,39 @@ def test_remove_returns_false_when_not_present(tmp_path):
     assert blacklist.remove("Never Added Inc") is False
 
 
+def test_get_entry_returns_none_when_not_blocked(tmp_path):
+    blacklist = CompanyBlacklist(tmp_path / "blacklist.json")
+    assert blacklist.get_entry("Never Added Inc") is None
+
+
+def test_get_entry_returns_the_name_and_reason_matched_case_insensitively(tmp_path):
+    blacklist = CompanyBlacklist(tmp_path / "blacklist.json")
+    blacklist.add("Acme Corp", reason="no H1B sponsorship")
+
+    assert blacklist.get_entry("  ACME   corp  ") == {"name": "Acme Corp", "reason": "no H1B sponsorship"}
+
+
+def test_get_entry_returns_an_empty_reason_when_none_was_given(tmp_path):
+    blacklist = CompanyBlacklist(tmp_path / "blacklist.json")
+    blacklist.add("Acme Corp")
+
+    assert blacklist.get_entry("Acme Corp") == {"name": "Acme Corp", "reason": ""}
+
+
+def test_get_entry_does_not_return_a_reference_to_internal_state(tmp_path):
+    """Mutating the returned dict must never affect what a later add()/
+    list_entries() call sees - get_entry() promises a fresh copy, not a
+    reference into CompanyBlacklist's own internal dict.
+    """
+    blacklist = CompanyBlacklist(tmp_path / "blacklist.json")
+    blacklist.add("Acme Corp", reason="original reason")
+
+    entry = blacklist.get_entry("Acme Corp")
+    entry["reason"] = "tampered"
+
+    assert blacklist.get_entry("Acme Corp") == {"name": "Acme Corp", "reason": "original reason"}
+
+
 def test_list_companies_returns_sorted_display_names(tmp_path):
     """Real bug this guards against: list_companies() (and `job-bot
     blacklist list`) used to return the normalized/casefolded form used

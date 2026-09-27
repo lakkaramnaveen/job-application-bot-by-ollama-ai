@@ -1486,18 +1486,22 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
-    """add/remove/list/import/export companies `job-bot run` will always
-    skip - see build_parser()'s `blacklist` subparser for the five
+    """add/remove/check/list/import/export companies `job-bot run` will
+    always skip - see build_parser()'s `blacklist` subparser for the six
     actions. add/remove each take one or more company names (nargs="+"),
     so blacklisting several past employers at once doesn't need a
     separate invocation per company. `add --reason` applies the same
     reason to every company in that call - blacklisting several companies
     for the same reason in one call is the common case; a different reason
-    per company just means a separate `add` call each. export's output is
-    exactly what import reads back (one company per line, no reason - see
-    CompanyBlacklist's own docstring for why reasons don't round-trip
-    through that plain-text format), so the two round-trip (e.g. to move a
-    blacklist to another install).
+    per company just means a separate `add` call each. `check` is the
+    single-company lookup `list`'s own output otherwise has no shortcut
+    for once the blacklist has more than a handful of entries - "is X
+    blocked, and why" without scanning the whole list by eye or grepping
+    `--format json`. export's output is exactly what import reads back
+    (one company per line, no reason - see CompanyBlacklist's own
+    docstring for why reasons don't round-trip through that plain-text
+    format), so the two round-trip (e.g. to move a blacklist to another
+    install).
     """
     blacklist = CompanyBlacklist(settings.blacklist_path)
     if args.blacklist_action == "add":
@@ -1523,6 +1527,25 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
             print(
                 f"Removed from blacklist: {company}" if removed else f"Not on the blacklist: {company}"
             )
+    elif args.blacklist_action == "check":
+        entry = blacklist.get_entry(args.company)
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {
+                        "company": entry["name"] if entry else args.company,
+                        "blocked": entry is not None,
+                        "reason": entry["reason"] if entry else None,
+                    }
+                )
+            )
+        elif entry is None:
+            print(f"{args.company} is not blacklisted.")
+        else:
+            line = f"{entry['name']} is blacklisted"
+            if entry["reason"]:
+                line += f" - {entry['reason']}"
+            print(f"{line}.")
     elif args.blacklist_action == "list":
         entries = blacklist.list_entries()
         if args.format == "json":
@@ -2341,6 +2364,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     remove_p = blacklist_sub.add_parser("remove", help="Remove one or more companies from the blacklist.")
     remove_p.add_argument("company", nargs="+", help="One or more company names, each quoted separately.")
+    check_p = blacklist_sub.add_parser(
+        "check", help="Check whether one company is blacklisted, and why."
+    )
+    check_p.add_argument("company", help="Company name to check (case/spacing-insensitive).")
+    check_p.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Print the result as one JSON object instead.",
+    )
     blacklist_list_p = blacklist_sub.add_parser("list", help="List blacklisted companies.")
     blacklist_list_p.add_argument(
         "--format",

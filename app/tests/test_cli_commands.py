@@ -1254,6 +1254,75 @@ def test_blacklist_remove_of_absent_company_says_so(tmp_path, capsys):
     assert "Not on the blacklist: Nobody Inc" in capsys.readouterr().out
 
 
+def test_blacklist_check_says_so_when_not_blacklisted(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="check", company="Acme Corp", format="text"))
+
+    assert "Acme Corp is not blacklisted." in capsys.readouterr().out
+
+
+def test_blacklist_check_shows_the_reason_when_blacklisted(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(
+        settings,
+        argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason="no H1B sponsorship"),
+    )
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="check", company="Acme Corp", format="text"))
+
+    assert "Acme Corp is blacklisted - no H1B sponsorship." in capsys.readouterr().out
+
+
+def test_blacklist_check_omits_the_dash_when_no_reason_was_given(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="check", company="Acme Corp", format="text"))
+
+    assert capsys.readouterr().out.strip() == "Acme Corp is blacklisted."
+
+
+def test_blacklist_check_matches_case_and_spacing_insensitively_and_shows_stored_casing(tmp_path, capsys):
+    """The stored display casing/spacing is shown back, not whatever the
+    user happened to type on the `check` call itself - the same "as
+    typed at add time" display CompanyBlacklist already preserves for
+    `list`.
+    """
+    settings = make_settings(tmp_path)
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme   Corp"], reason=None))
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="check", company="  acme corp  ", format="text"))
+
+    assert "Acme   Corp is blacklisted." in capsys.readouterr().out
+
+
+def test_blacklist_check_format_json_when_blacklisted(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(
+        settings,
+        argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason="no H1B sponsorship"),
+    )
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="check", company="Acme Corp", format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"company": "Acme Corp", "blocked": True, "reason": "no H1B sponsorship"}
+
+
+def test_blacklist_check_format_json_when_not_blacklisted(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="check", company="Acme Corp", format="json"))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"company": "Acme Corp", "blocked": False, "reason": None}
+
+
 def test_blacklist_add_accepts_multiple_companies_in_one_call(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
