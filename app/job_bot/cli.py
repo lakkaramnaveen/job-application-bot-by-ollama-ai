@@ -1559,10 +1559,26 @@ def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:
             print(f"{line}.")
     elif args.blacklist_action == "list":
         entries = blacklist.list_entries()
+        if args.search:
+            # Same case-insensitive substring-of-either-field semantics
+            # `job-bot faq list --search` already uses (question or
+            # answer) - here, a company name or its reason, since once
+            # the list is long enough to need searching, remembering
+            # *why* a company was blacklisted is often easier than its
+            # exact name. `job-bot blacklist check` is the exact-match
+            # counterpart for when the name itself is already known.
+            needle = args.search.casefold()
+            entries = [
+                e for e in entries if needle in e["name"].casefold() or needle in e["reason"].casefold()
+            ]
         if args.format == "json":
             print(json.dumps(entries, indent=2, ensure_ascii=False))
         elif not entries:
-            print("Blacklist is empty.")
+            print(
+                "Blacklist is empty."
+                if not args.search
+                else f'No blacklisted companies matching "{args.search}".'
+            )
         else:
             for entry in entries:
                 line = entry["name"]
@@ -2410,10 +2426,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     blacklist_list_p = blacklist_sub.add_parser("list", help="List blacklisted companies.")
     blacklist_list_p.add_argument(
+        "--search",
+        default=None,
+        help="Only print companies whose name or reason contains this text (case-insensitive).",
+    )
+    blacklist_list_p.add_argument(
         "--format",
         choices=["text", "json"],
         default="text",
-        help="Print the companies as one JSON array instead.",
+        help="Print the (optionally --search-filtered) companies as one JSON array instead.",
     )
     import_p = blacklist_sub.add_parser(
         "import", help="Add every company listed in a text file (one per line)."

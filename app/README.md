@@ -525,6 +525,7 @@ job-bot blacklist add "Company Name" --reason "no H1B sponsorship"  # remembered
 job-bot blacklist remove "Company Name"
 job-bot blacklist check "Company Name"    # is it blacklisted, and why (case/spacing-insensitive)
 job-bot blacklist list
+job-bot blacklist list --search sponsorship   # only companies whose name or reason contains this text
 job-bot blacklist list --format json          # same entries ({"name", "reason"}) as one JSON array instead
 job-bot blacklist import past_employers.txt   # one company per line; blank/'#'-comment lines skipped
 job-bot blacklist export --out backup.txt     # write it back out the same way; omit --out to print to stdout

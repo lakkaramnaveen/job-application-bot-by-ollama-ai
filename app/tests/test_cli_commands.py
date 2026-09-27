@@ -1075,13 +1075,13 @@ def test_blacklist_add_list_remove_round_trip(tmp_path, capsys):
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
     assert "Added to blacklist: Acme Corp" in capsys.readouterr().out
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
     assert "Acme Corp" in capsys.readouterr().out  # display casing preserved, not normalized
 
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="remove", company=["Acme Corp"]))
     assert "Removed from blacklist: Acme Corp" in capsys.readouterr().out
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
     assert "Blacklist is empty." in capsys.readouterr().out
 
 
@@ -1093,7 +1093,7 @@ def test_blacklist_add_with_reason_shows_it_in_list_text_output(tmp_path, capsys
     )
     capsys.readouterr()
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
 
     assert "Acme Corp  - no H1B sponsorship" in capsys.readouterr().out
 
@@ -1106,7 +1106,7 @@ def test_blacklist_add_without_reason_shows_no_dash_in_list_text_output(tmp_path
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
     capsys.readouterr()
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
 
     out = capsys.readouterr().out
     assert out.strip() == "Acme Corp"
@@ -1122,7 +1122,7 @@ def test_blacklist_add_reason_applies_to_every_company_in_one_call(tmp_path, cap
     )
     capsys.readouterr()
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
 
     out = capsys.readouterr().out
     assert "Acme Corp  - past employer" in out
@@ -1144,7 +1144,7 @@ def test_blacklist_add_re_adding_a_company_updates_its_reason(tmp_path, capsys):
         settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason="correct reason")
     )
     capsys.readouterr()
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
 
     out = capsys.readouterr().out
     assert "Acme Corp  - correct reason" in out
@@ -1170,7 +1170,7 @@ def test_blacklist_list_format_json_prints_name_and_reason(tmp_path, capsys):
     cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Beta Inc"], reason=None))
     capsys.readouterr()
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="json"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="json"))
 
     payload = json.loads(capsys.readouterr().out)
     assert payload == [
@@ -1179,10 +1179,57 @@ def test_blacklist_list_format_json_prints_name_and_reason(tmp_path, capsys):
     ]
 
 
+def test_blacklist_list_search_matches_the_company_name(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Beta Inc"], reason=None))
+    capsys.readouterr()
+
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search="acme", format="text"))
+
+    out = capsys.readouterr().out
+    assert "Acme Corp" in out
+    assert "Beta Inc" not in out
+
+
+def test_blacklist_list_search_matches_the_reason_not_just_the_name(tmp_path, capsys):
+    """The whole point of searching by reason: once the list is long
+    enough to need searching, remembering *why* a company was
+    blacklisted is often easier than its exact name.
+    """
+    settings = make_settings(tmp_path)
+    cmd_blacklist(
+        settings,
+        argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason="no H1B sponsorship"),
+    )
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Beta Inc"], reason=None))
+    capsys.readouterr()
+
+    cmd_blacklist(
+        settings, argparse.Namespace(blacklist_action="list", company=None, search="sponsorship", format="text")
+    )
+
+    out = capsys.readouterr().out
+    assert "Acme Corp" in out
+    assert "Beta Inc" not in out
+
+
+def test_blacklist_list_search_says_so_when_nothing_matches(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="add", company=["Acme Corp"], reason=None))
+    capsys.readouterr()
+
+    cmd_blacklist(
+        settings, argparse.Namespace(blacklist_action="list", company=None, search="nonexistent", format="text")
+    )
+
+    assert 'No blacklisted companies matching "nonexistent".' in capsys.readouterr().out
+
+
 def test_blacklist_list_format_json_on_empty_blacklist_is_still_valid_json(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="json"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="json"))
 
     assert json.loads(capsys.readouterr().out) == []
 
@@ -1333,7 +1380,7 @@ def test_blacklist_add_accepts_multiple_companies_in_one_call(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Added to blacklist: Acme Corp" in out
     assert "Added to blacklist: Beta Inc" in out
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
     listed = capsys.readouterr().out
     assert "Acme Corp" in listed
     assert "Beta Inc" in listed
@@ -1353,7 +1400,7 @@ def test_blacklist_remove_accepts_multiple_companies_in_one_call(tmp_path, capsy
     out = capsys.readouterr().out
     assert "Removed from blacklist: Acme Corp" in out
     assert "Removed from blacklist: Beta Inc" in out
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
     assert "Blacklist is empty." in capsys.readouterr().out
 
 
@@ -1374,7 +1421,7 @@ def test_blacklist_import_adds_every_company_skipping_blanks_and_comments(tmp_pa
 
     out = capsys.readouterr().out
     assert f"Imported 3 companies from {import_file}." in out
-    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
     listed = capsys.readouterr().out
     assert "Acme Corp" in listed
     assert "Beta Inc" in listed
@@ -1448,7 +1495,7 @@ def test_blacklist_export_round_trips_through_import(tmp_path, capsys):
     other_settings = make_settings(tmp_path, blacklist_path=tmp_path / "other_blacklist.json")
     cmd_blacklist(other_settings, argparse.Namespace(blacklist_action="import", file=export_file))
     capsys.readouterr()
-    cmd_blacklist(other_settings, argparse.Namespace(blacklist_action="list", company=None, format="text"))
+    cmd_blacklist(other_settings, argparse.Namespace(blacklist_action="list", company=None, search=None, format="text"))
     listed = capsys.readouterr().out
     assert "Acme Corp" in listed
     assert "Beta Inc" in listed
