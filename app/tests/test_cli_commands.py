@@ -1786,6 +1786,25 @@ def test_doctor_passes_blacklist_check_when_no_blacklist_file_exists(tmp_path, c
     assert "[OK] Blacklist file valid" in capsys.readouterr().out
 
 
+def test_doctor_flags_a_blacklist_path_whose_directory_cannot_be_created(tmp_path, capsys):
+    """Real failure this guards against: BLACKLIST_PATH pointing at a
+    directory that can't be created (e.g. a regular file already
+    occupying that path) previously passed this check silently (a missing
+    file always returned OK, with no writability probe) - the first
+    `job-bot blacklist add` (or a dashboard one-click blacklist) would
+    then fail deep in CompanyBlacklist._save(), well past `job-bot
+    doctor` giving a clean bill of health.
+    """
+    blocking_file = tmp_path / "blacklist_dir"
+    blocking_file.write_text("not a directory", encoding="utf-8")
+    settings = make_settings(tmp_path, blacklist_path=blocking_file / "nested" / "blacklist.json")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Blacklist file valid" in out
+
+
 def test_doctor_passes_blacklist_check_with_a_real_blacklist_file(tmp_path, capsys):
     settings = make_settings(tmp_path)
     settings.blacklist_path.write_text('["Acme Corp"]', encoding="utf-8")
@@ -1868,6 +1887,21 @@ def test_doctor_passes_faq_check_when_no_faq_file_exists(tmp_path, capsys):
     assert "[OK] FAQ cache valid" in capsys.readouterr().out
 
 
+def test_doctor_flags_a_faq_path_whose_directory_cannot_be_created(tmp_path, capsys):
+    """Same reasoning as _blacklist_check's own equivalent test - a missing
+    FAQ_PATH whose directory can't be created previously passed this check
+    silently, with no writability probe.
+    """
+    blocking_file = tmp_path / "faq_dir"
+    blocking_file.write_text("not a directory", encoding="utf-8")
+    settings = make_settings(tmp_path, faq_path=blocking_file / "nested" / "faq.json")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] FAQ cache valid" in out
+
+
 def test_doctor_passes_faq_check_with_a_real_faq_file(tmp_path, capsys):
     settings = make_settings(tmp_path)
     settings.faq_path.write_text('{"Years of Python experience?": "5"}', encoding="utf-8")
@@ -1934,6 +1968,21 @@ def test_doctor_passes_answer_gaps_check_when_no_answer_gaps_file_exists(tmp_pat
     cmd_doctor(settings, doctor_args())
 
     assert "[OK] Answer-gaps file valid" in capsys.readouterr().out
+
+
+def test_doctor_flags_an_answer_gaps_path_whose_directory_cannot_be_created(tmp_path, capsys):
+    """Same reasoning as _blacklist_check's own equivalent test - a missing
+    ANSWER_GAPS_PATH whose directory can't be created previously passed
+    this check silently, with no writability probe.
+    """
+    blocking_file = tmp_path / "answer_gaps_dir"
+    blocking_file.write_text("not a directory", encoding="utf-8")
+    settings = make_settings(tmp_path, answer_gaps_path=blocking_file / "nested" / "answer_gaps.json")
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[!!] Answer-gaps file valid" in out
 
 
 def test_doctor_passes_answer_gaps_check_with_a_real_answer_gaps_file(tmp_path, capsys):

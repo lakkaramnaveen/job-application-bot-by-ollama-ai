@@ -1616,6 +1616,30 @@ def _resume_check(settings: Settings) -> tuple[str, bool, str]:
     return ("Resume file readable", True, str(settings.resume_path))
 
 
+def _probe_writable(directory: Path) -> str | None:
+    """Actually creates `directory` and writes/removes a small probe file
+    to prove it's writable, not just present - returns None if writable,
+    or the OSError's message if not. Shared by every doctor check that
+    needs this: _applications_dir_check/_blacklist_check/_faq_check/
+    _answer_gaps_check below, for the case their own file doesn't exist
+    yet (a fresh install, the normal case for all four) - a bare
+    .exists() check, or the JSON-validity check _blacklist_check/
+    _faq_check/_answer_gaps_check already run when the file IS present,
+    says nothing about whether that file's directory could actually be
+    written to the first time `job-bot run`/`blacklist add`/etc. needs
+    to create it - the same "verify, not just check existence" reasoning
+    _resume_check established first, for parsing rather than writing.
+    """
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        probe = directory / ".job_bot_doctor_probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as e:
+        return str(e)
+    return None
+
+
 def _blacklist_check(settings: Settings) -> tuple[str, bool, str]:
     """Neither missing (a fresh install has no blacklist file yet, which is
     fine) nor present-but-corrupted should look the same as "no companies
@@ -1629,9 +1653,17 @@ def _blacklist_check(settings: Settings) -> tuple[str, bool, str]:
     losing every previously blacklisted one. Catches the corruption here,
     before either of those, the same way _resume_check catches a corrupted
     resume before `job-bot run` gets there.
+
+    When the file doesn't exist yet (the normal fresh-install case),
+    proves the directory it would be created in is actually writable
+    instead - see _probe_writable()'s own docstring for why a bare
+    .exists() check alone isn't enough here either.
     """
     label = "Blacklist file valid (optional)"
     if not settings.blacklist_path.exists():
+        error = _probe_writable(settings.blacklist_path.parent)
+        if error is not None:
+            return (label, False, f"{settings.blacklist_path.parent}: {error}")
         return (label, True, "")
     try:
         data = json.loads(settings.blacklist_path.read_text(encoding="utf-8"))
@@ -1653,9 +1685,16 @@ def _faq_check(settings: Settings) -> tuple[str, bool, str]:
     cache just means re-asking the LLM, not a lost safety guarantee), but
     still worth a heads-up before `job-bot review-answers`/`job-bot run`
     silently start treating every previously-learned answer as unknown.
+
+    When the file doesn't exist yet, proves the directory it would be
+    created in is actually writable instead - see _probe_writable()'s
+    own docstring.
     """
     label = "FAQ cache valid (optional)"
     if not settings.faq_path.exists():
+        error = _probe_writable(settings.faq_path.parent)
+        if error is not None:
+            return (label, False, f"{settings.faq_path.parent}: {error}")
         return (label, True, "")
     try:
         data = json.loads(settings.faq_path.read_text(encoding="utf-8"))
@@ -1680,9 +1719,16 @@ def _answer_gaps_check(settings: Settings) -> tuple[str, bool, str]:
     corruption would silently overwrite the file with just that one new
     entry, permanently losing every previously recorded gap `job-bot
     review-answers` had queued up to review.
+
+    When the file doesn't exist yet, proves the directory it would be
+    created in is actually writable instead - see _probe_writable()'s
+    own docstring.
     """
     label = "Answer-gaps file valid (optional)"
     if not settings.answer_gaps_path.exists():
+        error = _probe_writable(settings.answer_gaps_path.parent)
+        if error is not None:
+            return (label, False, f"{settings.answer_gaps_path.parent}: {error}")
         return (label, True, "")
     try:
         data = json.loads(settings.answer_gaps_path.read_text(encoding="utf-8"))
@@ -1708,19 +1754,15 @@ def _applications_dir_check(settings: Settings) -> tuple[str, bool, str]:
     a permission-denied directory previously only surfaced as a confusing
     prep_error on the very first posting worth applying to, well past
     `job-bot doctor` giving a clean bill of health. Actually creates the
-    directory and writes/removes a small probe file, the same "verify, not
-    just check existence" reasoning _resume_check uses (an existing-but-
-    unwritable directory would pass a bare .exists() check and still fail
-    the first real run).
+    directory and writes/removes a small probe file (_probe_writable()
+    above), the same "verify, not just check existence" reasoning
+    _resume_check uses (an existing-but-unwritable directory would pass a
+    bare .exists() check and still fail the first real run).
     """
     label = "Applications directory writable"
-    try:
-        settings.applications_dir.mkdir(parents=True, exist_ok=True)
-        probe = settings.applications_dir / ".job_bot_doctor_probe"
-        probe.write_text("", encoding="utf-8")
-        probe.unlink()
-    except OSError as e:
-        return (label, False, f"{settings.applications_dir}: {e}")
+    error = _probe_writable(settings.applications_dir)
+    if error is not None:
+        return (label, False, f"{settings.applications_dir}: {error}")
     return (label, True, str(settings.applications_dir))
 
 
