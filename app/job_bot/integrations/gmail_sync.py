@@ -21,6 +21,8 @@ import re
 from job_bot.integrations.email_classifier import classify_email
 from job_bot.integrations.gmail_client import EmailMessage, GmailClient
 from job_bot.llm.base import LLMProvider
+from job_bot.llm.claude_provider import ClaudeProviderError
+from job_bot.llm.ollama_provider import OllamaProviderError
 from job_bot.models.schemas import EmailCategory
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.text_utils import normalize_company_name
@@ -68,6 +70,11 @@ class GmailSyncResult:
     )  # job_id, company, new_status
     unmatched_subjects: list[str] = dataclasses.field(default_factory=list)
     skipped_low_confidence: int = 0
+    # Emails the LLM provider failed to classify (a retry-exhausted
+    # validation failure, or the provider being unreachable mid-batch) -
+    # see sync_gmail()'s own docstring for why this doesn't abort the rest
+    # of the batch the way it previously did.
+    classification_errors: int = 0
 
 
 def _contains_as_whole_word(haystack: str, needle: str) -> bool:
@@ -145,6 +152,22 @@ def sync_gmail(
     gmail_sync_unmatched` (or --search) now finds a past run's ambiguous
     emails after the fact, for a status the user can still go set by hand
     with `job-bot status <job_id> <status>`.
+
+    A classify_email() failure for one email (confirmed live: a retry-
+    exhausted structured-output validation failure - see ollama_provider.py's
+    generate_structured()) previously propagated straight out of this
+    function uncaught, aborting the whole run - every email after the
+    failing one in the batch was never even attempted, and the run's own
+    summary (result.updated/unmatched_subjects/skipped_low_confidence) for
+    every email processed *before* the failure was lost too, since nothing
+    caught the exception to return the partial result. Unlike cmd_run's
+    own per-posting resilience (a prep_error/apply_error for one posting
+    doesn't abort the rest of that cycle's postings), this had no
+    equivalent. Now caught per email, logged as "gmail_sync_classify_error"
+    and counted in classification_errors, and the loop moves on to the
+    next email - status updates already made to the tracker for prior
+    emails in this same run are unaffected either way, since each is
+    written immediately inside the loop, not batched at the end.
     """
     query = DEFAULT_QUERY_TEMPLATE.format(days=days)
     emails: list[EmailMessage] = gmail_client.search_messages(query, max_results=max_emails)
@@ -153,7 +176,13 @@ def sync_gmail(
     result = GmailSyncResult(total_emails=len(emails))
 
     for email in emails:
-        classification = classify_email(provider, email)
+        try:
+            classification = classify_email(provider, email)
+        except (ClaudeProviderError, OllamaProviderError) as e:
+            result.classification_errors += 1
+            if audit is not None:
+                audit.log("gmail_sync_classify_error", email_subject=email.subject, error=str(e))
+            continue
         if not classification.is_job_related or classification.category == "other":
             continue
         if classification.confidence < confidence_threshold:

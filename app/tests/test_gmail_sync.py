@@ -1,21 +1,31 @@
 from job_bot.integrations.gmail_client import EmailMessage
 from job_bot.integrations.gmail_sync import _contains_as_whole_word, find_matching_job, sync_gmail
 from job_bot.llm.base import LLMProvider
+from job_bot.llm.ollama_provider import OllamaProviderError
 from job_bot.models.schemas import EmailClassification
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.tracker.db import Tracker
 
 
 class QueueProvider(LLMProvider):
-    """Returns one canned EmailClassification per call, in order."""
+    """Returns one canned EmailClassification per call, in order - or
+    raises, if the next queued item is an exception instance instead, so a
+    single call in the middle of a batch can simulate the LLM provider
+    failing on just that one email (a retry-exhausted validation failure,
+    or a transient outage) without affecting the canned results queued
+    before or after it.
+    """
 
-    def __init__(self, results: list[EmailClassification]):
+    def __init__(self, results: list[EmailClassification | Exception]):
         self._results = list(results)
         self.calls = 0
 
     def generate_structured(self, *, system, prompt, schema):
         self.calls += 1
-        return self._results.pop(0)
+        result = self._results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class FakeGmailClient:
@@ -156,6 +166,48 @@ def test_sync_gmail_dry_run_does_not_write(tmp_path):
 
     assert result.updated == [("job1", "Acme Corp", "interviewing")]
     assert tracker.get_job("job1")["status"] == "applied"
+
+
+def test_sync_gmail_continues_past_a_classification_error(tmp_path):
+    """Real bug this guards against, confirmed live: a single email
+    causing an LLM provider failure (a retry-exhausted structured-output
+    validation failure, or a transient outage) previously propagated
+    straight out of sync_gmail(), aborting the whole run - every email
+    after the failing one in the batch was never even attempted, and the
+    run's own summary for every email processed *before* the failure was
+    lost too, since nothing caught the exception to return a result at all.
+    """
+    tracker = make_tracker_with_job(tmp_path, status="applied")
+    gmail = FakeGmailClient(
+        [make_email(subject="email 1"), make_email(subject="email 2"), make_email(subject="email 3")]
+    )
+    provider = QueueProvider(
+        [
+            make_classification(),
+            OllamaProviderError("simulated: model returned unparseable JSON after retries"),
+            make_classification(),
+        ]
+    )
+
+    result = sync_gmail(provider, gmail, tracker)
+
+    assert provider.calls == 3  # every email was attempted, not just up to the failure
+    assert result.classification_errors == 1
+    assert result.updated == [("job1", "Acme Corp", "interviewing")]  # email 1's real result survived
+
+
+def test_sync_gmail_logs_classification_errors_to_the_audit_trail(tmp_path):
+    tracker = make_tracker_with_job(tmp_path, status="applied")
+    gmail = FakeGmailClient([make_email(subject="Broken email")])
+    provider = QueueProvider([OllamaProviderError("simulated failure")])
+    audit = AuditLogger(tmp_path / "audit.log")
+
+    sync_gmail(provider, gmail, tracker, audit=audit)
+
+    log_text = (tmp_path / "audit.log").read_text()
+    assert "gmail_sync_classify_error" in log_text
+    assert "Broken email" in log_text
+    assert "simulated failure" in log_text
 
 
 def test_sync_gmail_skips_low_confidence(tmp_path):

@@ -652,6 +652,10 @@ updates on an ambiguous match (multiple or zero tracked jobs match the
 guessed company), a low-confidence classification, or a job already in a
 terminal status (`offer`/`rejected`/`withdrawn`/`no_response`) - see
 `job_bot/integrations/gmail_sync.py`'s module docstring for the exact rules.
+An email the LLM provider fails to classify (a transient error, or a
+retry-exhausted response) is skipped, not fatal to the rest of the run -
+the sync keeps going and reports how many at the end (see `job-bot
+audit-log --action gmail_sync_classify_error` for which ones and why).
 A job moved to `applied` this way - or by hand, via `job-bot status <id>
 applied` - gets the same applied-date bookkeeping a real submission through
 `job-bot run` gets, so it's correctly picked up by `job-bot report`'s

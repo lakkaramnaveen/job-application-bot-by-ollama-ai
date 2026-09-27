@@ -1469,6 +1469,7 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
             ],
             "skipped_low_confidence": result.skipped_low_confidence,
             "unmatched_subjects": result.unmatched_subjects,
+            "classification_errors": result.classification_errors,
         }
         print(json.dumps(payload, indent=2))
         return
@@ -1483,6 +1484,11 @@ def cmd_gmail_sync(settings: Settings, args: argparse.Namespace) -> None:
         print("Job-related but couldn't confidently match to a tracked application:")
         for subject in result.unmatched_subjects:
             print(f"  - {subject}")
+    if result.classification_errors:
+        print(
+            f"{result.classification_errors} email(s) could not be classified (LLM provider error) - "
+            "see `job-bot audit-log --action gmail_sync_classify_error` for what happened and why."
+        )
 
 
 def cmd_blacklist(settings: Settings, args: argparse.Namespace) -> None:

@@ -3454,6 +3454,36 @@ def test_gmail_sync_prints_updates_low_confidence_and_unmatched_sections(tmp_pat
     assert "Re: your application" in out
 
 
+def test_gmail_sync_prints_a_classification_errors_line_when_nonzero(tmp_path, monkeypatch, capsys):
+    from job_bot.integrations.gmail_sync import GmailSyncResult
+
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
+    monkeypatch.setattr("job_bot.cli.GmailClient", FakeGmailClientForCli)
+    fake_result = GmailSyncResult(total_emails=3, classification_errors=1)
+    monkeypatch.setattr("job_bot.cli.sync_gmail", lambda *a, **kw: fake_result)
+
+    cmd_gmail_sync(settings, gmail_sync_args())
+
+    out = capsys.readouterr().out
+    assert "1 email(s) could not be classified (LLM provider error)" in out
+    assert "job-bot audit-log --action gmail_sync_classify_error" in out
+
+
+def test_gmail_sync_omits_the_classification_errors_line_when_zero(tmp_path, monkeypatch, capsys):
+    from job_bot.integrations.gmail_sync import GmailSyncResult
+
+    settings = make_settings(tmp_path)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeScoreProvider())
+    monkeypatch.setattr("job_bot.cli.GmailClient", FakeGmailClientForCli)
+    fake_result = GmailSyncResult(total_emails=3)
+    monkeypatch.setattr("job_bot.cli.sync_gmail", lambda *a, **kw: fake_result)
+
+    cmd_gmail_sync(settings, gmail_sync_args())
+
+    assert "could not be classified" not in capsys.readouterr().out
+
+
 def test_gmail_sync_dry_run_prefixes_updates_as_would_update(tmp_path, monkeypatch, capsys):
     from job_bot.integrations.gmail_sync import GmailSyncResult
 
@@ -3479,6 +3509,7 @@ def test_gmail_sync_format_json_prints_the_full_result(tmp_path, monkeypatch, ca
         updated=[("job1", "Acme", "interviewing")],
         unmatched_subjects=["Re: your application"],
         skipped_low_confidence=2,
+        classification_errors=1,
     )
     monkeypatch.setattr("job_bot.cli.sync_gmail", lambda *a, **kw: fake_result)
 
@@ -3491,6 +3522,7 @@ def test_gmail_sync_format_json_prints_the_full_result(tmp_path, monkeypatch, ca
         "updated": [{"job_id": "job1", "company": "Acme", "new_status": "interviewing"}],
         "skipped_low_confidence": 2,
         "unmatched_subjects": ["Re: your application"],
+        "classification_errors": 1,
     }
 
 
