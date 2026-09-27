@@ -878,6 +878,39 @@ def test_post_answer_gaps_dismiss_rejects_oversized_body(live_server):
     assert exc_info.value.code == 400
 
 
+def test_post_answer_gaps_dismiss_rejects_a_non_numeric_content_length(live_server):
+    """Same real bug/fix as test_post_status_rejects_a_non_numeric_content_
+    length above, for /api/answer-gaps/dismiss's own, separately-
+    implemented Content-Length parsing - added along with the endpoint
+    itself in 199262f, but without this direct regression test any of the
+    other three handlers that parse a JSON body already got (status, note,
+    blacklist/remove) once each was found to actually need one. Every
+    handler with this shape parses Content-Length with its own unguarded
+    int(...) call, not a shared helper, so each one needs its own proof it
+    doesn't crash on a non-numeric value the same way the others already
+    did before their fixes.
+    """
+    parts = urlsplit(live_server)
+    sock = socket.create_connection((parts.hostname, parts.port), timeout=5)
+    try:
+        sock.sendall(
+            f"POST /api/answer-gaps/dismiss HTTP/1.1\r\n"
+            f"Host: {parts.hostname}:{parts.port}\r\n"
+            f"Origin: {live_server}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: not-a-number\r\n\r\n".encode()
+        )
+        chunks = []
+        while chunk := sock.recv(4096):
+            chunks.append(chunk)
+        response = b"".join(chunks).decode("utf-8", errors="replace")
+    finally:
+        sock.close()
+
+    assert response.startswith("HTTP/1.0 400") or response.startswith("HTTP/1.1 400")
+    assert "Invalid Content-Length" in response
+
+
 def test_get_audit_log_is_empty_by_default(live_server):
     with urllib.request.urlopen(f"{live_server}/api/audit-log") as resp:
         assert resp.headers["Content-Type"].startswith("text/html")
