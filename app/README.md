@@ -643,6 +643,12 @@ seen, and lets you:
   `job-bot audit-log`/`job-bot audit-log --failures`, capped to the 50
   most recent matching entries (the CLI command has no such cap, for
   anyone who needs the full history).
+- **View unanswered required questions** in a modal, most-frequently-seen
+  first - the dashboard counterpart to `job-bot review-answers`, so you can
+  see how many are piling up (and which ones) without a separate terminal.
+  Actually answering one still needs `job-bot review-answers` itself - this
+  view is read-only, the same way the missing-qualifications and audit-log
+  modals are.
 
 The dashboard has no login (it's a local tool over your own data), so every
 state-changing endpoint (the inline status update, blacklisting a company,

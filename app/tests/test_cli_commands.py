@@ -3670,9 +3670,27 @@ def _fake_run_dashboard(calls: list) -> object:
     without starting a real server.
     """
 
-    def fake(db_path, blacklist_path, audit_log_path, failed_applications_log_path, port, open_browser, stale_after_days):
+    def fake(
+        db_path,
+        blacklist_path,
+        audit_log_path,
+        failed_applications_log_path,
+        answer_gaps_path,
+        port,
+        open_browser,
+        stale_after_days,
+    ):
         calls.append(
-            (db_path, blacklist_path, audit_log_path, failed_applications_log_path, port, open_browser, stale_after_days)
+            (
+                db_path,
+                blacklist_path,
+                audit_log_path,
+                failed_applications_log_path,
+                answer_gaps_path,
+                port,
+                open_browser,
+                stale_after_days,
+            )
         )
 
     return fake
@@ -3692,6 +3710,7 @@ def test_dashboard_passes_port_and_open_browser_through(tmp_path, monkeypatch):
             settings.blacklist_path,
             settings.audit_log_path,
             settings.failed_applications_log_path,
+            settings.answer_gaps_path,
             9999,
             False,
             settings.stale_after_days,
@@ -3713,6 +3732,7 @@ def test_dashboard_falls_back_to_settings_port_when_not_given(tmp_path, monkeypa
             settings.blacklist_path,
             settings.audit_log_path,
             settings.failed_applications_log_path,
+            settings.answer_gaps_path,
             8765,
             True,
             settings.stale_after_days,

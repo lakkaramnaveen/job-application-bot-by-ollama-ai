@@ -2,6 +2,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from job_bot.dashboard.render import (
+    render_answer_gaps_html,
     render_audit_log_html,
     render_blacklist_html,
     render_missing_qualifications_html,
@@ -441,6 +442,42 @@ def test_render_page_html_includes_the_missing_qualifications_button_and_dialog(
     assert 'id="showMissingQualifications"' in html
     assert 'id="missingQualificationsDialog"' in html
     assert 'id="missingQualificationsContent"' in html
+
+
+def test_render_answer_gaps_html_empty_state():
+    html = render_answer_gaps_html({})
+    assert "No unanswered required questions recorded." in html
+
+
+def test_render_answer_gaps_html_orders_most_frequently_seen_first():
+    """"Rare question" is deliberately listed first in the input dict, with
+    the lower count - only passes if the render function sorts by count
+    itself rather than trusting insertion order, same as
+    test_render_missing_qualifications_html_orders_most_common_first.
+    """
+    gaps = {
+        "Rare question": {"count": 1, "example_title": "SRE", "example_company": "Beta"},
+        "Common question": {"count": 2, "example_title": "Backend Engineer", "example_company": "Acme"},
+    }
+    html = render_answer_gaps_html(gaps)
+    assert html.index("Common question") < html.index("Rare question")
+    assert ">2<" in html
+    assert ">1<" in html
+    assert "Backend Engineer at Acme" in html
+
+
+def test_render_answer_gaps_html_escapes_the_question_to_prevent_xss():
+    gaps = {'<script>alert(1)</script>Sponsorship?"': {"count": 1, "example_title": "X", "example_company": "Y"}}
+    html = render_answer_gaps_html(gaps)
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_render_page_html_includes_the_answer_gaps_button_and_dialog():
+    html = render_page_html([make_job()])
+    assert 'id="showAnswerGaps"' in html
+    assert 'id="answerGapsDialog"' in html
+    assert 'id="answerGapsContent"' in html
 
 
 def test_render_audit_log_html_empty_state():

@@ -323,6 +323,37 @@ def render_missing_qualifications_html(breakdown: dict[str, int]) -> str:
     return f'<ul class="mq-list">{items}</ul>'
 
 
+def render_answer_gaps_html(gaps: dict[str, dict[str, Any]]) -> str:
+    """Unanswered required-question gaps (AnswerGapStore.list_unanswered())
+    as an HTML fragment, for the dashboard's Unanswered Questions modal -
+    the dashboard counterpart to `job-bot review-answers`, read-only the
+    same way render_missing_qualifications_html/render_blacklist_html are:
+    actually answering one still needs review-answers' interactive
+    input() prompt, which a passive dashboard page can't do, but seeing
+    how many are piling up (and which ones) previously needed a separate
+    terminal even just to check - the same gap `job-bot report
+    --by-missing-qualifications` closed for scorer-flagged gaps, here for
+    the answer-side ones. Sorted most-frequently-seen first, ties broken
+    alphabetically for a stable order - same sort as `job-bot
+    review-answers` uses (see cmd_review_answers), plus the alphabetical
+    tiebreak render_missing_qualifications_html already uses for the same
+    reason: a deterministic render order rather than whatever order the
+    underlying dict happens to iterate in.
+    """
+    if not gaps:
+        return '<p class="empty">No unanswered required questions recorded.</p>'
+    ordered = sorted(gaps.items(), key=lambda item: (-item[1].get("count", 0), item[0].casefold()))
+    items = []
+    for question, info in ordered:
+        count = info.get("count", 1)
+        example = f"{info.get('example_title', '')} at {info.get('example_company', '')}"
+        items.append(
+            f'<li><span class="gap-count">{count}</span> {html.escape(question)} '
+            f'<span class="gap-example">e.g. {html.escape(example)}</span></li>'
+        )
+    return f'<ul class="gap-list">{"".join(items)}</ul>'
+
+
 def render_audit_log_html(entries: list[dict[str, Any]]) -> str:
     """Logged actions (AuditLogger.read_entries(), already most-recent-first
     and already capped by the caller - see server.py's _AUDIT_LOG_LIMIT) as
@@ -479,6 +510,11 @@ def render_page_html(
   .mq-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
   .mq-list li:last-child {{ border-bottom: none; }}
   .mq-count {{ display: inline-block; min-width: 1.75rem; font-weight: 600; color: var(--muted); }}
+  .gap-list {{ list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }}
+  .gap-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
+  .gap-list li:last-child {{ border-bottom: none; }}
+  .gap-count {{ display: inline-block; min-width: 1.75rem; font-weight: 600; color: var(--muted); }}
+  .gap-example {{ display: block; color: var(--muted); font-size: 0.85em; }}
   .audit-log-list {{ list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }}
   .audit-log-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }}
   .audit-log-list li:last-child {{ border-bottom: none; }}
@@ -517,6 +553,7 @@ def render_page_html(
   <a id="exportJson" class="export-link" href="/api/export.json">Export JSON</a>
   <button type="button" id="manageBlacklist" class="export-link">Manage Blacklist</button>
   <button type="button" id="showMissingQualifications" class="export-link">Missing Qualifications</button>
+  <button type="button" id="showAnswerGaps" class="export-link">Unanswered Questions</button>
   <button type="button" id="showAuditLog" class="export-link">Audit Log</button>
 </form>
 
@@ -559,6 +596,12 @@ def render_page_html(
   <h2>Most common missing qualifications</h2>
   <div id="missingQualificationsContent"></div>
   <button type="button" id="missingQualificationsClose">Close</button>
+</dialog>
+
+<dialog id="answerGapsDialog">
+  <h2>Unanswered required questions</h2>
+  <div id="answerGapsContent"></div>
+  <button type="button" id="answerGapsClose">Close</button>
 </dialog>
 
 <dialog id="auditLogDialog">
@@ -827,6 +870,20 @@ document.getElementById('showMissingQualifications').addEventListener('click', a
 document.getElementById('missingQualificationsClose').addEventListener(
   'click', () => missingQualificationsDialog.close()
 );
+
+const answerGapsDialog = document.getElementById('answerGapsDialog');
+document.getElementById('showAnswerGaps').addEventListener('click', async () => {{
+  const content = document.getElementById('answerGapsContent');
+  content.innerHTML = 'Loading...';
+  answerGapsDialog.showModal();
+  try {{
+    const res = await fetch('/api/answer-gaps');
+    content.innerHTML = res.ok ? await res.text() : 'Could not load unanswered questions.';
+  }} catch (err) {{
+    content.innerHTML = 'Could not load unanswered questions (network error).';
+  }}
+}});
+document.getElementById('answerGapsClose').addEventListener('click', () => answerGapsDialog.close());
 
 const auditLogDialog = document.getElementById('auditLogDialog');
 const auditLogSearch = document.getElementById('auditLogSearch');

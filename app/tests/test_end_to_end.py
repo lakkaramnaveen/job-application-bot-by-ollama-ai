@@ -378,6 +378,7 @@ def test_dashboard_serves_the_run_result_and_accepts_a_status_change(settings, w
             settings.blacklist_path,
             settings.audit_log_path,
             settings.failed_applications_log_path,
+            settings.answer_gaps_path,
         ),
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)

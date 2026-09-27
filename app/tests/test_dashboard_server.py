@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from job_bot.dashboard.server import DashboardPortInUse, make_handler, run_dashboard
+from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import Tracker
@@ -27,6 +28,7 @@ def live_server(tmp_path):
     blacklist_path = tmp_path / "blacklist.json"
     audit_log_path = tmp_path / "audit.log"
     failed_applications_log_path = tmp_path / "failed_applications.log"
+    answer_gaps_path = tmp_path / "answer_gaps.json"
     tracker = Tracker(db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://example.com/job1", match_score=80)
     tracker.mark_applied("job1")
@@ -36,7 +38,7 @@ def live_server(tmp_path):
 
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0),
-        make_handler(db_path, blacklist_path, audit_log_path, failed_applications_log_path),
+        make_handler(db_path, blacklist_path, audit_log_path, failed_applications_log_path, answer_gaps_path),
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -799,6 +801,26 @@ def test_get_missing_qualifications_shows_the_most_common_gaps(live_server, tmp_
     assert body.index("Kubernetes experience") < body.index("Docker")
 
 
+def test_get_answer_gaps_is_empty_by_default(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/answer-gaps") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+    assert "No unanswered required questions recorded." in body
+
+
+def test_get_answer_gaps_shows_the_most_frequently_seen_question_first(live_server, tmp_path):
+    store = AnswerGapStore(tmp_path / "answer_gaps.json")
+    store.record("Rare question", job_id="1", company="Acme", title="Backend Engineer")
+    for job_id in ("2", "3"):
+        store.record("Common question", job_id=job_id, company="Acme", title="Backend Engineer")
+
+    with urllib.request.urlopen(f"{live_server}/api/answer-gaps") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert body.index("Common question") < body.index("Rare question")
+    assert "Backend Engineer at Acme" in body
+
+
 def test_get_audit_log_is_empty_by_default(live_server):
     with urllib.request.urlopen(f"{live_server}/api/audit-log") as resp:
         assert resp.headers["Content-Type"].startswith("text/html")
@@ -969,6 +991,7 @@ def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatc
         tmp_path / "blacklist.json",
         tmp_path / "audit.log",
         tmp_path / "failed_applications.log",
+        tmp_path / "answer_gaps.json",
         port=0,
         open_browser=True,
     )
@@ -995,6 +1018,7 @@ def test_run_dashboard_raises_a_clear_error_when_the_port_is_already_in_use(tmp_
                 tmp_path / "blacklist.json",
                 tmp_path / "audit.log",
                 tmp_path / "failed_applications.log",
+                tmp_path / "answer_gaps.json",
                 port=taken_port,
             )
     finally:
@@ -1012,6 +1036,7 @@ def test_run_dashboard_raises_a_clear_error_for_an_out_of_range_port(tmp_path):
             tmp_path / "blacklist.json",
             tmp_path / "audit.log",
             tmp_path / "failed_applications.log",
+            tmp_path / "answer_gaps.json",
             port=99999999,
         )
 

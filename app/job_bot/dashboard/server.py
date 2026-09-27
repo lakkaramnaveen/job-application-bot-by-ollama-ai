@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from job_bot.dashboard.render import (
     PAGE_SIZE,
+    render_answer_gaps_html,
     render_audit_log_html,
     render_blacklist_html,
     render_missing_qualifications_html,
@@ -32,6 +33,7 @@ from job_bot.dashboard.render import (
     render_rows_html,
     render_stats_html,
 )
+from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import (
@@ -107,6 +109,7 @@ def make_handler(
     blacklist_path: Path,
     audit_log_path: Path,
     failed_applications_log_path: Path,
+    answer_gaps_path: Path,
     *,
     stale_after_days: int = 14,
 ) -> type[BaseHTTPRequestHandler]:
@@ -187,6 +190,8 @@ def make_handler(
                 self._handle_blacklist_list()
             elif parsed.path == "/api/missing-qualifications":
                 self._handle_missing_qualifications(tracker)
+            elif parsed.path == "/api/answer-gaps":
+                self._handle_answer_gaps()
             elif parsed.path == "/api/audit-log":
                 self._handle_audit_log(parse_qs(parsed.query))
             else:
@@ -479,6 +484,18 @@ def make_handler(
             body = render_missing_qualifications_html(breakdown).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
+        def _handle_answer_gaps(self) -> None:
+            """The dashboard counterpart to `job-bot review-answers` - read-
+            only the same way _handle_blacklist_list/
+            _handle_missing_qualifications are: actually answering a gap
+            still needs review-answers' interactive prompt, but seeing what's
+            piling up (and how often each one has come up) no longer needs a
+            separate terminal just to check.
+            """
+            gaps = AnswerGapStore(answer_gaps_path).list_unanswered()
+            body = render_answer_gaps_html(gaps).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+
         def _handle_audit_log(self, query: dict[str, list[str]]) -> None:
             """The dashboard counterpart to `job-bot audit-log` - read-only
             the same way _handle_blacklist_list/_handle_missing_qualifications
@@ -538,13 +555,19 @@ def run_dashboard(
     blacklist_path: Path,
     audit_log_path: Path,
     failed_applications_log_path: Path,
+    answer_gaps_path: Path,
     port: int = 8765,
     open_browser: bool = True,
     *,
     stale_after_days: int = 14,
 ) -> None:
     handler = make_handler(
-        db_path, blacklist_path, audit_log_path, failed_applications_log_path, stale_after_days=stale_after_days
+        db_path,
+        blacklist_path,
+        audit_log_path,
+        failed_applications_log_path,
+        answer_gaps_path,
+        stale_after_days=stale_after_days,
     )
     try:
         server = ThreadingHTTPServer((DASHBOARD_HOST, port), handler)
