@@ -170,6 +170,25 @@ def test_sync_gmail_skips_low_confidence(tmp_path):
     assert tracker.get_job("job1")["status"] == "applied"
 
 
+def test_sync_gmail_logs_low_confidence_skips_to_the_audit_trail(tmp_path):
+    """Real gap this guards against: GmailSyncResult.skipped_low_confidence
+    only ever reported this in the current run's own printed output -
+    nothing recorded it to the audit trail the way every other outcome
+    cmd_run/gmail_sync produces already does, so a past run's low-
+    confidence skip left no trace `job-bot audit-log` could find later.
+    """
+    tracker = make_tracker_with_job(tmp_path, status="applied")
+    gmail = FakeGmailClient([make_email(subject="Maybe an interview?")])
+    provider = QueueProvider([make_classification(confidence=0.2)])
+    audit = AuditLogger(tmp_path / "audit.log")
+
+    sync_gmail(provider, gmail, tracker, confidence_threshold=0.6, audit=audit)
+
+    log_text = (tmp_path / "audit.log").read_text()
+    assert "gmail_sync_skipped_low_confidence" in log_text
+    assert "Maybe an interview?" in log_text
+
+
 def test_sync_gmail_skips_non_job_related(tmp_path):
     tracker = make_tracker_with_job(tmp_path, status="applied")
     gmail = FakeGmailClient([make_email()])
@@ -190,6 +209,24 @@ def test_sync_gmail_records_unmatched_subject_when_no_company_match(tmp_path):
 
     assert result.updated == []
     assert result.unmatched_subjects == ["Mystery email"]
+
+
+def test_sync_gmail_logs_unmatched_subjects_to_the_audit_trail(tmp_path):
+    """Same gap as the low-confidence case above - an unmatched email
+    previously left no trace in the audit trail, only in the current run's
+    own printed output.
+    """
+    tracker = make_tracker_with_job(tmp_path, status="applied", company="Acme Corp")
+    gmail = FakeGmailClient([make_email(subject="Mystery email")])
+    provider = QueueProvider([make_classification(company_guess="Totally Different Co")])
+    audit = AuditLogger(tmp_path / "audit.log")
+
+    sync_gmail(provider, gmail, tracker, audit=audit)
+
+    log_text = (tmp_path / "audit.log").read_text()
+    assert "gmail_sync_unmatched" in log_text
+    assert "Mystery email" in log_text
+    assert "Totally Different Co" in log_text
 
 
 def test_sync_gmail_never_updates_a_terminal_status(tmp_path):

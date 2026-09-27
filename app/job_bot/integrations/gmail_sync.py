@@ -133,6 +133,19 @@ def sync_gmail(
     dry_run: bool = False,
     audit: AuditLogger | None = None,
 ) -> GmailSyncResult:
+    """Logs every real outcome to `audit` when given, not just the ones
+    that actually changed a tracked job's status: "gmail_sync_update" (as
+    before), and now "gmail_sync_skipped_low_confidence"/"gmail_sync_
+    unmatched" too - GmailSyncResult's own skipped_low_confidence/
+    unmatched_subjects already report these for the current run's printed
+    output, but until now they left no trace in the audit trail once that
+    output scrolled past, unlike every other part of this tool (cmd_run's
+    search/scored/skip_*/applied events) that logs its non-"success" cases
+    just as faithfully as its successes. `job-bot audit-log --action
+    gmail_sync_unmatched` (or --search) now finds a past run's ambiguous
+    emails after the fact, for a status the user can still go set by hand
+    with `job-bot status <job_id> <status>`.
+    """
     query = DEFAULT_QUERY_TEMPLATE.format(days=days)
     emails: list[EmailMessage] = gmail_client.search_messages(query, max_results=max_emails)
     tracked_jobs = tracker.list_jobs()
@@ -145,6 +158,13 @@ def sync_gmail(
             continue
         if classification.confidence < confidence_threshold:
             result.skipped_low_confidence += 1
+            if audit is not None:
+                audit.log(
+                    "gmail_sync_skipped_low_confidence",
+                    email_subject=email.subject,
+                    category=classification.category,
+                    confidence=classification.confidence,
+                )
             continue
 
         new_status = CATEGORY_TO_STATUS.get(classification.category)
@@ -154,6 +174,14 @@ def sync_gmail(
         job = find_matching_job(tracked_jobs, classification.company_guess)
         if job is None:
             result.unmatched_subjects.append(email.subject)
+            if audit is not None:
+                audit.log(
+                    "gmail_sync_unmatched",
+                    email_subject=email.subject,
+                    category=classification.category,
+                    company_guess=classification.company_guess,
+                    confidence=classification.confidence,
+                )
             continue
 
         if not _should_update(job["status"], new_status):
