@@ -1026,6 +1026,40 @@ def test_post_faq_remove_rejects_a_non_numeric_content_length(live_server):
     assert "Invalid Content-Length" in response
 
 
+def test_get_qa_history_is_empty_by_default(live_server, tmp_path):
+    # live_server's own fixture tracks job1/job2 but never calls record_qa()
+    # on either, so this is the real empty state, not just an empty DB.
+    with urllib.request.urlopen(f"{live_server}/api/qa-history") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+    assert "No Q&amp;A history recorded yet." in body
+
+
+def test_get_qa_history_shows_entries_most_recent_first_with_company_and_title(live_server, tmp_path):
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.record_qa("job1", "Willing to relocate?", "No")
+    tracker.record_qa("job 2", "Years of Python experience?", "5")
+
+    with urllib.request.urlopen(f"{live_server}/api/qa-history") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert body.index("Years of Python experience?") < body.index("Willing to relocate?")
+    assert "Frontend Engineer at Acme Corp" in body
+    assert "Backend Engineer at Acme Corp" in body
+
+
+def test_get_qa_history_search_filters_entries(live_server, tmp_path):
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.record_qa("job1", "Willing to relocate?", "No")
+    tracker.record_qa("job 2", "Years of Python experience?", "5")
+
+    with urllib.request.urlopen(f"{live_server}/api/qa-history?q=relocate") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "Willing to relocate?" in body
+    assert "Years of Python experience?" not in body
+
+
 def test_get_audit_log_is_empty_by_default(live_server):
     with urllib.request.urlopen(f"{live_server}/api/audit-log") as resp:
         assert resp.headers["Content-Type"].startswith("text/html")

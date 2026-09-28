@@ -255,6 +255,37 @@ def render_qa_html(qa: list[dict[str, Any]]) -> str:
     return f'<dl class="qa-list">{"".join(items)}</dl>'
 
 
+def render_qa_history_html(qa: list[dict[str, Any]]) -> str:
+    """Every recorded question/answer across every job (Tracker.search_qa())
+    as an HTML fragment, for the dashboard's Q&A History modal - the
+    dashboard counterpart to `job-bot qa-history`, the same way the Audit
+    Log modal already is for `job-bot audit-log`. Unlike render_qa_html
+    above (one job's own transcript, opened from that job's own row - the
+    company/title are already on screen there), each entry here needs its
+    own company/title label since results span every job at once, most
+    recent first - the same reasoning render_audit_log_html's own
+    per-entry timestamp/action labels already follow. Untrusted end-to-end
+    the same way render_qa_html already is, so every field is escaped.
+    """
+    if not qa:
+        return '<p class="empty">No Q&amp;A history recorded yet.</p>'
+    items = []
+    for entry in qa:
+        question = html.escape(str(entry.get("question", "")))
+        answer = html.escape(str(entry.get("answer", "")))
+        company = html.escape(str(entry.get("company") or ""))
+        title = html.escape(str(entry.get("title") or ""))
+        # search_qa()'s LEFT JOIN means company/title come back None for a
+        # job_id no longer in `jobs` (see its own docstring) - shown as a
+        # plain label instead of blank/broken text in that case.
+        context = f"{title} at {company}" if (company or title) else "(job no longer tracked)"
+        items.append(
+            f'<li><div class="qa-history-context">{context}</div>'
+            f"<dl><dt>{question}</dt><dd>{answer}</dd></dl></li>"
+        )
+    return f'<ul class="qa-history-list">{"".join(items)}</ul>'
+
+
 def render_resume_html(generation: dict[str, Any] | None) -> str:
     """The tailored resume generated for this job (summary/skills/bullets -
     same shape Tracker.get_resume_generation() returns, and `job-bot status
@@ -575,6 +606,15 @@ def render_page_html(
               background: var(--surface); color: var(--fg); }}
   .audit-log-failures-label {{ display: block; font-size: 0.85rem; margin-bottom: 0.75rem;
               color: var(--fg); }}
+  .qa-history-list {{ list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }}
+  .qa-history-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
+  .qa-history-list li:last-child {{ border-bottom: none; }}
+  .qa-history-context {{ color: var(--muted); font-size: 0.8em; }}
+  .qa-history-list dt {{ font-weight: 600; margin-top: 0.25rem; }}
+  .qa-history-list dd {{ margin: 0.25rem 0 0; color: var(--fg); }}
+  #qaHistorySearch {{ width: 100%; box-sizing: border-box; font-size: 0.85rem; padding: 0.4rem 0.6rem;
+              margin-bottom: 0.75rem; border: 1px solid var(--border); border-radius: 6px;
+              background: var(--surface); color: var(--fg); }}
 </style>
 </head>
 <body>
@@ -604,6 +644,7 @@ def render_page_html(
   <button type="button" id="showMissingQualifications" class="export-link">Missing Qualifications</button>
   <button type="button" id="showAnswerGaps" class="export-link">Unanswered Questions</button>
   <button type="button" id="showFaq" class="export-link">FAQ Answers</button>
+  <button type="button" id="showQaHistory" class="export-link">Q&amp;A History</button>
   <button type="button" id="showAuditLog" class="export-link">Audit Log</button>
 </form>
 
@@ -658,6 +699,13 @@ def render_page_html(
   <h2>Cached FAQ answers</h2>
   <div id="faqContent"></div>
   <button type="button" id="faqClose">Close</button>
+</dialog>
+
+<dialog id="qaHistoryDialog">
+  <h2>Q&amp;A history</h2>
+  <input type="search" id="qaHistorySearch" placeholder="Search question or answer...">
+  <div id="qaHistoryContent"></div>
+  <button type="button" id="qaHistoryClose">Close</button>
 </dialog>
 
 <dialog id="auditLogDialog">
@@ -991,6 +1039,31 @@ document.getElementById('faqContent').addEventListener('click', async (e) => {{
   }} finally {{
     loadFaq();
   }}
+}});
+
+const qaHistoryDialog = document.getElementById('qaHistoryDialog');
+const qaHistorySearch = document.getElementById('qaHistorySearch');
+async function loadQaHistory() {{
+  const content = document.getElementById('qaHistoryContent');
+  content.innerHTML = 'Loading...';
+  const params = new URLSearchParams();
+  if (qaHistorySearch.value) params.set('q', qaHistorySearch.value);
+  try {{
+    const res = await fetch('/api/qa-history?' + params.toString());
+    content.innerHTML = res.ok ? await res.text() : 'Could not load Q&A history.';
+  }} catch (err) {{
+    content.innerHTML = 'Could not load Q&A history (network error).';
+  }}
+}}
+document.getElementById('showQaHistory').addEventListener('click', () => {{
+  qaHistoryDialog.showModal();
+  loadQaHistory();
+}});
+document.getElementById('qaHistoryClose').addEventListener('click', () => qaHistoryDialog.close());
+let qaHistorySearchTimer = null;
+qaHistorySearch.addEventListener('input', () => {{
+  clearTimeout(qaHistorySearchTimer);
+  qaHistorySearchTimer = setTimeout(loadQaHistory, 300);
 }});
 
 const auditLogDialog = document.getElementById('auditLogDialog');

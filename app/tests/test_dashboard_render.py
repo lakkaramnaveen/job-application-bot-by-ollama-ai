@@ -8,6 +8,7 @@ from job_bot.dashboard.render import (
     render_faq_html,
     render_missing_qualifications_html,
     render_page_html,
+    render_qa_history_html,
     render_qa_html,
     render_resume_html,
     render_rows_html,
@@ -333,6 +334,41 @@ def test_render_qa_html_renders_all_entries_in_order():
     assert html.index("Q1") < html.index("Q2")
 
 
+def test_render_qa_history_html_empty_state():
+    html = render_qa_history_html([])
+    assert "No Q&amp;A history recorded yet." in html
+
+
+def test_render_qa_history_html_shows_company_and_title_context_per_entry():
+    qa = [
+        {"job_id": "1", "company": "Acme", "title": "Backend Engineer", "question": "Q1", "answer": "A1"},
+        {"job_id": "2", "company": "Globex", "title": "SWE", "question": "Q2", "answer": "A2"},
+    ]
+    html = render_qa_history_html(qa)
+    assert "Backend Engineer at Acme" in html
+    assert "SWE at Globex" in html
+    assert html.index("Q1") < html.index("Q2")
+
+
+def test_render_qa_history_html_handles_a_job_no_longer_in_the_tracker():
+    """search_qa()'s LEFT JOIN (Tracker.search_qa()'s own docstring) means
+    company/title come back None for a job_id that's no longer in `jobs` -
+    must render a plain label instead of a blank/broken "at" fragment.
+    """
+    qa = [{"job_id": "1", "company": None, "title": None, "question": "Q1", "answer": "A1"}]
+    html = render_qa_history_html(qa)
+    assert "(job no longer tracked)" in html
+
+
+def test_render_qa_history_html_escapes_question_and_answer_to_prevent_xss():
+    qa = [{"company": "Acme", "title": "X", "question": "<script>alert(1)</script>", "answer": "<b>x</b>"}]
+    html = render_qa_history_html(qa)
+    assert "<script>alert(1)</script>" not in html
+    assert "<b>x</b>" not in html
+    assert "&lt;script&gt;" in html
+    assert "&lt;b&gt;" in html
+
+
 def test_render_resume_html_empty_state():
     assert "No tailored resume generated" in render_resume_html(None)
 
@@ -531,6 +567,14 @@ def test_render_page_html_includes_the_faq_button_and_dialog():
     assert 'id="showFaq"' in html
     assert 'id="faqDialog"' in html
     assert 'id="faqContent"' in html
+
+
+def test_render_page_html_includes_the_qa_history_button_and_dialog():
+    html = render_page_html([make_job()])
+    assert 'id="showQaHistory"' in html
+    assert 'id="qaHistoryDialog"' in html
+    assert 'id="qaHistorySearch"' in html
+    assert 'id="qaHistoryContent"' in html
 
 
 def test_render_audit_log_html_empty_state():

@@ -31,6 +31,7 @@ from job_bot.dashboard.render import (
     render_faq_html,
     render_missing_qualifications_html,
     render_page_html,
+    render_qa_history_html,
     render_qa_html,
     render_resume_html,
     render_rows_html,
@@ -83,6 +84,13 @@ _MISSING_QUALIFICATIONS_LIMIT = 20
 # an audit log entry is one line, not a paragraph, and `job-bot audit-log`
 # (no cap at all) is right there for anyone who needs the full history.
 _AUDIT_LOG_LIMIT = 50
+
+# Same reasoning as _AUDIT_LOG_LIMIT, for the same reason: Tracker.
+# search_qa() itself has no limit (matching `job-bot qa-history`, which is
+# the tool for anyone who needs the full, unbounded history), but the
+# dashboard's own modal has no paging control, so a fixed cap keeps it from
+# dumping every question ever recorded into one unbounded list.
+_QA_HISTORY_LIMIT = 50
 
 
 def _parse_list_params(query: dict[str, list[str]]) -> dict:
@@ -200,6 +208,8 @@ def make_handler(
                 self._handle_answer_gaps()
             elif parsed.path == "/api/faq":
                 self._handle_faq_list()
+            elif parsed.path == "/api/qa-history":
+                self._handle_qa_history(parse_qs(parsed.query))
             elif parsed.path == "/api/audit-log":
                 self._handle_audit_log(parse_qs(parsed.query))
             else:
@@ -514,6 +524,18 @@ def make_handler(
             """
             faq_answers = ResumeStore(resume_path, faq_path).faq_answers()
             body = render_faq_html(faq_answers).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_qa_history(self, query: dict[str, list[str]]) -> None:
+            """The dashboard counterpart to `job-bot qa-history` - read-only
+            the same way _handle_audit_log is, including the same `q` query
+            param name/semantics (case-insensitive substring match against
+            question or answer text) and the same fixed-cap-instead-of-
+            paging tradeoff (_QA_HISTORY_LIMIT), for the same reason.
+            """
+            search = (query.get("q") or [""])[0].strip() or None
+            pairs = Tracker(db_path).search_qa(search=search)[:_QA_HISTORY_LIMIT]
+            body = render_qa_history_html(pairs).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
         def _handle_audit_log(self, query: dict[str, list[str]]) -> None:

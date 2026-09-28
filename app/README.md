@@ -658,6 +658,13 @@ seen, and lets you:
   made during `job-bot review-answers`) needs no interactive prompt any
   more than removing a blacklist entry does, so it's a one-click Remove
   button here too.
+- **Browse the full Q&A history** in a modal, with a live search box - the
+  dashboard counterpart to `job-bot qa-history`, every question/answer
+  ever recorded across every job (not just one job's own transcript, or
+  the curated FAQ subset), most recent first with each entry's company
+  and title for context, capped to the 50 most recent matching entries
+  the same way the Audit Log modal is (`job-bot qa-history` itself has no
+  such cap, for anyone who needs the full history).
 
 The dashboard has no login (it's a local tool over your own data), so every
 state-changing endpoint (the inline status update, blacklisting a company,
