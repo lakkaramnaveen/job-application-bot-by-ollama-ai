@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from job_bot.dashboard.server import DashboardPortInUse, make_handler, run_dashboard
+from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
@@ -29,6 +30,8 @@ def live_server(tmp_path):
     audit_log_path = tmp_path / "audit.log"
     failed_applications_log_path = tmp_path / "failed_applications.log"
     answer_gaps_path = tmp_path / "answer_gaps.json"
+    resume_path = tmp_path / "resume.txt"
+    faq_path = tmp_path / "faq_answers.json"
     tracker = Tracker(db_path)
     tracker.upsert_job("job1", "Backend Engineer", "Acme Corp", "https://example.com/job1", match_score=80)
     tracker.mark_applied("job1")
@@ -38,7 +41,15 @@ def live_server(tmp_path):
 
     server = ThreadingHTTPServer(
         ("127.0.0.1", 0),
-        make_handler(db_path, blacklist_path, audit_log_path, failed_applications_log_path, answer_gaps_path),
+        make_handler(
+            db_path,
+            blacklist_path,
+            audit_log_path,
+            failed_applications_log_path,
+            answer_gaps_path,
+            resume_path,
+            faq_path,
+        ),
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -911,6 +922,110 @@ def test_post_answer_gaps_dismiss_rejects_a_non_numeric_content_length(live_serv
     assert "Invalid Content-Length" in response
 
 
+def test_get_faq_is_empty_by_default(live_server):
+    with urllib.request.urlopen(f"{live_server}/api/faq") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+    assert "No cached FAQ answers." in body
+
+
+def test_get_faq_shows_cached_pairs(live_server, tmp_path):
+    ResumeStore(tmp_path / "resume.txt", tmp_path / "faq_answers.json").save_faq_answer(
+        "Willing to relocate?", "Yes"
+    )
+
+    with urllib.request.urlopen(f"{live_server}/api/faq") as resp:
+        body = resp.read().decode("utf-8")
+
+    assert "Willing to relocate?" in body
+    assert "Yes" in body
+
+
+def test_post_faq_remove_removes_the_cached_answer(live_server, tmp_path):
+    store = ResumeStore(tmp_path / "resume.txt", tmp_path / "faq_answers.json")
+    store.save_faq_answer("Willing to relocate?", "Yes")
+
+    resp = _post_json(f"{live_server}/api/faq/remove", {"question": "Willing to relocate?"})
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "question": "Willing to relocate?", "removed": True}
+    assert store.faq_answers() == {}
+
+
+def test_post_faq_remove_of_absent_question_reports_not_removed(live_server):
+    resp = _post_json(f"{live_server}/api/faq/remove", {"question": "Never cached"})
+
+    assert resp.status == 200
+    data = json.loads(resp.read().decode("utf-8"))
+    assert data == {"ok": True, "question": "Never cached", "removed": False}
+
+
+def test_post_faq_remove_rejects_a_cross_origin_request(live_server, tmp_path):
+    store = ResumeStore(tmp_path / "resume.txt", tmp_path / "faq_answers.json")
+    store.save_faq_answer("Willing to relocate?", "Yes")
+
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/faq/remove", {"question": "Willing to relocate?"}, same_origin=False)
+    assert exc_info.value.code == 403
+    assert "Willing to relocate?" in store.faq_answers()
+
+
+def test_post_faq_remove_rejects_a_non_string_question_value(live_server):
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/faq/remove", {"question": 123})
+    assert exc_info.value.code == 400
+
+
+def test_post_faq_remove_rejects_malformed_json_body(live_server):
+    req = urllib.request.Request(
+        f"{live_server}/api/faq/remove",
+        data=b"{not valid json",
+        method="POST",
+        headers={"Content-Type": "application/json", "Origin": live_server},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 400
+
+
+def test_post_faq_remove_rejects_oversized_body(live_server):
+    huge_payload = {"question": "x" * 10_000}
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/faq/remove", huge_payload)
+    assert exc_info.value.code == 400
+
+
+def test_post_faq_remove_rejects_a_non_numeric_content_length(live_server):
+    """Same real bug/fix as test_post_status_rejects_a_non_numeric_content_
+    length above, for /api/faq/remove's own, separately-implemented
+    Content-Length parsing - every handler with this shape parses it with
+    its own unguarded int(...) call, not a shared helper, so each one
+    needs its own proof it doesn't crash on a non-numeric value, the same
+    lesson test_post_answer_gaps_dismiss_rejects_a_non_numeric_content_
+    length above was added to apply.
+    """
+    parts = urlsplit(live_server)
+    sock = socket.create_connection((parts.hostname, parts.port), timeout=5)
+    try:
+        sock.sendall(
+            f"POST /api/faq/remove HTTP/1.1\r\n"
+            f"Host: {parts.hostname}:{parts.port}\r\n"
+            f"Origin: {live_server}\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: not-a-number\r\n\r\n".encode()
+        )
+        chunks = []
+        while chunk := sock.recv(4096):
+            chunks.append(chunk)
+        response = b"".join(chunks).decode("utf-8", errors="replace")
+    finally:
+        sock.close()
+
+    assert response.startswith("HTTP/1.0 400") or response.startswith("HTTP/1.1 400")
+    assert "Invalid Content-Length" in response
+
+
 def test_get_audit_log_is_empty_by_default(live_server):
     with urllib.request.urlopen(f"{live_server}/api/audit-log") as resp:
         assert resp.headers["Content-Type"].startswith("text/html")
@@ -1082,6 +1197,8 @@ def test_run_dashboard_opens_browser_and_shuts_down_cleanly(tmp_path, monkeypatc
         tmp_path / "audit.log",
         tmp_path / "failed_applications.log",
         tmp_path / "answer_gaps.json",
+        tmp_path / "resume.txt",
+        tmp_path / "faq_answers.json",
         port=0,
         open_browser=True,
     )
@@ -1109,6 +1226,8 @@ def test_run_dashboard_raises_a_clear_error_when_the_port_is_already_in_use(tmp_
                 tmp_path / "audit.log",
                 tmp_path / "failed_applications.log",
                 tmp_path / "answer_gaps.json",
+                tmp_path / "resume.txt",
+                tmp_path / "faq_answers.json",
                 port=taken_port,
             )
     finally:
@@ -1127,6 +1246,8 @@ def test_run_dashboard_raises_a_clear_error_for_an_out_of_range_port(tmp_path):
             tmp_path / "audit.log",
             tmp_path / "failed_applications.log",
             tmp_path / "answer_gaps.json",
+            tmp_path / "resume.txt",
+            tmp_path / "faq_answers.json",
             port=99999999,
         )
 

@@ -360,6 +360,35 @@ def render_answer_gaps_html(gaps: dict[str, dict[str, Any]]) -> str:
     return f'<ul class="gap-list">{"".join(items)}</ul>'
 
 
+def render_faq_html(faq_answers: dict[str, str]) -> str:
+    """Cached FAQ answers (ResumeStore.faq_answers()) as an HTML fragment,
+    for the dashboard's FAQ Answers modal - the dashboard counterpart to
+    `job-bot faq list`, with a Remove button per pair wired to
+    _handle_faq_remove()/POST /api/faq/remove the same one-click way
+    render_blacklist_html/render_answer_gaps_html already give each of
+    their own entries: removing a cached answer (e.g. one a low-confidence
+    guess slipped past FAQ_SAVE_CONFIDENCE, or a typo made during `job-bot
+    review-answers`) needs no interactive prompt any more than removing a
+    blacklist entry or dismissing an answer gap does. Sorted alphabetically
+    by question - unlike answer-gaps/missing-qualifications there's no
+    frequency count to rank these by, so a stable, scannable order is the
+    next best thing, the same reasoning render_blacklist_html's own
+    alphabetical _sorted_entries() already uses for company names.
+    """
+    if not faq_answers:
+        return '<p class="empty">No cached FAQ answers.</p>'
+    items = []
+    for question in sorted(faq_answers, key=str.casefold):
+        answer = faq_answers[question]
+        safe_question = html.escape(question, quote=True)
+        items.append(
+            f"<li><dl><dt>{html.escape(question)}</dt><dd>{html.escape(answer)}</dd></dl> "
+            f'<button type="button" class="faq-remove-button" data-question="{safe_question}">'
+            "Remove</button></li>"
+        )
+    return f'<ul class="faq-list">{"".join(items)}</ul>'
+
+
 def render_audit_log_html(entries: list[dict[str, Any]]) -> str:
     """Logged actions (AuditLogger.read_entries(), already most-recent-first
     and already capped by the caller - see server.py's _AUDIT_LOG_LIMIT) as
@@ -525,6 +554,16 @@ def render_page_html(
   .gap-dismiss-button {{ flex-shrink: 0; font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}
   .gap-dismiss-button:hover {{ border-color: #ef4444; color: #ef4444; }}
+  .faq-list {{ list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }}
+  .faq-list li {{ display: flex; justify-content: space-between; align-items: flex-start;
+              gap: 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
+  .faq-list li:last-child {{ border-bottom: none; }}
+  .faq-list dl {{ margin: 0; }}
+  .faq-list dt {{ font-weight: 600; }}
+  .faq-list dd {{ margin: 0.25rem 0 0; color: var(--fg); }}
+  .faq-remove-button {{ flex-shrink: 0; font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px;
+              border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}
+  .faq-remove-button:hover {{ border-color: #ef4444; color: #ef4444; }}
   .audit-log-list {{ list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }}
   .audit-log-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); font-size: 0.85rem; }}
   .audit-log-list li:last-child {{ border-bottom: none; }}
@@ -564,6 +603,7 @@ def render_page_html(
   <button type="button" id="manageBlacklist" class="export-link">Manage Blacklist</button>
   <button type="button" id="showMissingQualifications" class="export-link">Missing Qualifications</button>
   <button type="button" id="showAnswerGaps" class="export-link">Unanswered Questions</button>
+  <button type="button" id="showFaq" class="export-link">FAQ Answers</button>
   <button type="button" id="showAuditLog" class="export-link">Audit Log</button>
 </form>
 
@@ -612,6 +652,12 @@ def render_page_html(
   <h2>Unanswered required questions</h2>
   <div id="answerGapsContent"></div>
   <button type="button" id="answerGapsClose">Close</button>
+</dialog>
+
+<dialog id="faqDialog">
+  <h2>Cached FAQ answers</h2>
+  <div id="faqContent"></div>
+  <button type="button" id="faqClose">Close</button>
 </dialog>
 
 <dialog id="auditLogDialog">
@@ -911,6 +957,39 @@ document.getElementById('answerGapsContent').addEventListener('click', async (e)
     alert('Could not dismiss (network error).');
   }} finally {{
     loadAnswerGaps();
+  }}
+}});
+
+const faqDialog = document.getElementById('faqDialog');
+async function loadFaq() {{
+  const content = document.getElementById('faqContent');
+  content.innerHTML = 'Loading...';
+  try {{
+    const res = await fetch('/api/faq');
+    content.innerHTML = res.ok ? await res.text() : 'Could not load FAQ answers.';
+  }} catch (err) {{
+    content.innerHTML = 'Could not load FAQ answers (network error).';
+  }}
+}}
+document.getElementById('showFaq').addEventListener('click', () => {{
+  faqDialog.showModal();
+  loadFaq();
+}});
+document.getElementById('faqClose').addEventListener('click', () => faqDialog.close());
+document.getElementById('faqContent').addEventListener('click', async (e) => {{
+  if (!e.target.classList.contains('faq-remove-button')) return;
+  const question = e.target.dataset.question;
+  try {{
+    const res = await fetch('/api/faq/remove', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ question }}),
+    }});
+    if (!res.ok) alert('Could not remove: ' + (await res.text()));
+  }} catch (err) {{
+    alert('Could not remove (network error).');
+  }} finally {{
+    loadFaq();
   }}
 }});
 

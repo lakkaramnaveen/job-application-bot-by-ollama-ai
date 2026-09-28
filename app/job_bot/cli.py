@@ -1644,6 +1644,8 @@ def cmd_dashboard(settings: Settings, args: argparse.Namespace) -> None:
         settings.audit_log_path,
         settings.failed_applications_log_path,
         settings.answer_gaps_path,
+        settings.resume_path,
+        settings.faq_path,
         port=port,
         open_browser=not args.no_open,
         stale_after_days=settings.stale_after_days,

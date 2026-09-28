@@ -5,6 +5,7 @@ from job_bot.dashboard.render import (
     render_answer_gaps_html,
     render_audit_log_html,
     render_blacklist_html,
+    render_faq_html,
     render_missing_qualifications_html,
     render_page_html,
     render_qa_html,
@@ -496,6 +497,40 @@ def test_render_page_html_includes_the_answer_gaps_button_and_dialog():
     assert 'id="showAnswerGaps"' in html
     assert 'id="answerGapsDialog"' in html
     assert 'id="answerGapsContent"' in html
+
+
+def test_render_faq_html_empty_state():
+    html = render_faq_html({})
+    assert "No cached FAQ answers." in html
+
+
+def test_render_faq_html_renders_a_remove_button_per_pair_and_sorts_alphabetically():
+    """"Willing to relocate?" is deliberately listed first in the input
+    dict - only passes if the render function sorts alphabetically itself
+    rather than trusting insertion order.
+    """
+    faq_answers = {"Willing to relocate?": "Yes", "Are you authorized to work in the US?": "Yes"}
+    html = render_faq_html(faq_answers)
+    assert html.count("faq-remove-button") == 2
+    assert 'data-question="Willing to relocate?"' in html
+    assert 'data-question="Are you authorized to work in the US?"' in html
+    assert html.index("Are you authorized") < html.index("Willing to relocate")
+
+
+def test_render_faq_html_escapes_the_question_and_answer_to_prevent_xss():
+    faq_answers = {'<script>alert(1)</script>"': "<b>also unsafe</b>"}
+    html = render_faq_html(faq_answers)
+    assert "<script>alert(1)</script>" not in html
+    assert "<b>also unsafe</b>" not in html
+    assert "&lt;script&gt;" in html
+    assert "&lt;b&gt;" in html
+
+
+def test_render_page_html_includes_the_faq_button_and_dialog():
+    html = render_page_html([make_job()])
+    assert 'id="showFaq"' in html
+    assert 'id="faqDialog"' in html
+    assert 'id="faqContent"' in html
 
 
 def test_render_audit_log_html_empty_state():

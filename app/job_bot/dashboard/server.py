@@ -2,15 +2,16 @@
 localhost only (never 0.0.0.0) since it serves your application data with
 no access control. See render.py for the HTML/escaping logic this wraps.
 
-The dashboard also accepts five state-changing requests: POST status
-update, POST blacklist (add), POST blacklist/remove, POST note, and POST
-answer-gaps/dismiss. Because the server has no auth, any page open in the
-same browser could in principle try to trigger one (a "drive-by localhost"
-request) - _is_same_origin (all five) plus the browser's own CORS
-preflight (triggered by the JSON Content-Type each of them requires) are
-what stand in for auth here. See _is_same_origin, _handle_status_update,
-_handle_blacklist, _handle_blacklist_remove, _handle_note_set, and
-_handle_answer_gaps_dismiss below.
+The dashboard also accepts six state-changing requests: POST status
+update, POST blacklist (add), POST blacklist/remove, POST note, POST
+answer-gaps/dismiss, and POST faq/remove. Because the server has no auth,
+any page open in the same browser could in principle try to trigger one
+(a "drive-by localhost" request) - _is_same_origin (all six) plus the
+browser's own CORS preflight (triggered by the JSON Content-Type each of
+them requires) are what stand in for auth here. See _is_same_origin,
+_handle_status_update, _handle_blacklist, _handle_blacklist_remove,
+_handle_note_set, _handle_answer_gaps_dismiss, and _handle_faq_remove
+below.
 """
 
 import io
@@ -27,6 +28,7 @@ from job_bot.dashboard.render import (
     render_answer_gaps_html,
     render_audit_log_html,
     render_blacklist_html,
+    render_faq_html,
     render_missing_qualifications_html,
     render_page_html,
     render_qa_html,
@@ -34,6 +36,7 @@ from job_bot.dashboard.render import (
     render_rows_html,
     render_stats_html,
 )
+from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
@@ -111,6 +114,8 @@ def make_handler(
     audit_log_path: Path,
     failed_applications_log_path: Path,
     answer_gaps_path: Path,
+    resume_path: Path,
+    faq_path: Path,
     *,
     stale_after_days: int = 14,
 ) -> type[BaseHTTPRequestHandler]:
@@ -193,6 +198,8 @@ def make_handler(
                 self._handle_missing_qualifications(tracker)
             elif parsed.path == "/api/answer-gaps":
                 self._handle_answer_gaps()
+            elif parsed.path == "/api/faq":
+                self._handle_faq_list()
             elif parsed.path == "/api/audit-log":
                 self._handle_audit_log(parse_qs(parsed.query))
             else:
@@ -209,6 +216,8 @@ def make_handler(
                 self._handle_blacklist_remove()
             elif urlparse(self.path).path == "/api/answer-gaps/dismiss":
                 self._handle_answer_gaps_dismiss()
+            elif urlparse(self.path).path == "/api/faq/remove":
+                self._handle_faq_remove()
             else:
                 self._send_text(404, "Not found")
 
@@ -499,6 +508,14 @@ def make_handler(
             body = render_answer_gaps_html(gaps).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
+        def _handle_faq_list(self) -> None:
+            """The dashboard counterpart to `job-bot faq list` - read-only
+            the same way _handle_blacklist_list/_handle_answer_gaps are.
+            """
+            faq_answers = ResumeStore(resume_path, faq_path).faq_answers()
+            body = render_faq_html(faq_answers).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+
         def _handle_audit_log(self, query: dict[str, list[str]]) -> None:
             """The dashboard counterpart to `job-bot audit-log` - read-only
             the same way _handle_blacklist_list/_handle_missing_qualifications
@@ -582,6 +599,41 @@ def make_handler(
             dismissed = AnswerGapStore(answer_gaps_path).resolve(question)
             self._send_json(200, {"ok": True, "question": question, "dismissed": dismissed})
 
+        def _handle_faq_remove(self) -> None:
+            """The dashboard counterpart to `job-bot faq remove` - same
+            shape (same-origin check, Content-Type/body-size validation,
+            JSON body) as _handle_blacklist_remove/_handle_answer_gaps_
+            dismiss above, for the Remove button render_faq_html() gives
+            each cached FAQ answer.
+            """
+            if not self._is_same_origin():
+                self._send_text(403, "Cross-origin request rejected")
+                return
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                self._send_text(400, "Content-Type must be application/json")
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                self._send_text(400, "Invalid Content-Length header")
+                return
+            if length <= 0 or length > MAX_BODY_BYTES:
+                self._send_text(400, "Request body missing or too large")
+                return
+            raw_body = self.rfile.read(length)
+
+            try:
+                payload = json.loads(raw_body)
+                question = payload["question"]
+                if not isinstance(question, str):
+                    raise ValueError("question must be a string")
+            except (json.JSONDecodeError, KeyError, ValueError):
+                self._send_text(400, "Body must be JSON: {\"question\": \"<question>\"}")
+                return
+
+            removed = ResumeStore(resume_path, faq_path).remove_faq_answer(question)
+            self._send_json(200, {"ok": True, "question": question, "removed": removed})
+
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             pass  # quiet by default; the CLI prints the one line that matters
 
@@ -594,6 +646,8 @@ def run_dashboard(
     audit_log_path: Path,
     failed_applications_log_path: Path,
     answer_gaps_path: Path,
+    resume_path: Path,
+    faq_path: Path,
     port: int = 8765,
     open_browser: bool = True,
     *,
@@ -605,6 +659,8 @@ def run_dashboard(
         audit_log_path,
         failed_applications_log_path,
         answer_gaps_path,
+        resume_path,
+        faq_path,
         stale_after_days=stale_after_days,
     )
     try:

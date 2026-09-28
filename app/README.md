@@ -651,6 +651,13 @@ seen, and lets you:
   `job-bot review-answers --dismiss` has from the command line, for a
   gap that's noise (a garbled/duplicate question, or one not worth
   caching an FAQ answer for) rather than one you intend to answer.
+- **View and remove cached FAQ answers** in a modal - the dashboard
+  counterpart to `job-bot faq list`/`job-bot faq remove`, sorted
+  alphabetically. Removing a wrong or stale cached answer (e.g. a
+  low-confidence guess that slipped past `FAQ_SAVE_CONFIDENCE`, or a typo
+  made during `job-bot review-answers`) needs no interactive prompt any
+  more than removing a blacklist entry does, so it's a one-click Remove
+  button here too.
 
 The dashboard has no login (it's a local tool over your own data), so every
 state-changing endpoint (the inline status update, blacklisting a company,
