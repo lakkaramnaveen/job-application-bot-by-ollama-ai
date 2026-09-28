@@ -179,3 +179,29 @@ def test_security_md_documents_the_sensitive_field_marker_regression_tests():
         assert f"tests/{module}.py::{test_name}" in security_text
         source = (Path(__file__).resolve().parent / f"{module}.py").read_text(encoding="utf-8")
         assert f"def {test_name}(" in source
+
+
+def test_security_md_documents_the_dashboards_same_origin_check():
+    """Real gap this guards against: SECURITY.md's "Dashboard has no
+    authentication" bullet covers the read side (XSS escaping) in detail
+    but said nothing at all about the write side - the dashboard accepts
+    six state-changing POST endpoints (status, blacklist add/remove, note,
+    answer-gaps dismiss, FAQ remove), and with no login of any kind,
+    _is_same_origin() in job_bot/dashboard/server.py is the only thing
+    standing between those and a "drive-by localhost" request from any
+    other page open in the same browser - exactly the kind of real,
+    shipped guarantee a security-conscious reader would expect this doc to
+    mention, the same class of gap test_security_md_documents_the_
+    sensitive_field_marker_regression_tests above already guards against
+    for a different bullet. Also confirms the one specific regression test
+    it names by dotted path still exists, so a future rename goes stale in
+    the doc loudly rather than silently.
+    """
+    security_text = (Path(__file__).resolve().parent.parent / "SECURITY.md").read_text(encoding="utf-8")
+    assert "_is_same_origin" in security_text
+    assert "drive-by localhost" in security_text
+
+    test_name = "test_post_status_rejects_cross_origin_request"
+    assert f"tests/test_dashboard_server.py::{test_name}" in security_text
+    source = (Path(__file__).resolve().parent / "test_dashboard_server.py").read_text(encoding="utf-8")
+    assert f"def {test_name}(" in source
