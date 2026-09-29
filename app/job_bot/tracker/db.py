@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from job_bot.models.schemas import looks_like_leaked_reasoning
-from job_bot.text_utils import normalize_company_name
+from job_bot.text_utils import is_echoed_question, normalize_company_name
 
 # Outcome statuses that count as a genuine positive signal for a past
 # tailored resume - see best_resume_examples().
@@ -642,9 +642,11 @@ class Tracker:
         ApplicationAnswer validator only guards fresh generations - rows
         recorded before it existed are still in qa_history, and feeding
         one back as a few-shot example is exactly the compounding loop
-        docs/qwen_notes.md §1 describes. Such a question is skipped rather
-        than falling back to an older answer, same latest-wins rule as the
-        dedup above.
+        docs/qwen_notes.md §1 describes. The same goes for an answer that
+        just echoes its own question (is_echoed_question()), which would
+        teach the model to echo. Such a question is skipped rather than
+        falling back to an older answer, same latest-wins rule as the dedup
+        above.
         """
         pairs: list[dict[str, Any]] = []
         if limit <= 0:
@@ -659,7 +661,7 @@ class Tracker:
                 """
             )
             for row in cursor:
-                if looks_like_leaked_reasoning(row["answer"]):
+                if looks_like_leaked_reasoning(row["answer"]) or is_echoed_question(row["question"], row["answer"]):
                     continue
                 pairs.append(dict(row))
                 if len(pairs) >= limit:

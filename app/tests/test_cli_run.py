@@ -505,6 +505,48 @@ def test_run_does_not_cache_low_confidence_answers_to_faq(tmp_path, monkeypatch)
     assert not settings.faq_path.exists()
 
 
+def test_run_treats_an_answer_that_echoes_the_question_as_no_answer(tmp_path, monkeypatch):
+    """Real bug (data/faq_answers.json): for a bare field label like "Phone
+    country code", the model returned the label itself, which was then
+    recorded, cached to FAQ_PATH at high confidence, and replayed on every
+    later posting - never matching any option. It must come back as ""
+    (unanswered, so the adapter's own answer-gap flow takes over) and be
+    neither recorded nor cached.
+    """
+    provider = FakeProvider(ApplicationAnswer(answer="years of experience", confidence=0.95, based_on_resume=True))
+    adapter = FakeAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args())
+
+    assert adapter.fill_and_submit_calls[0]["answered"] == ""
+    assert not settings.faq_path.exists()
+    assert Tracker(settings.db_path).recent_qa_pairs() == []
+
+
+def test_run_ignores_an_echoed_answer_already_cached_in_the_faq(tmp_path, monkeypatch):
+    """Entries cached before the echo check existed are still in real users'
+    FAQ files - they must fall through to the LLM, not be replayed.
+    """
+    provider = FakeProvider()
+    adapter = FakeAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path)
+    settings.faq_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.faq_path.write_text(json.dumps({"Years of experience?": "Years of experience"}), encoding="utf-8")
+
+    cmd_run(settings, make_args())
+
+    assert ApplicationAnswer in provider.schemas_requested
+    assert adapter.fill_and_submit_calls[0]["answered"] == "5 years"
+
+
 def test_run_reuses_an_exact_faq_match_without_calling_the_llm(tmp_path, monkeypatch):
     """A question whose exact text is already a FAQ_PATH key is a curated,
     confident, resume-grounded answer (that's the whole promotion bar in

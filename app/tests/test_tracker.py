@@ -1156,3 +1156,14 @@ def test_applications_by_week_empty_when_nothing_applied(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
     assert tracker.applications_by_week() == {}
+
+
+def test_recent_qa_pairs_skips_an_answer_that_echoes_its_question(tmp_path):
+    """29 such rows were in the real qa_history - fed back as few-shot
+    examples, they'd teach the model to echo field labels.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_qa("1", "Willing to relocate?", "No")
+    tracker.record_qa("2", "Phone country code", "Phone country code")
+
+    assert tracker.recent_qa_pairs() == [{"question": "Willing to relocate?", "answer": "No"}]

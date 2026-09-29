@@ -62,7 +62,7 @@ from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.safety.confirm import SubmitConfirmer
 from job_bot.safety.rate_limiter import DailyCapReached, RateLimiter
-from job_bot.text_utils import normalize_company_name
+from job_bot.text_utils import is_echoed_question, normalize_company_name
 from job_bot.tracker.db import (
     TRACKER_STATUSES,
     InvalidStatus,
@@ -561,7 +561,10 @@ def _run_apply_cycle(
         # (different phrasing/whitespace) still falls through to the LLM
         # unaffected - this only ever short-circuits a literal match.
         cached = faq_answers.get(question)
-        if cached is not None:
+        # An echoed entry (is_echoed_question()) already in FAQ_PATH from
+        # before this check existed is ignored rather than replayed - the
+        # LLM gets a fresh attempt instead.
+        if cached is not None and not is_echoed_question(question, cached):
             tracker.record_qa(job_id, question, cached)
             return cached
         result = answer_question(
@@ -571,6 +574,13 @@ def _run_apply_cycle(
             question,
             recent_answers=tracker.recent_qa_pairs(),
         )
+        if is_echoed_question(question, result.answer):
+            # No answer, not a bad one: "" leaves the field unfilled, which
+            # the adapter already reports as an unanswered required
+            # question (recorded to answer_gaps for `job-bot
+            # review-answers`) - never recorded or cached, so it can't be
+            # replayed from FAQ_PATH or reused as a few-shot example.
+            return ""
         tracker.record_qa(job_id, question, result.answer)
         if result.based_on_resume and result.confidence >= settings.faq_save_confidence:
             resume_store.save_faq_answer(question, result.answer)

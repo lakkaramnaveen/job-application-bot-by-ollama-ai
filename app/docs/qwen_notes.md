@@ -152,6 +152,30 @@ was logged as an unanswerable gap 27 times despite the model giving a
 clear, correct answer to the free-text version of the same question every
 time. Commit: `815104e`.
 
+## 6. Echoing a bare form-field label back as the "answer"
+
+**Symptom:** a required select/radio keeps failing as an unanswerable gap
+("The LLM's answer didn't clearly match any option") for a field that is
+a bare label rather than a question - `Phone country code`, `Year of
+From`/`Month of From`/`Year of To` (a work-history date range),
+`LinkedIn`. `data/faq_answers.json` holds the label as its own answer
+(`"Phone country code": "Phone country code"`).
+
+**Why it happens:** with no question to answer, the model repeats the
+label. That was recorded, promoted to FAQ_PATH (it came back with high
+confidence), and from then on replayed by cli.py's exact-match FAQ
+shortcut on every posting that asked it - the §3 "the cache doesn't
+validate the shape of what it caches" pattern again. Confirmed live: 3
+echoed FAQ entries and 29 echoed `qa_history` rows.
+
+**Fix:** `is_echoed_question()` (text_utils.py). `answer()` in cli.py
+returns `""` for an echoed LLM answer - unanswered, so the adapter's
+normal answer-gap flow takes over - and never records or caches it; an
+echoed entry already in FAQ_PATH is skipped rather than replayed; and
+`Tracker.recent_qa_pairs()` leaves echoes out of the few-shot context.
+Echoed entries already on disk are not rewritten - remove them with
+`job-bot faq remove` if you want them gone from the file too.
+
 ## General guidance for a future session
 
 - When a local-model failure looks bizarre or shows up as a repeating
