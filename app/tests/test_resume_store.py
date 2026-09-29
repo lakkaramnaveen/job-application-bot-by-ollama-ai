@@ -1,7 +1,9 @@
 import json
 import os
 
-from job_bot.resume.store import ResumeStore
+import pytest
+
+from job_bot.resume.store import ResumeStore, unusable_faq_reason
 
 
 def make_store(tmp_path, resume_text="Experienced Python developer.") -> ResumeStore:
@@ -157,3 +159,15 @@ def test_remove_faq_answer_of_the_only_entry_leaves_an_empty_but_valid_file(tmp_
     store.remove_faq_answer("Years of experience?")
 
     assert ResumeStore(store._resume_path, store._faq_path).faq_answers() == {}
+
+
+@pytest.mark.parametrize(
+    ("question", "answer", "expected"),
+    [
+        ("Willing to relocate?", "No", None),
+        ("Phone country code", "Phone country code", "echoes the question"),
+        ("Years of Python?", "I need to answer the question about Python.", "leaked reasoning"),
+    ],
+)
+def test_unusable_faq_reason(question, answer, expected):
+    assert unusable_faq_reason(question, answer) == expected

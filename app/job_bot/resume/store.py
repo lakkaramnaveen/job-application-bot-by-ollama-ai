@@ -2,7 +2,22 @@ import json
 from pathlib import Path
 
 from job_bot.data_files import assert_safe_to_overwrite
+from job_bot.models.schemas import looks_like_leaked_reasoning
 from job_bot.resume.parser import parse_resume
+from job_bot.text_utils import is_echoed_question
+
+
+def unusable_faq_reason(question: str, answer: str) -> str | None:
+    """Why a cached FAQ answer can't be used, or None if it's fine - the
+    same two rules cli.py's answer() and Tracker.recent_qa_pairs() enforce
+    at runtime (docs/qwen_notes.md §1 and §6). Shared by `job-bot faq clean`
+    and the dashboard's FAQ panel, so both flag exactly what a run skips.
+    """
+    if is_echoed_question(question, answer):
+        return "echoes the question"
+    if looks_like_leaked_reasoning(answer):
+        return "leaked reasoning"
+    return None
 
 
 class ResumeStore:

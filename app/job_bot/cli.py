@@ -55,9 +55,9 @@ from job_bot.llm.factory import get_provider
 from job_bot.llm.ollama_provider import OllamaProviderError, quit_ollama
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
-from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume, looks_like_leaked_reasoning
+from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
 from job_bot.resume.parser import ResumeParseError, parse_resume
-from job_bot.resume.store import ResumeStore
+from job_bot.resume.store import ResumeStore, unusable_faq_reason
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
@@ -976,19 +976,6 @@ def cmd_review_answers(settings: Settings, args: argparse.Namespace) -> None:
     print(f"Answered {answered} question(s). {remaining} still unanswered.")
 
 
-def _unusable_faq_reason(question: str, answer: str) -> str | None:
-    """Why a cached FAQ answer can't be used, or None if it's fine - the
-    same two rules answer() and Tracker.recent_qa_pairs() already enforce
-    at runtime (docs/qwen_notes.md §1 and §6), so `faq clean` removes
-    exactly what a run would otherwise silently skip.
-    """
-    if is_echoed_question(question, answer):
-        return "echoes the question"
-    if looks_like_leaked_reasoning(answer):
-        return "leaked reasoning"
-    return None
-
-
 def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
     """view/remove/import/export cached FAQ answers - see resume/store.py's
     save_faq_answer()/faq_answers(). `job-bot review-answers` is the only
@@ -1036,14 +1023,14 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
                 else f'No cached answer for: "{question}"'
             )
     elif args.faq_action == "clean":
-        # Runtime already skips these (see _unusable_faq_reason), so this is
+        # Runtime already skips these (see resume/store.py's unusable_faq_reason()), so this is
         # housekeeping rather than a fix - but a skipped entry still shows
         # in `faq list`/the dashboard as if it were a real answer, and
         # `faq export` would carry it to another install.
         unusable = {
             question: reason
             for question, answer in resume_store.faq_answers().items()
-            if (reason := _unusable_faq_reason(question, answer)) is not None
+            if (reason := unusable_faq_reason(question, answer)) is not None
         }
         if not unusable:
             print("No unusable cached FAQ answers found.")

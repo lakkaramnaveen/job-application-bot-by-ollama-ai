@@ -664,7 +664,9 @@ seen, and lets you:
   low-confidence guess that slipped past `FAQ_SAVE_CONFIDENCE`, or a typo
   made during `job-bot review-answers`) needs no interactive prompt any
   more than removing a blacklist entry does, so it's a one-click Remove
-  button here too.
+  button here too. Cached answers a run skips anyway (one that just echoes
+  its question, or leaked reasoning) are flagged with a ⚠ and the reason -
+  the same entries `job-bot faq clean` removes.
 - **Browse the full Q&A history** in a modal, with a live search box - the
   dashboard counterpart to `job-bot qa-history`, every question/answer
   ever recorded across every job (not just one job's own transcript, or

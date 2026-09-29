@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
+from job_bot.resume.store import unusable_faq_reason
 from job_bot.tracker.db import TRACKER_STATUSES
 
 # job.url ultimately comes from a scraped LinkedIn anchor href (see
@@ -432,15 +433,31 @@ def render_faq_html(faq_answers: dict[str, str]) -> str:
     if not faq_answers:
         return '<p class="empty">No cached FAQ answers.</p>'
     items = []
+    unusable_count = 0
     for question in sorted(faq_answers, key=str.casefold):
         answer = faq_answers[question]
         safe_question = html.escape(question, quote=True)
+        # Flagged, not hidden: a run already skips these (see
+        # unusable_faq_reason()), but they'd otherwise look exactly like a
+        # real cached answer here - the Remove button next to each is how
+        # they get cleaned up, same as `job-bot faq clean` on the CLI.
+        reason = unusable_faq_reason(question, answer)
+        flag = ""
+        if reason is not None:
+            unusable_count += 1
+            flag = f' <span class="faq-unusable" title="A run skips this answer">&#9888; {html.escape(reason)}</span>'
         items.append(
-            f"<li><dl><dt>{html.escape(question)}</dt><dd>{html.escape(answer)}</dd></dl> "
+            f"<li><dl><dt>{html.escape(question)}{flag}</dt><dd>{html.escape(answer)}</dd></dl> "
             f'<button type="button" class="faq-remove-button" data-question="{safe_question}">'
             "Remove</button></li>"
         )
-    return f'<ul class="faq-list">{"".join(items)}</ul>'
+    summary = ""
+    if unusable_count:
+        summary = (
+            f'<p class="faq-unusable-summary">{unusable_count} cached answer(s) flagged below are '
+            "skipped by every run - remove them here, or run <code>job-bot faq clean</code>.</p>"
+        )
+    return f'{summary}<ul class="faq-list">{"".join(items)}</ul>'
 
 
 def render_audit_log_html(entries: list[dict[str, Any]]) -> str:
@@ -614,6 +631,8 @@ def render_page_html(
   .faq-list li:last-child {{ border-bottom: none; }}
   .faq-list dl {{ margin: 0; }}
   .faq-list dt {{ font-weight: 600; }}
+  .faq-unusable {{ font-weight: 400; font-size: 0.8em; color: #b45309; margin-left: 0.4rem; }}
+  .faq-unusable-summary {{ font-size: 0.85rem; color: #b45309; margin: 0 0 0.75rem; }}
   .faq-list dd {{ margin: 0.25rem 0 0; color: var(--fg); }}
   .faq-remove-button {{ flex-shrink: 0; font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px;
               border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; }}

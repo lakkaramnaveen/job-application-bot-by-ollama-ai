@@ -766,3 +766,27 @@ def test_render_page_html_includes_the_weekly_activity_button_and_dialog():
     assert 'id="showWeeklyActivity"' in html
     assert 'id="weeklyActivityDialog"' in html
     assert 'id="weeklyActivityContent"' in html
+
+
+def test_render_faq_html_flags_answers_a_run_would_skip_with_their_reason():
+    html = render_faq_html(
+        {
+            "Willing to relocate?": "No",
+            "Phone country code": "Phone country code",
+            "Years of Python?": "Let me check the resume first.",
+        }
+    )
+    assert "2 cached answer(s) flagged below" in html
+    assert "job-bot faq clean" in html
+    assert html.count('class="faq-unusable"') == 2
+    assert "echoes the question" in html
+    assert "leaked reasoning" in html
+    # the flag sits with its own question, not a neighbour's
+    phone = html.index("Phone country code")
+    assert phone < html.index("echoes the question") < html.index("Willing to relocate?")
+
+
+def test_render_faq_html_shows_no_flags_or_summary_when_every_answer_is_usable():
+    html = render_faq_html({"Willing to relocate?": "No"})
+    assert "faq-unusable" not in html
+    assert "flagged" not in html
