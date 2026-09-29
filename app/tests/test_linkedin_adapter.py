@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from job_bot.browser.base_adapter import JobPosting
@@ -18,6 +19,8 @@ from job_bot.browser.linkedin_adapter import (
     DATE_POSTED_24H,
     RESULTS_PER_PAGE,
     LinkedInAdapter,
+    LinkedInSignedOut,
+    is_signed_out_url,
 )
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
@@ -924,6 +927,90 @@ def test_search_strips_the_duplicate_verified_badge_line_from_the_title(playwrig
 
     assert len(postings) == 1
     assert postings[0].title == "Backend Engineer"
+
+
+def _serve_every_url_with(page, html: str) -> None:
+    """Fulfil every request with `html` so page.url reflects the real
+    LinkedIn URL navigated to - a file:// fixture can't reproduce a redirect
+    to the authwall.
+    """
+    page.route("**/*", lambda route: route.fulfill(status=200, content_type="text/html", body=html))
+
+
+def test_search_raises_signed_out_when_redirected_to_the_authwall(playwright_page, monkeypatch):
+    """Real bug this guards against (data/failed_applications.log): a
+    signed-out session's search lands on /authwall, has no job cards, and
+    used to be treated as "no more results" - an empty search, silently.
+    """
+    _serve_every_url_with(playwright_page, "<html><body>Sign in to view jobs</body></html>")
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(
+        playwright_page, "goto", lambda url, **kw: real_goto("https://www.linkedin.com/authwall?trk=bf", **kw)
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    with pytest.raises(LinkedInSignedOut, match="job-bot login"):
+        adapter.search("python", "Remote", max_results=10)
+
+
+def test_search_raises_signed_out_when_the_authwall_redirect_lands_after_goto(playwright_page, monkeypatch):
+    """The failure log shows the redirect can also happen client-side while
+    wait_for_selector is already waiting for cards - the timeout branch
+    must re-check the URL rather than assume the results just ran out.
+    """
+    def fulfill(route):
+        if "/authwall" in route.request.url:
+            body = "<html><body>Sign in to view jobs</body></html>"
+        else:
+            # Redirect only after load, so goto() itself has already
+            # returned on /jobs/search/ - the case this test is about.
+            body = (
+                "<html><body><script>setTimeout(() => "
+                "{ location.href = 'https://www.linkedin.com/authwall?trk=bf'; }, 200)</script></body></html>"
+            )
+        route.fulfill(status=200, content_type="text/html", body=body)
+
+    playwright_page.route("**/*", fulfill)
+    adapter = LinkedInAdapter(playwright_page)
+
+    def time_out_after_the_redirect(selector, **kw):
+        playwright_page.wait_for_url("**/authwall**", timeout=5000)
+        raise PlaywrightTimeoutError("no job cards")
+
+    monkeypatch.setattr(playwright_page, "wait_for_selector", time_out_after_the_redirect)
+
+    with pytest.raises(LinkedInSignedOut):
+        adapter.search("python", "Remote", max_results=10)
+
+
+def test_search_with_no_results_while_signed_in_still_returns_empty(playwright_page, monkeypatch):
+    """The signed-out check must not turn an ordinary empty results page
+    (still on /jobs/search/) into an error.
+    """
+    _serve_every_url_with(playwright_page, "<html><body>No matching jobs found.</body></html>")
+    adapter = LinkedInAdapter(playwright_page)
+
+    def time_out(selector, **kw):
+        raise PlaywrightTimeoutError("no job cards")
+
+    monkeypatch.setattr(playwright_page, "wait_for_selector", time_out)
+
+    assert adapter.search("python", "Remote", max_results=10) == []
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://www.linkedin.com/authwall?trk=bf&trkInfo=x", True),
+        ("https://www.linkedin.com/login?session_redirect=x", True),
+        ("https://www.linkedin.com/uas/login?x", True),
+        ("https://www.linkedin.com/checkpoint/challenge/x", True),
+        ("https://www.linkedin.com/jobs/search/?keywords=python", False),
+        ("https://www.linkedin.com/jobs/view/123/", False),
+    ],
+)
+def test_is_signed_out_url(url, expected):
+    assert is_signed_out_url(url) is expected
 
 
 def test_search_respects_max_results(playwright_page, monkeypatch):

@@ -164,6 +164,33 @@ class UnansweredRequiredQuestion(RuntimeError):
         )
 
 
+# URL fragments LinkedIn redirects to when the saved session is no longer
+# signed in - the authwall is what a signed-out visit to /jobs/search/
+# lands on (confirmed in data/failed_applications.log), the others are the
+# login form and security-challenge pages cli.py's _login_finished() also
+# keys off.
+_SIGNED_OUT_URL_MARKERS = ("/authwall", "linkedin.com/login", "/uas/login", "/checkpoint/")
+
+
+def is_signed_out_url(url: str) -> bool:
+    return any(marker in url for marker in _SIGNED_OUT_URL_MARKERS)
+
+
+class LinkedInSignedOut(RuntimeError):
+    """The browser profile's LinkedIn session has expired, so the search page
+    redirected to a sign-in wall instead of results. Without this, the
+    missing job cards looked exactly like "no more results" - a signed-out
+    run found nothing, and `--loop` slept and retried forever with no hint
+    that `job-bot login` was all it needed.
+    """
+
+    def __init__(self, url: str):
+        super().__init__(
+            f"LinkedIn is not signed in (redirected to {url.split('?')[0]}). "
+            "Run `job-bot login` to sign in again, then re-run."
+        )
+
+
 class LinkedInAdapter(JobBoardAdapter):
     def __init__(self, page: Page):
         self._page = page
@@ -242,9 +269,16 @@ class LinkedInAdapter(JobBoardAdapter):
                 f"{experience_filter}"
             )
             self._goto_with_retry(url)
+            if is_signed_out_url(self._page.url):
+                raise LinkedInSignedOut(self._page.url)
             try:
                 self._page.wait_for_selector(SELECTORS["job_cards"], timeout=15000)
             except PlaywrightTimeoutError:
+                # The authwall redirect can also land client-side, after
+                # goto() has already returned - re-check before treating
+                # missing cards as the end of the results.
+                if is_signed_out_url(self._page.url):
+                    raise LinkedInSignedOut(self._page.url) from None
                 break  # no more results
 
             cards = self._page.locator(SELECTORS["job_cards"]).all()

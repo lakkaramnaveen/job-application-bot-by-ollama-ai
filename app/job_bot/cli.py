@@ -31,6 +31,7 @@ from job_bot.browser.external_apply_adapter import ExternalApplyAdapter
 from job_bot.browser.linkedin_adapter import (
     EXPERIENCE_LEVEL_CODES,
     LinkedInAdapter,
+    LinkedInSignedOut,
     UnansweredRequiredQuestion,
 )
 from job_bot.browser.session import BrowserSessionError, browser_session
@@ -252,7 +253,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             )
 
         if not args.loop:
-            applied, failed, _fatal_provider_error = run_one_cycle()
+            applied, failed, _fatal_error = run_one_cycle()
             _print_cycle_summary(applied, failed, rate_limiter, settings)
             if rate_limiter.remaining_today() <= 0:
                 _quit_ollama_if_configured(settings)
@@ -265,13 +266,14 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         )
         try:
             while True:
-                applied, failed, fatal_provider_error = run_one_cycle()
+                applied, failed, fatal_error = run_one_cycle()
                 _print_cycle_summary(applied, failed, rate_limiter, settings)
-                if fatal_provider_error:
+                if fatal_error:
                     # Same reasoning _is_ollama_unreachable()/
-                    # _is_claude_misconfigured() already apply within one
-                    # cycle, one level up: retrying every loop_interval_
-                    # minutes against a provider that's still down won't fix
+                    # _is_claude_misconfigured()/LinkedInSignedOut already
+                    # apply within one cycle, one level up: retrying every
+                    # loop_interval_minutes against a provider that's still
+                    # down (or a signed-out LinkedIn session) won't fix
                     # itself, and looked identical to an ordinary quiet
                     # cycle ("Nothing to apply to this cycle - sleeping...")
                     # before this fix - confirmed live: a run with Ollama
@@ -279,9 +281,8 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                     # until manually interrupted, with nothing distinguishing
                     # it from a normal "no eligible postings" cycle.
                     print(
-                        "Stopping the loop - the LLM provider was unavailable this cycle, and "
-                        "retrying on a timer won't fix that on its own. Restart it (or fix the "
-                        "config) and re-run job-bot when ready."
+                        "Stopping the loop - this cycle hit a problem (see above) that retrying "
+                        "on a timer won't fix on its own. Fix it and re-run job-bot when ready."
                     )
                     break
                 if rate_limiter.remaining_today() <= 0:
@@ -394,13 +395,14 @@ def _run_apply_cycle(
     before the next one) - re-running search() each cycle is what lets loop
     mode pick up postings that appeared after the previous cycle, not just
     the ones visible at process start. Returns (applied, failed,
-    fatal_provider_error) for that cycle only, not a running total across
+    fatal_error) for that cycle only, not a running total across
     cycles.
 
-    fatal_provider_error is True when this cycle stopped early because the
+    fatal_error is True when this cycle stopped early because the
     LLM provider itself was unreachable/misconfigured (Ollama down, Claude
     misconfigured - see _is_ollama_unreachable()/_is_claude_misconfigured()
-    below), not just "nothing worth applying to this cycle". --loop mode's
+    below) or LinkedIn's session had expired (LinkedInSignedOut), not just
+    "nothing worth applying to this cycle". --loop mode's
     caller uses this to stop the loop entirely instead of treating it like
     an ordinary quiet cycle and sleeping loop_interval_minutes before
     silently retrying against the same still-unreachable provider -
@@ -430,7 +432,9 @@ def _run_apply_cycle(
         audit.log("search_error", keywords=args.keywords, location=args.location, error=str(e))
         failure_log.log("search_error", keywords=args.keywords, location=args.location, error=str(e))
         print(f"Error searching for postings: {e}")
-        return 0, 1, False
+        # A signed-out session fails every search identically until the
+        # user runs `job-bot login` - fatal the same way a down provider is.
+        return 0, 1, isinstance(e, LinkedInSignedOut)
     audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
     def should_skip(posting: JobPosting) -> bool:
@@ -624,7 +628,7 @@ def _run_apply_cycle(
 
     applied = 0
     failed = 0
-    fatal_provider_error = False
+    fatal_error = False
     for posting in postings:
         if applied >= args.max_apps:
             break
@@ -668,11 +672,11 @@ def _run_apply_cycle(
                 # "Could not reach Ollama" prep_error 6 times in a row
                 # before this fix.
                 print("Ollama is unreachable - stopping the run instead of repeating this for every posting.")
-                fatal_provider_error = True
+                fatal_error = True
                 break
             if _is_claude_misconfigured(e):
                 print(f"Claude provider is misconfigured ({e}) - stopping the run instead of repeating this for every posting.")
-                fatal_provider_error = True
+                fatal_error = True
                 break
             if page.is_closed():
                 # The browser itself is gone (closed, crashed, killed) -
@@ -710,11 +714,11 @@ def _run_apply_cycle(
             failed += 1
             if _is_ollama_unreachable(e):
                 print("Ollama is unreachable - stopping the run instead of repeating this for every posting.")
-                fatal_provider_error = True
+                fatal_error = True
                 break
             if _is_claude_misconfigured(e):
                 print(f"Claude provider is misconfigured ({e}) - stopping the run instead of repeating this for every posting.")
-                fatal_provider_error = True
+                fatal_error = True
                 break
             if page.is_closed():
                 print("Browser window was closed - stopping the run.")
@@ -746,7 +750,7 @@ def _run_apply_cycle(
             audit.log("dry_run_stopped", job_id=posting.job_id)
             print(f"[dry-run] Would apply to {posting.title} at {posting.company}")
 
-    return applied, failed, fatal_provider_error
+    return applied, failed, fatal_error
 
 
 _STATUS_VIEW_FIELDS = (

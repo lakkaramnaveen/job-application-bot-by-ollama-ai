@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from job_bot.browser.base_adapter import JobPosting
-from job_bot.browser.linkedin_adapter import UnansweredRequiredQuestion
+from job_bot.browser.linkedin_adapter import LinkedInSignedOut, UnansweredRequiredQuestion
 from job_bot.cli import cmd_run
 from job_bot.config import Settings
 from job_bot.llm.base import LLMProvider
@@ -1305,6 +1305,41 @@ def test_run_search_failure_is_logged_and_does_not_crash(tmp_path, monkeypatch, 
     failure_lines = settings.failed_applications_log_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(failure_lines) == 1
     assert json.loads(failure_lines[0])["action"] == "search_error"
+
+
+class SignedOutAdapter(FakeAdapter):
+    def __init__(self, page):
+        super().__init__(page)
+        self.search_calls = 0
+
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+        self.search_calls += 1
+        raise LinkedInSignedOut("https://www.linkedin.com/authwall?trk=bf")
+
+
+def test_loop_stops_instead_of_retrying_when_linkedin_is_signed_out(tmp_path, monkeypatch, capsys):
+    """A signed-out session fails every search identically until the user
+    runs `job-bot login` - --loop must stop and say so, not sleep and retry
+    forever the way an ordinary empty cycle does. time.sleep fails the
+    test outright if called.
+    """
+    adapter = SignedOutAdapter(page=None)
+
+    def fail_if_called(seconds):
+        raise AssertionError("must not sleep/retry once LinkedIn is signed out - the loop should stop instead")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", fail_if_called)
+
+    settings = make_settings(tmp_path)
+    cmd_run(settings, make_args(loop=True, max_apps=10))  # must not raise
+
+    out = capsys.readouterr().out
+    assert "job-bot login" in out
+    assert "Stopping the loop" in out
+    assert adapter.search_calls == 1
 
 
 def test_loop_recovers_from_a_search_failure_on_the_next_cycle(tmp_path, monkeypatch):
