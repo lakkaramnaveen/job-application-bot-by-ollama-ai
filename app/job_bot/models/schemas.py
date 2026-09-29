@@ -79,6 +79,17 @@ _REASONING_LEAK_MARKERS = (
 )
 
 
+def looks_like_leaked_reasoning(text: str) -> bool:
+    """True if `text` contains one of _REASONING_LEAK_MARKERS above - the
+    one shared check behind both the schema validators below (rejecting a
+    fresh generation) and Tracker.recent_qa_pairs() (keeping an answer
+    stored before those validators existed from being fed back to the
+    model as a few-shot example).
+    """
+    normalized = text.strip().casefold()
+    return any(marker in normalized for marker in _REASONING_LEAK_MARKERS)
+
+
 def _reject_leaked_reasoning(value: object) -> object:
     """Raises if `value` looks like leaked reasoning rather than real,
     submittable content - routes back through generate_structured()'s
@@ -89,13 +100,11 @@ def _reject_leaked_reasoning(value: object) -> object:
     substring/prefix check on a local model's own consistent phrasing is
     reliable here.
     """
-    if isinstance(value, str):
-        normalized = value.strip().casefold()
-        if any(marker in normalized for marker in _REASONING_LEAK_MARKERS):
-            raise ValueError(
-                "This looks like leaked reasoning, not the final content itself - output only "
-                "the finished text, with no explanation, self-review, or draft/revision process."
-            )
+    if isinstance(value, str) and looks_like_leaked_reasoning(value):
+        raise ValueError(
+            "This looks like leaked reasoning, not the final content itself - output only "
+            "the finished text, with no explanation, self-review, or draft/revision process."
+        )
     return value
 
 

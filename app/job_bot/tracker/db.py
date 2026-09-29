@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
+from job_bot.models.schemas import looks_like_leaked_reasoning
 from job_bot.text_utils import normalize_company_name
 
 # Outcome statuses that count as a genuine positive signal for a past
@@ -607,19 +608,35 @@ class Tracker:
         Deduplicated by question text (most recent answer per question
         wins) so this can't be dominated by one question asked on many
         postings crowding out everything else.
+
+        The one thing that *is* filtered: an answer that is leaked reasoning
+        (looks_like_leaked_reasoning()) rather than an answer at all. The
+        ApplicationAnswer validator only guards fresh generations - rows
+        recorded before it existed are still in qa_history, and feeding
+        one back as a few-shot example is exactly the compounding loop
+        docs/qwen_notes.md §1 describes. Such a question is skipped rather
+        than falling back to an older answer, same latest-wins rule as the
+        dedup above.
         """
+        pairs: list[dict[str, Any]] = []
+        if limit <= 0:
+            return pairs
         with self._transaction() as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
+            cursor = conn.execute(
                 """
                 SELECT question, answer FROM qa_history
                 WHERE id IN (SELECT MAX(id) FROM qa_history GROUP BY question)
                 ORDER BY id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
-        return [dict(row) for row in rows]
+                """
+            )
+            for row in cursor:
+                if looks_like_leaked_reasoning(row["answer"]):
+                    continue
+                pairs.append(dict(row))
+                if len(pairs) >= limit:
+                    break
+        return pairs
 
     def in_progress_jobs_at_company(self, company: str) -> list[dict[str, Any]]:
         """Tracked jobs at `company` (matched the same normalize_company_name()

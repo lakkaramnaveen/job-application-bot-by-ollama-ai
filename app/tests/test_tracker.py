@@ -635,6 +635,34 @@ def test_recent_qa_pairs_empty_when_nothing_recorded(tmp_path):
     assert tracker.recent_qa_pairs() == []
 
 
+def test_recent_qa_pairs_skips_a_leaked_reasoning_answer(tmp_path):
+    """qa_history rows recorded before ApplicationAnswer's leak validator
+    existed are still on disk - feeding one back as a few-shot example is
+    the compounding loop docs/qwen_notes.md §1 describes.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_qa("1", "Willing to relocate?", "No")
+    tracker.record_qa("2", "Years of experience?", "I need to answer the question about years. Let me check...")
+
+    pairs = tracker.recent_qa_pairs()
+
+    assert pairs == [{"question": "Willing to relocate?", "answer": "No"}]
+
+
+def test_recent_qa_pairs_limit_counts_only_non_leaked_answers(tmp_path):
+    """Filtering happens before the limit, so a leaked row can't shrink the
+    reference list below `limit` when enough clean answers exist.
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_qa("1", "Question 1?", "Answer 1")
+    tracker.record_qa("2", "Question 2?", "Answer 2")
+    tracker.record_qa("3", "Question 3?", "Let me think about this carefully.")
+
+    pairs = tracker.recent_qa_pairs(limit=2)
+
+    assert [p["question"] for p in pairs] == ["Question 2?", "Question 1?"]
+
+
 def test_search_qa_returns_every_pair_most_recent_first_with_job_context(tmp_path):
     tracker = make_tracker(tmp_path)
     tracker.upsert_job("1", "Backend Engineer", "Acme", "https://example.com/1")
