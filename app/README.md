@@ -635,6 +635,10 @@ seen, and lets you:
 - **Export CSV or JSON** for whatever's currently filtered/searched, not just
   the visible page - the same output `job-bot export` (`--format csv`/`json`)
   produces on the command line.
+- **See applications sent per week** in a modal - the dashboard
+  counterpart to `job-bot report --by-week`, one row per week (Monday to
+  Sunday, local time), most recent first, broken down by each week's
+  current status.
 - **View the most common missing qualifications** across every tracked
   posting in a modal - the dashboard counterpart to `job-bot report
   --by-missing-qualifications`, showing which specific gaps the LLM scorer

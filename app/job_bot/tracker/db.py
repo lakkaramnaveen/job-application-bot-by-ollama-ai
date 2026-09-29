@@ -10,7 +10,7 @@ import csv
 import json
 import sqlite3
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -111,6 +111,16 @@ def write_export_json(stream: TextIO, jobs: list[dict[str, Any]]) -> None:
         rows.append(row)
     json.dump(rows, stream, indent=2)
     stream.write("\n")
+
+
+def week_start(applied_at: str) -> str:
+    """The Monday (local time, ISO date) of the week `applied_at` falls in.
+    applied_at is stored as UTC, but a Sunday-evening application in a
+    UTC-negative zone is already Monday in UTC - bucketing by local time
+    keeps it in the week the user actually sent it.
+    """
+    local_date = datetime.fromisoformat(applied_at).astimezone().date()
+    return (local_date - timedelta(days=local_date.weekday())).isoformat()
 
 
 class Tracker:
@@ -401,6 +411,24 @@ class Tracker:
         with self._transaction() as conn:
             rows = conn.execute(f"SELECT status, COUNT(*) FROM jobs {where} GROUP BY status", params).fetchall()
         return dict(rows)
+
+    def applications_by_week(self) -> dict[str, dict[str, int]]:
+        """Week start (Monday, ISO date, local time) -> status -> count of
+        jobs applied to that week - shared by `job-bot report --by-week`
+        (cli.py) and the dashboard's Weekly Activity panel, kept here for
+        the same no-circular-import reason missing_qualifications_counts()
+        below gives. Keyed off applied_at, not first_seen_at: a job that
+        was only seen/skipped was never an application, so it has no
+        applied_at and is left out rather than inflating a week's count.
+        Weeks with no applications are absent, not zero-filled.
+        """
+        buckets: dict[str, dict[str, int]] = {}
+        for job in self.list_jobs():
+            if not job["applied_at"]:
+                continue
+            by_status = buckets.setdefault(week_start(job["applied_at"]), {})
+            by_status[job["status"]] = by_status.get(job["status"], 0) + 1
+        return buckets
 
     def missing_qualifications_counts(self, *, limit: int | None = None) -> dict[str, int]:
         """Missing-qualification phrase -> count of tracked jobs listing it -

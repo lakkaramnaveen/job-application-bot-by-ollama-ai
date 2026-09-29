@@ -13,6 +13,7 @@ from job_bot.dashboard.render import (
     render_resume_html,
     render_rows_html,
     render_stats_html,
+    render_weekly_activity_html,
 )
 
 
@@ -734,3 +735,34 @@ def test_render_page_html_defaults_to_empty_stats_when_counts_omitted():
     html = render_page_html([make_job()])
     assert 'id="stats"' in html
     assert 'All <span class="count">0</span>' in html
+
+
+def test_render_weekly_activity_html_empty_state():
+    assert "No applications sent yet." in render_weekly_activity_html({})
+
+
+def test_render_weekly_activity_html_most_recent_week_first_with_zero_filled_columns_and_total():
+    html = render_weekly_activity_html(
+        {
+            "2026-09-07": {"applied": 1},
+            "2026-09-14": {"applied": 1, "interviewing": 1},
+        }
+    )
+    assert html.index("2026-09-14") < html.index("2026-09-07")
+    assert "<th>Week of</th><th>applied</th><th>interviewing</th><th>Total</th>" in html
+    # the older week never had an interviewing job - shown as 0, not left blank
+    assert "<tr><td>2026-09-07</td><td>1</td><td>0</td><td>1</td></tr>" in html
+    assert "<tr><td>2026-09-14</td><td>1</td><td>1</td><td>2</td></tr>" in html
+
+
+def test_render_weekly_activity_html_escapes_status_names():
+    html = render_weekly_activity_html({"2026-09-14": {"<b>x</b>": 1}})
+    assert "<b>x</b>" not in html
+    assert "&lt;b&gt;x&lt;/b&gt;" in html
+
+
+def test_render_page_html_includes_the_weekly_activity_button_and_dialog():
+    html = render_page_html([make_job()])
+    assert 'id="showWeeklyActivity"' in html
+    assert 'id="weeklyActivityDialog"' in html
+    assert 'id="weeklyActivityContent"' in html

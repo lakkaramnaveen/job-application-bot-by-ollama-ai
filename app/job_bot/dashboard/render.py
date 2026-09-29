@@ -354,6 +354,29 @@ def render_missing_qualifications_html(breakdown: dict[str, int]) -> str:
     return f'<ul class="mq-list">{items}</ul>'
 
 
+def render_weekly_activity_html(breakdown: dict[str, dict[str, int]]) -> str:
+    """Applications sent per week (Tracker.applications_by_week()) as an
+    HTML table fragment, for the dashboard's Weekly Activity modal - the
+    dashboard counterpart to `job-bot report --by-week`, same layout: one
+    row per week, most recent first, one column per status that appears
+    anywhere, plus a total. Status names come from the DB, so they're
+    escaped like every other field here.
+    """
+    if not breakdown:
+        return '<p class="empty">No applications sent yet.</p>'
+    statuses = sorted({status for counts in breakdown.values() for status in counts})
+    header = "".join(f"<th>{html.escape(status)}</th>" for status in statuses)
+    rows = []
+    for week in sorted(breakdown, reverse=True):
+        counts = breakdown[week]
+        cells = "".join(f"<td>{counts.get(status, 0)}</td>" for status in statuses)
+        rows.append(f"<tr><td>{html.escape(week)}</td>{cells}<td>{sum(counts.values())}</td></tr>")
+    return (
+        f'<table class="weekly-activity"><thead><tr><th>Week of</th>{header}<th>Total</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
 def render_answer_gaps_html(gaps: dict[str, dict[str, Any]]) -> str:
     """Unanswered required-question gaps (AnswerGapStore.list_unanswered())
     as an HTML fragment, for the dashboard's Unanswered Questions modal -
@@ -606,6 +629,10 @@ def render_page_html(
               background: var(--surface); color: var(--fg); }}
   .audit-log-failures-label {{ display: block; font-size: 0.85rem; margin-bottom: 0.75rem;
               color: var(--fg); }}
+  .weekly-activity {{ border-collapse: collapse; width: 100%; font-size: 0.85rem; }}
+  .weekly-activity th, .weekly-activity td {{ padding: 0.3rem 0.6rem; text-align: right;
+              border-bottom: 1px solid var(--border); }}
+  .weekly-activity th:first-child, .weekly-activity td:first-child {{ text-align: left; }}
   .qa-history-list {{ list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }}
   .qa-history-list li {{ padding: 0.4rem 0; border-bottom: 1px solid var(--border); }}
   .qa-history-list li:last-child {{ border-bottom: none; }}
@@ -642,6 +669,7 @@ def render_page_html(
   <a id="exportJson" class="export-link" href="/api/export.json">Export JSON</a>
   <button type="button" id="manageBlacklist" class="export-link">Manage Blacklist</button>
   <button type="button" id="showMissingQualifications" class="export-link">Missing Qualifications</button>
+  <button type="button" id="showWeeklyActivity" class="export-link">Weekly Activity</button>
   <button type="button" id="showAnswerGaps" class="export-link">Unanswered Questions</button>
   <button type="button" id="showFaq" class="export-link">FAQ Answers</button>
   <button type="button" id="showQaHistory" class="export-link">Q&amp;A History</button>
@@ -681,6 +709,12 @@ def render_page_html(
   <h2>Blacklisted companies</h2>
   <div id="blacklistContent"></div>
   <button type="button" id="blacklistClose">Close</button>
+</dialog>
+
+<dialog id="weeklyActivityDialog">
+  <h2>Applications by week</h2>
+  <div id="weeklyActivityContent"></div>
+  <button type="button" id="weeklyActivityClose">Close</button>
 </dialog>
 
 <dialog id="missingQualificationsDialog">
@@ -973,6 +1007,22 @@ document.getElementById('showMissingQualifications').addEventListener('click', a
 }});
 document.getElementById('missingQualificationsClose').addEventListener(
   'click', () => missingQualificationsDialog.close()
+);
+
+const weeklyActivityDialog = document.getElementById('weeklyActivityDialog');
+document.getElementById('showWeeklyActivity').addEventListener('click', async () => {{
+  const content = document.getElementById('weeklyActivityContent');
+  content.innerHTML = 'Loading...';
+  weeklyActivityDialog.showModal();
+  try {{
+    const res = await fetch('/api/weekly-activity');
+    content.innerHTML = res.ok ? await res.text() : 'Could not load weekly activity.';
+  }} catch (err) {{
+    content.innerHTML = 'Could not load weekly activity (network error).';
+  }}
+}});
+document.getElementById('weeklyActivityClose').addEventListener(
+  'click', () => weeklyActivityDialog.close()
 );
 
 const answerGapsDialog = document.getElementById('answerGapsDialog');

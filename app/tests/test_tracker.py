@@ -1139,3 +1139,20 @@ def test_list_resume_generations_keeps_a_generation_whose_job_is_not_in_the_jobs
 def test_list_resume_generations_empty_when_nothing_recorded(tmp_path):
     tracker = make_tracker(tmp_path)
     assert tracker.list_resume_generations() == []
+
+
+def test_applications_by_week_leaves_out_jobs_never_applied_to(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("2", "Engineer", "Beta", "https://example.com/2")
+    tracker.mark_applied("2")
+
+    breakdown = tracker.applications_by_week()
+
+    assert list(breakdown.values()) == [{"applied": 1}]
+
+
+def test_applications_by_week_empty_when_nothing_applied(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "Engineer", "Acme", "https://example.com/1")
+    assert tracker.applications_by_week() == {}

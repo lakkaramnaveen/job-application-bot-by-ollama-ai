@@ -15,7 +15,7 @@ from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
-from job_bot.tracker.db import Tracker
+from job_bot.tracker.db import Tracker, week_start
 
 
 @pytest.fixture
@@ -1289,3 +1289,16 @@ def test_run_dashboard_raises_a_clear_error_for_an_out_of_range_port(tmp_path):
 def test_qa_endpoint_decodes_percent_encoded_job_id(live_server):
     with urllib.request.urlopen(f"{live_server}/api/jobs/job%202/qa") as resp:
         assert resp.status == 200
+
+
+def test_get_weekly_activity_counts_the_fixtures_applied_job_this_week(live_server):
+    """live_server's fixture marks job1 applied (just now) and leaves "job 2"
+    only seen - so exactly one application, in the current week.
+    """
+    with urllib.request.urlopen(f"{live_server}/api/weekly-activity") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+
+    this_week = week_start(datetime.now(UTC).isoformat())
+    assert f"<tr><td>{this_week}</td><td>1</td><td>1</td></tr>" in body
+

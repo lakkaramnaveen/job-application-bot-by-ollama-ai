@@ -1288,32 +1288,13 @@ def _print_company_breakdown(tracker: Tracker) -> None:
         print(row + str(sum(counts.values())))
 
 
-def _week_start(applied_at: str) -> str:
-    """The Monday (local time, ISO date) of the week `applied_at` falls in.
-    applied_at is stored as UTC, but a Sunday-evening application in a
-    UTC-negative zone is already Monday in UTC - bucketing by local time
-    keeps it in the week the user actually sent it.
-    """
-    local_date = datetime.fromisoformat(applied_at).astimezone().date()
-    return (local_date - timedelta(days=local_date.weekday())).isoformat()
-
-
 def _weekly_breakdown(tracker: Tracker) -> dict[str, dict[str, int]]:
-    """week start (Monday, ISO date) -> status -> count, for `job-bot report
-    --by-week` - how many applications actually went out each week, and
-    how each week's batch is trending now. Keyed off applied_at, not
-    first_seen_at: a job that was only seen/skipped was never an
-    application, so it has no applied_at and is left out entirely rather
-    than inflating a week's count. Weeks with no applications are simply
-    absent, not zero-filled.
+    """Thin wrapper around Tracker.applications_by_week() (see its own
+    docstring), matching _missing_qualifications_breakdown's shape - the
+    logic lives on Tracker so the dashboard's Weekly Activity panel can
+    reuse it without importing from this module.
     """
-    buckets: dict[str, dict[str, int]] = {}
-    for job in tracker.list_jobs():
-        if not job["applied_at"]:
-            continue
-        by_status = buckets.setdefault(_week_start(job["applied_at"]), {})
-        by_status[job["status"]] = by_status.get(job["status"], 0) + 1
-    return buckets
+    return tracker.applications_by_week()
 
 
 def _print_weekly_breakdown(tracker: Tracker) -> None:

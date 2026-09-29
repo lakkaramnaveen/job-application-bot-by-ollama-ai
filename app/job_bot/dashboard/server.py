@@ -36,6 +36,7 @@ from job_bot.dashboard.render import (
     render_resume_html,
     render_rows_html,
     render_stats_html,
+    render_weekly_activity_html,
 )
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
@@ -204,6 +205,8 @@ def make_handler(
                 self._handle_blacklist_list()
             elif parsed.path == "/api/missing-qualifications":
                 self._handle_missing_qualifications(tracker)
+            elif parsed.path == "/api/weekly-activity":
+                self._handle_weekly_activity(tracker)
             elif parsed.path == "/api/answer-gaps":
                 self._handle_answer_gaps()
             elif parsed.path == "/api/faq":
@@ -493,6 +496,16 @@ def make_handler(
             """
             entries = CompanyBlacklist(blacklist_path).list_entries()
             body = render_blacklist_html(entries).encode("utf-8")
+            self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_weekly_activity(self, tracker: Tracker) -> None:
+            """Applications sent per week, for the dashboard's Weekly
+            Activity modal - the dashboard counterpart to `job-bot report
+            --by-week`, read-only the same way _handle_missing_qualifications
+            is. Uncapped: one row per week with at least one application
+            stays small for any realistic job search.
+            """
+            body = render_weekly_activity_html(tracker.applications_by_week()).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
         def _handle_missing_qualifications(self, tracker: Tracker) -> None:
