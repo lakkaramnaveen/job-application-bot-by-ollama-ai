@@ -549,6 +549,47 @@ def test_run_still_applies_when_the_faq_file_is_unreadable_and_leaves_it_untouch
     assert "Warning: answer not cached" in capsys.readouterr().out
 
 
+def test_run_refuses_to_start_when_the_blacklist_file_is_unreadable(tmp_path, monkeypatch, capsys):
+    """An unreadable blacklist loads as empty, which for a run would mean
+    silently applying to every company the user blocked - the run must stop
+    before searching anything, with the file left untouched.
+    """
+    adapter = FakeAdapter(page=None)
+    searched = []
+    adapter.search = lambda *a, **kw: searched.append(True) or [JOB]
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path)
+    settings.blacklist_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.blacklist_path.write_bytes(b'["Acme"')
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_run(settings, make_args())
+
+    assert exc_info.value.code == 1
+    assert "no company would be blocked this run" in capsys.readouterr().err
+    assert searched == []
+    assert adapter.fill_and_submit_calls == []
+    assert settings.blacklist_path.read_bytes() == b'["Acme"'
+
+
+def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):
+    """A fresh install has no blacklist file - that's not corruption."""
+    adapter = FakeAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path)
+    assert not settings.blacklist_path.exists()
+
+    cmd_run(settings, make_args())
+
+    assert len(adapter.fill_and_submit_calls) == 1
+
+
 def test_run_ignores_an_echoed_answer_already_cached_in_the_faq(tmp_path, monkeypatch):
     """Entries cached before the echo check existed are still in real users'
     FAQ files - they must fall through to the LLM, not be replayed.

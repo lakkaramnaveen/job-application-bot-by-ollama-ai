@@ -17,6 +17,7 @@ from pathlib import Path
 class CorruptDataFile(RuntimeError):
     def __init__(self, path: Path, reason: str):
         self.path = path
+        self.reason = reason
         super().__init__(
             f"{path} exists but could not be read ({reason}) - refusing to overwrite it and lose "
             "its contents. Fix it by hand or move it aside, then retry (`job-bot doctor` checks it)."

@@ -37,7 +37,7 @@ from job_bot.browser.linkedin_adapter import (
 from job_bot.browser.session import BrowserSessionError, browser_session
 from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError, get_settings
 from job_bot.dashboard.server import DashboardPortInUse, run_dashboard
-from job_bot.data_files import CorruptDataFile
+from job_bot.data_files import CorruptDataFile, assert_safe_to_overwrite
 from job_bot.generation.artifacts import (
     UnsafeJobId,
     write_cover_letter,
@@ -174,6 +174,21 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     """
     for warning in settings.validate_ready():
         print(f"Warning: {warning}")
+
+    # CompanyBlacklist loads an unreadable file as empty (so other commands
+    # keep working while `job-bot doctor` reports it) - for a run, that
+    # would mean silently applying to every company the user blocked. Stop
+    # before anything is searched or submitted instead.
+    try:
+        assert_safe_to_overwrite(settings.blacklist_path, list)
+    except CorruptDataFile as e:
+        print(
+            f"Error: {settings.blacklist_path} could not be read ({e.reason}), so no company would be "
+            "blocked this run - refusing to start. Fix or move the file aside, then re-run "
+            "(`job-bot doctor` checks it).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     provider = get_provider(settings)
     resume_store = ResumeStore(settings.resume_path, settings.faq_path)
@@ -1804,14 +1819,12 @@ def _blacklist_check(settings: Settings) -> tuple[str, bool, str]:
     fine) nor present-but-corrupted should look the same as "no companies
     blacklisted" - but CompanyBlacklist._load() (safety/blacklist.py)
     silently falls back to an empty blacklist on invalid JSON rather than
-    raising, so `job-bot run` would proceed with zero blacklist protection
-    and no visible error. Worse than just going unprotected for one run:
-    the next `job-bot blacklist add` (or a dashboard one-click blacklist)
-    calls _save() against that same now-empty in-memory state, silently
-    overwriting the file with only the newly added company and permanently
-    losing every previously blacklisted one. Catches the corruption here,
-    before either of those, the same way _resume_check catches a corrupted
-    resume before `job-bot run` gets there.
+    raising. `job-bot run` now refuses to start on such a file and
+    CompanyBlacklist._save() refuses to overwrite it (data_files.py), so
+    neither blocking nor the file's contents are silently lost any more -
+    this check reports the problem up front, before either of those, the
+    same way _resume_check catches a corrupted resume before `job-bot run`
+    gets there.
 
     When the file doesn't exist yet (the normal fresh-install case),
     proves the directory it would be created in is actually writable
