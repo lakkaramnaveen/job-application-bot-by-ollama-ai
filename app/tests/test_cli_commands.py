@@ -2788,6 +2788,58 @@ def test_review_answers_dismiss_of_a_nonexistent_question_says_so(tmp_path, caps
 # --- faq ---
 
 
+def _write_faq(settings, answers: dict) -> None:
+    settings.faq_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.faq_path.write_text(json.dumps(answers), encoding="utf-8")
+
+
+_FAQ_WITH_UNUSABLE_ENTRIES = {
+    "Willing to relocate?": "No",
+    "Phone country code": "Phone country code",
+    "Years of Python?": "I need to answer the question about Python. Let me check the resume.",
+}
+
+
+def test_faq_clean_removes_echoed_and_leaked_answers_and_keeps_real_ones(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    _write_faq(settings, _FAQ_WITH_UNUSABLE_ENTRIES)
+
+    cmd_faq(settings, argparse.Namespace(faq_action="clean", dry_run=False))
+
+    out = capsys.readouterr().out
+    assert 'Removed "Phone country code" (echoes the question)' in out
+    assert 'Removed "Years of Python?" (leaked reasoning)' in out
+    assert json.loads(settings.faq_path.read_text()) == {"Willing to relocate?": "No"}
+
+
+def test_faq_clean_dry_run_lists_but_changes_nothing(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    _write_faq(settings, _FAQ_WITH_UNUSABLE_ENTRIES)
+
+    cmd_faq(settings, argparse.Namespace(faq_action="clean", dry_run=True))
+
+    out = capsys.readouterr().out
+    assert 'Would remove "Phone country code" (echoes the question)' in out
+    assert "2 unusable answer(s) found" in out
+    assert json.loads(settings.faq_path.read_text()) == _FAQ_WITH_UNUSABLE_ENTRIES
+
+
+def test_faq_clean_says_so_when_nothing_is_unusable(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    _write_faq(settings, {"Willing to relocate?": "No"})
+
+    cmd_faq(settings, argparse.Namespace(faq_action="clean", dry_run=False))
+
+    assert "No unusable cached FAQ answers found." in capsys.readouterr().out
+    assert json.loads(settings.faq_path.read_text()) == {"Willing to relocate?": "No"}
+
+
+def test_faq_clean_is_wired_into_the_cli_parser():
+    args = build_parser().parse_args(["faq", "clean", "--dry-run"])
+    assert args.faq_action == "clean"
+    assert args.dry_run is True
+
+
 def test_faq_list_says_so_when_nothing_cached(tmp_path, capsys):
     settings = make_settings(tmp_path)
 
