@@ -110,6 +110,7 @@ def report_args(**overrides) -> argparse.Namespace:
         by_score=False,
         by_eligibility=False,
         by_company=False,
+        by_week=False,
         by_missing_qualifications=False,
         missing_qualifications_limit=None,
         format="text",
@@ -787,6 +788,80 @@ def test_report_json_includes_by_company_only_when_requested(tmp_path, capsys):
     cmd_report(settings, report_args(format="json"))
     payload = json.loads(capsys.readouterr().out)
     assert "by_company" not in payload
+
+
+@pytest.fixture
+def chicago_tz(monkeypatch):
+    """Pin the local timezone so _week_start()'s local-time bucketing is
+    deterministic regardless of the machine running the suite.
+    """
+    import time
+
+    monkeypatch.setenv("TZ", "America/Chicago")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_report_by_week_counts_applications_per_week_most_recent_first(tmp_path, capsys, chicago_tz):
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    for job_id in ("job1", "job2", "job3"):
+        tracker.upsert_job(job_id, "Engineer", "Acme", f"https://x/{job_id}")
+        tracker.mark_applied(job_id)
+    tracker.update_status("job2", "interviewing")
+    # Wednesdays at midday: job1 in the week of 2026-09-07, job2/job3 in 2026-09-14.
+    _backdate_applied_at(settings.db_path, "job1", datetime(2026, 9, 9, 17, tzinfo=UTC))
+    _backdate_applied_at(settings.db_path, "job2", datetime(2026, 9, 16, 17, tzinfo=UTC))
+    _backdate_applied_at(settings.db_path, "job3", datetime(2026, 9, 16, 18, tzinfo=UTC))
+
+    cmd_report(settings, report_args(by_week=True))
+
+    out = capsys.readouterr().out
+    assert "Applications by week:" in out
+    week_lines = [line.split() for line in out.splitlines() if line.startswith("2026-")]
+    # columns: week, applied, interviewing, total - most recent week first
+    assert week_lines == [["2026-09-14", "1", "1", "2"], ["2026-09-07", "1", "0", "1"]]
+
+
+def test_report_by_week_leaves_out_jobs_never_applied_to(tmp_path, capsys, chicago_tz):
+    """A seen/skipped job has no applied_at - it was never an application,
+    so it must not show up in any week (and with nothing applied, the
+    section is omitted entirely rather than printing an empty table).
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Engineer", "Acme", "https://x/1")
+
+    cmd_report(settings, report_args(by_week=True))
+
+    assert "Applications by week:" not in capsys.readouterr().out
+
+
+def test_report_by_week_buckets_by_local_time_not_utc(tmp_path, capsys, chicago_tz):
+    """Sunday 2026-09-13 at 8pm in Chicago is already Monday 01:00 UTC -
+    it belongs to the week the user actually sent it (week of 2026-09-07),
+    not the next one.
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Engineer", "Acme", "https://x/1")
+    tracker.mark_applied("job1")
+    _backdate_applied_at(settings.db_path, "job1", datetime(2026, 9, 14, 1, tzinfo=UTC))
+
+    cmd_report(settings, report_args(by_week=True, format="json"))
+
+    assert json.loads(capsys.readouterr().out)["by_week"] == {"2026-09-07": {"applied": 1}}
+
+
+def test_report_json_includes_by_week_only_when_requested(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path)
+
+    cmd_report(settings, report_args(format="json"))
+
+    assert "by_week" not in json.loads(capsys.readouterr().out)
 
 
 def test_report_by_missing_qualifications_counts_most_common_gaps_first(tmp_path, capsys):

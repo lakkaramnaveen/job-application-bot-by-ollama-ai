@@ -1284,6 +1284,53 @@ def _print_company_breakdown(tracker: Tracker) -> None:
         print(row + str(sum(counts.values())))
 
 
+def _week_start(applied_at: str) -> str:
+    """The Monday (local time, ISO date) of the week `applied_at` falls in.
+    applied_at is stored as UTC, but a Sunday-evening application in a
+    UTC-negative zone is already Monday in UTC - bucketing by local time
+    keeps it in the week the user actually sent it.
+    """
+    local_date = datetime.fromisoformat(applied_at).astimezone().date()
+    return (local_date - timedelta(days=local_date.weekday())).isoformat()
+
+
+def _weekly_breakdown(tracker: Tracker) -> dict[str, dict[str, int]]:
+    """week start (Monday, ISO date) -> status -> count, for `job-bot report
+    --by-week` - how many applications actually went out each week, and
+    how each week's batch is trending now. Keyed off applied_at, not
+    first_seen_at: a job that was only seen/skipped was never an
+    application, so it has no applied_at and is left out entirely rather
+    than inflating a week's count. Weeks with no applications are simply
+    absent, not zero-filled.
+    """
+    buckets: dict[str, dict[str, int]] = {}
+    for job in tracker.list_jobs():
+        if not job["applied_at"]:
+            continue
+        by_status = buckets.setdefault(_week_start(job["applied_at"]), {})
+        by_status[job["status"]] = by_status.get(job["status"], 0) + 1
+    return buckets
+
+
+def _print_weekly_breakdown(tracker: Tracker) -> None:
+    """Guarded by `if not buckets: return` - unlike _print_company_breakdown,
+    jobs can be tracked (seen/skipped) with none ever applied to, so this
+    can be empty even when cmd_report got past its own `if not counts`.
+    """
+    buckets = _weekly_breakdown(tracker)
+    if not buckets:
+        return
+    statuses = sorted({status for counts in buckets.values() for status in counts})
+    print("\nApplications by week:")
+    header = "week of".ljust(12) + "".join(status.ljust(14) for status in statuses) + "total"
+    print(header)
+    # Most recent week first - "how am I doing lately" is the useful read.
+    for week in sorted(buckets, reverse=True):
+        counts = buckets[week]
+        row = week.ljust(12) + "".join(str(counts.get(s, 0)).ljust(14) for s in statuses)
+        print(row + str(sum(counts.values())))
+
+
 def _missing_qualifications_breakdown(tracker: Tracker, *, limit: int | None = None) -> dict[str, int]:
     """Thin wrapper around Tracker.missing_qualifications_counts() (see its
     own docstring for the exact-string-counting/limit reasoning) - kept
@@ -1335,7 +1382,8 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
     applied to the most, and how those applications are trending), and
     `--by-missing-qualifications` (which specific gaps the LLM scorer keeps
     flagging across postings - see _missing_qualifications_breakdown;
-    `--missing-qualifications-limit` caps it to the N most common).
+    `--missing-qualifications-limit` caps it to the N most common), and
+    `--by-week` (applications sent per week - see _weekly_breakdown).
     `--format json` prints the same data as one
     JSON object instead - for a script or cron job that wants to alert on
     e.g. a growing stale-applications count without scraping the
@@ -1367,6 +1415,8 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
             payload["by_eligibility"] = _eligibility_breakdown(tracker)
         if args.by_company:
             payload["by_company"] = _company_breakdown(tracker)
+        if args.by_week:
+            payload["by_week"] = _weekly_breakdown(tracker)
         if args.by_missing_qualifications:
             payload["by_missing_qualifications"] = _missing_qualifications_breakdown(
                 tracker, limit=args.missing_qualifications_limit
@@ -1395,6 +1445,9 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
 
     if args.by_company:
         _print_company_breakdown(tracker)
+
+    if args.by_week:
+        _print_weekly_breakdown(tracker)
 
     if args.by_missing_qualifications:
         _print_missing_qualifications_breakdown(tracker, limit=args.missing_qualifications_limit)
@@ -2359,6 +2412,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--by-company",
         action="store_true",
         help="Break outcomes down by company, most-applied first.",
+    )
+    report_p.add_argument(
+        "--by-week",
+        action="store_true",
+        help="Count applications sent per week (local time, most recent first), by current status.",
     )
     report_p.add_argument(
         "--by-missing-qualifications",
