@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from job_bot.data_files import assert_safe_to_overwrite
+
 
 class AnswerGapStore:
     def __init__(self, path: Path):
@@ -41,6 +43,7 @@ class AnswerGapStore:
         return data if isinstance(data, dict) else {}
 
     def _save(self, gaps: dict[str, dict[str, Any]]) -> None:
+        assert_safe_to_overwrite(self._path, dict)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(gaps, indent=2), encoding="utf-8")
 

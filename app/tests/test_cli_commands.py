@@ -35,6 +35,7 @@ from job_bot.cli import (
     main,
 )
 from job_bot.config import Settings
+from job_bot.data_files import CorruptDataFile
 from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import JobMatchScore
 from job_bot.resume.store import ResumeStore
@@ -3945,3 +3946,10 @@ def test_args_helper_stays_in_sync_with_the_real_parser(helper, argv):
     """
     real_keys = set(vars(build_parser().parse_args(argv))) - {"command"}
     assert set(vars(helper())) == real_keys
+
+
+def test_corrupt_data_file_is_a_clean_user_facing_error():
+    """main() prints EXPECTED_ERRORS as "Error: ..." instead of a traceback -
+    e.g. `job-bot blacklist add` against an unreadable blacklist file.
+    """
+    assert CorruptDataFile in EXPECTED_ERRORS

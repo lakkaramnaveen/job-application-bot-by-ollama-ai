@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from job_bot.data_files import assert_safe_to_overwrite
 from job_bot.text_utils import normalize_company_name
 
 
@@ -124,6 +125,7 @@ class CompanyBlacklist:
         return sorted(self._companies.values(), key=lambda entry: entry["name"].casefold())
 
     def _save(self) -> None:
+        assert_safe_to_overwrite(self._path, list)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         data: list[Any] = [
             {"name": entry["name"], "reason": entry["reason"]} if entry["reason"] else entry["name"]

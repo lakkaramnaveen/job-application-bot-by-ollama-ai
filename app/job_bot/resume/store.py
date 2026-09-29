@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from job_bot.data_files import assert_safe_to_overwrite
 from job_bot.resume.parser import parse_resume
 
 
@@ -63,6 +64,7 @@ class ResumeStore:
         return {str(k): str(v) for k, v in data.items()}
 
     def save_faq_answer(self, question: str, answer: str) -> None:
+        assert_safe_to_overwrite(self._faq_path, dict)
         answers = self.faq_answers()
         answers[question] = answer
         self._faq_path.parent.mkdir(parents=True, exist_ok=True)

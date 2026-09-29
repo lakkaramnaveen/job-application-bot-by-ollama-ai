@@ -37,6 +37,7 @@ from job_bot.browser.linkedin_adapter import (
 from job_bot.browser.session import BrowserSessionError, browser_session
 from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError, get_settings
 from job_bot.dashboard.server import DashboardPortInUse, run_dashboard
+from job_bot.data_files import CorruptDataFile
 from job_bot.generation.artifacts import (
     UnsafeJobId,
     write_cover_letter,
@@ -81,6 +82,7 @@ EXPECTED_ERRORS = (
     UnsafeJobId,
     BrowserSessionError,
     DashboardPortInUse,
+    CorruptDataFile,
 )
 
 
@@ -583,7 +585,13 @@ def _run_apply_cycle(
             return ""
         tracker.record_qa(job_id, question, result.answer)
         if result.based_on_resume and result.confidence >= settings.faq_save_confidence:
-            resume_store.save_faq_answer(question, result.answer)
+            try:
+                resume_store.save_faq_answer(question, result.answer)
+            except CorruptDataFile as e:
+                # Caching is an optimization - the answer itself is still
+                # good, so the application goes ahead uncached rather than
+                # failing over an unreadable FAQ file.
+                print(f"Warning: answer not cached - {e}")
         return result.answer
 
     def apply_to(posting: JobPosting, cover_letter: CoverLetter, resume_path: str) -> bool | None:
@@ -708,9 +716,12 @@ def _run_apply_cycle(
                 # answer this question once there and every future posting
                 # that asks it gets answered automatically instead of
                 # failing the same way again.
-                answer_gaps.record(
-                    e.question, job_id=posting.job_id, company=posting.company, title=posting.title
-                )
+                try:
+                    answer_gaps.record(
+                        e.question, job_id=posting.job_id, company=posting.company, title=posting.title
+                    )
+                except CorruptDataFile as gap_error:
+                    print(f"Warning: unanswered question not recorded - {gap_error}")
             audit.log("apply_error", job_id=posting.job_id, error=str(e))
             failure_log.log(
                 "apply_error",

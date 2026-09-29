@@ -38,6 +38,7 @@ from job_bot.dashboard.render import (
     render_stats_html,
     render_weekly_activity_html,
 )
+from job_bot.data_files import CorruptDataFile
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
@@ -219,6 +220,15 @@ def make_handler(
                 self._send_text(404, "Not found")
 
         def do_POST(self) -> None:  # noqa: N802 - required name for BaseHTTPRequestHandler
+            try:
+                self._dispatch_post()
+            except CorruptDataFile as e:
+                # The blacklist file exists but is unreadable, so the write
+                # was refused rather than replacing it - tell the page why
+                # instead of dropping the connection mid-request.
+                self._send_text(500, str(e))
+
+        def _dispatch_post(self) -> None:
             if (job_id := self._job_id_from_path("/api/jobs/", "/status")) is not None:
                 self._handle_status_update(Tracker(db_path), job_id)
             elif (job_id := self._job_id_from_path("/api/jobs/", "/blacklist")) is not None:

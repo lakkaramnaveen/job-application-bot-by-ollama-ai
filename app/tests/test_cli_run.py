@@ -527,6 +527,28 @@ def test_run_treats_an_answer_that_echoes_the_question_as_no_answer(tmp_path, mo
     assert Tracker(settings.db_path).recent_qa_pairs() == []
 
 
+def test_run_still_applies_when_the_faq_file_is_unreadable_and_leaves_it_untouched(tmp_path, monkeypatch, capsys):
+    """Caching an answer is an optimization - an unreadable FAQ_PATH must
+    neither be overwritten (losing its contents) nor fail the application.
+    """
+    provider = FakeProvider()
+    adapter = FakeAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path)
+    settings.faq_path.parent.mkdir(parents=True, exist_ok=True)
+    corrupt = b'{"Willing to relocate?": "No"'
+    settings.faq_path.write_bytes(corrupt)
+
+    cmd_run(settings, make_args())
+
+    assert adapter.fill_and_submit_calls[0]["answered"] == "5 years"
+    assert settings.faq_path.read_bytes() == corrupt
+    assert "Warning: answer not cached" in capsys.readouterr().out
+
+
 def test_run_ignores_an_echoed_answer_already_cached_in_the_faq(tmp_path, monkeypatch):
     """Entries cached before the echo check existed are still in real users'
     FAQ files - they must fall through to the LLM, not be replayed.

@@ -592,6 +592,18 @@ def test_post_blacklist_adds_the_jobs_company(live_server, tmp_path):
     assert CompanyBlacklist(tmp_path / "blacklist.json").is_blocked("Acme Corp")
 
 
+def test_post_blacklist_refuses_to_replace_an_unreadable_blacklist(live_server, tmp_path):
+    path = tmp_path / "blacklist.json"
+    path.write_bytes(b'["Globex"')
+
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post(f"{live_server}/api/jobs/job1/blacklist")
+
+    assert exc_info.value.code == 500
+    assert "refusing to overwrite" in exc_info.value.read().decode("utf-8")
+    assert path.read_bytes() == b'["Globex"'
+
+
 def test_post_blacklist_rejects_a_cross_origin_request(live_server):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         _post(f"{live_server}/api/jobs/job1/blacklist", same_origin=False)
