@@ -1122,6 +1122,37 @@ def cmd_faq(settings: Settings, args: argparse.Namespace) -> None:
                 if removed
                 else f'No cached answer for: "{question}"'
             )
+    elif args.faq_action == "add":
+        # The one way to cache an answer before a real application has
+        # failed on the question first (review-answers needs a recorded gap;
+        # import needs a JSON file) - e.g. "Phone country code", whose
+        # answer is known up front. Held to the same rules a run applies,
+        # so nothing added here would just be skipped or misused later.
+        question, answer = args.question.strip(), args.answer.strip()
+        if not question or not answer:
+            print("Error: both the question and the answer must be non-empty.", file=sys.stderr)
+            sys.exit(1)
+        if is_per_position_field(question):
+            print(
+                f'Error: "{question}" is a per-position work-history date - one cached answer would be '
+                "used for every position on every form, so it can't be cached.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        reason = unusable_faq_reason(question, answer)
+        if reason is not None:
+            print(f"Error: that answer would be skipped by every run ({reason}).", file=sys.stderr)
+            sys.exit(1)
+        previous = resume_store.faq_answers().get(question)
+        resume_store.save_faq_answer(question, answer)
+        if previous is None:
+            print(f'Added: "{question}" -> {answer}')
+        else:
+            print(f'Replaced: "{question}" -> {answer} (was: {previous})')
+        # Same as review-answers after saving: an answered question stops
+        # being an open gap.
+        if AnswerGapStore(settings.answer_gaps_path).resolve(question):
+            print("  Also cleared it from the unanswered questions (job-bot review-answers).")
     elif args.faq_action == "clean":
         # Runtime already skips these (see resume/store.py's unusable_faq_reason()), so this is
         # housekeeping rather than a fix - but a skipped entry still shows
@@ -2496,6 +2527,11 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         help="The exact question text(s), as shown by `job-bot faq list`. Quote each separately.",
     )
+    faq_add_p = faq_sub.add_parser(
+        "add", help="Cache one answer directly, without waiting for a run to fail on the question first."
+    )
+    faq_add_p.add_argument("question", help="The exact question/field label, as it appears on the form.")
+    faq_add_p.add_argument("answer", help="The answer to reuse for it on every future posting.")
     faq_clean_p = faq_sub.add_parser(
         "clean",
         help="Remove cached answers a run would skip anyway (echoing the question, or leaked reasoning).",

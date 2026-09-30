@@ -2914,6 +2914,68 @@ _FAQ_WITH_UNUSABLE_ENTRIES = {
 }
 
 
+def _faq_add(settings, question, answer):
+    cmd_faq(settings, argparse.Namespace(faq_action="add", question=question, answer=answer))
+
+
+def test_faq_add_caches_an_answer_without_a_prior_gap(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+
+    _faq_add(settings, "Phone country code", "United States (+1)")
+
+    assert "Added:" in capsys.readouterr().out
+    assert ResumeStore(settings.resume_path, settings.faq_path).faq_answers() == {
+        "Phone country code": "United States (+1)"
+    }
+
+
+def test_faq_add_replaces_an_existing_answer_and_says_what_it_was(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    _write_faq(settings, {"Willing to relocate?": "No"})
+
+    _faq_add(settings, "Willing to relocate?", "Yes")
+
+    out = capsys.readouterr().out
+    assert "Replaced:" in out
+    assert "(was: No)" in out
+    assert ResumeStore(settings.resume_path, settings.faq_path).faq_answers() == {"Willing to relocate?": "Yes"}
+
+
+def test_faq_add_clears_a_matching_unanswered_question(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    AnswerGapStore(settings.answer_gaps_path).record("Phone country code", job_id="1", company="Acme", title="X")
+
+    _faq_add(settings, "Phone country code", "United States (+1)")
+
+    assert "Also cleared it from the unanswered questions" in capsys.readouterr().out
+    assert AnswerGapStore(settings.answer_gaps_path).list_unanswered() == {}
+
+
+@pytest.mark.parametrize(
+    ("question", "answer", "message"),
+    [
+        ("Phone country code", "Phone country code", "echoes the question"),
+        ("Years of Python?", "Let me check the resume first.", "leaked reasoning"),
+        ("Year of From", "2019", "per-position work-history date"),
+        ("  ", "Yes", "must be non-empty"),
+    ],
+)
+def test_faq_add_refuses_what_a_run_would_skip_or_misuse(tmp_path, capsys, question, answer, message):
+    settings = make_settings(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _faq_add(settings, question, answer)
+
+    assert exc_info.value.code == 1
+    assert message in capsys.readouterr().err
+    assert not settings.faq_path.exists()
+
+
+def test_faq_add_is_wired_into_the_cli_parser():
+    args = build_parser().parse_args(["faq", "add", "Phone country code", "United States (+1)"])
+    assert (args.faq_action, args.question, args.answer) == ("add", "Phone country code", "United States (+1)")
+
+
 def test_faq_clean_removes_echoed_and_leaked_answers_and_keeps_real_ones(tmp_path, capsys):
     settings = make_settings(tmp_path)
     _write_faq(settings, _FAQ_WITH_UNUSABLE_ENTRIES)

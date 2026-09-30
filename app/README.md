@@ -462,6 +462,7 @@ more you use it, without ever caching a low-confidence guess.
 job-bot faq list                          # every cached question/answer pair
 job-bot faq list --search python          # only pairs whose question or answer mentions "python"
 job-bot faq list --format json            # same (optionally --search-filtered) pairs as one JSON object
+job-bot faq add "Phone country code" "United States (+1)"   # cache an answer you already know, before any run fails on it
 job-bot faq remove "Years of Python experience?"   # e.g. to fix a wrong one
 job-bot faq remove "Question A" "Question B"        # remove several at once, each quoted separately
 job-bot faq clean --dry-run                          # list cached answers a run would skip anyway (echoing the question, or leaked reasoning)
