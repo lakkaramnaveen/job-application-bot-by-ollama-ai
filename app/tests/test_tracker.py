@@ -1167,3 +1167,13 @@ def test_recent_qa_pairs_skips_an_answer_that_echoes_its_question(tmp_path):
     tracker.record_qa("2", "Phone country code", "Phone country code")
 
     assert tracker.recent_qa_pairs() == [{"question": "Willing to relocate?", "answer": "No"}]
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_recent_qa_pairs_with_a_non_positive_limit_returns_nothing(tmp_path, limit):
+    """SQLite treats LIMIT -1 as "no limit"; the Python-side filtering
+    loop must not turn a zero/negative limit into "everything".
+    """
+    tracker = make_tracker(tmp_path)
+    tracker.record_qa("1", "Willing to relocate?", "No")
+    assert tracker.recent_qa_pairs(limit=limit) == []

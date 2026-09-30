@@ -654,6 +654,32 @@ def test_run_leaves_a_per_position_date_field_unanswered_without_asking_the_llm(
     assert Tracker(settings.db_path).recent_qa_pairs() == []
 
 
+class UnanswerableAdapter(FakeAdapter):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        raise UnansweredRequiredQuestion(posting.job_id, "Security clearance level?", "No answer")
+
+
+def test_run_warns_but_keeps_going_when_the_answer_gaps_file_is_unreadable(tmp_path, monkeypatch, capsys):
+    """An unreadable answer_gaps.json refuses the write (a8febaa) - the run
+    must report the posting's failure normally and warn, not crash, and the
+    file must be left as it was.
+    """
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", UnanswerableAdapter)
+
+    settings = make_settings(tmp_path)
+    settings.answer_gaps_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.answer_gaps_path.write_bytes(b'{"Old question?": {"count": 3}')
+
+    cmd_run(settings, make_args())  # must not raise
+
+    out = capsys.readouterr().out
+    assert "Warning: unanswered question not recorded" in out
+    assert "Error applying to" in out
+    assert settings.answer_gaps_path.read_bytes() == b'{"Old question?": {"count": 3}'
+
+
 def test_run_ignores_an_echoed_answer_already_cached_in_the_faq(tmp_path, monkeypatch):
     """Entries cached before the echo check existed are still in real users'
     FAQ files - they must fall through to the LLM, not be replayed.
