@@ -28,6 +28,7 @@ from job_bot.dashboard.render import (
     render_answer_gaps_html,
     render_audit_log_html,
     render_blacklist_html,
+    render_failure_kinds_html,
     render_faq_html,
     render_missing_qualifications_html,
     render_page_html,
@@ -206,6 +207,8 @@ def make_handler(
                 self._handle_blacklist_list()
             elif parsed.path == "/api/missing-qualifications":
                 self._handle_missing_qualifications(tracker)
+            elif parsed.path == "/api/failure-kinds":
+                self._handle_failure_kinds()
             elif parsed.path == "/api/weekly-activity":
                 self._handle_weekly_activity(tracker)
             elif parsed.path == "/api/answer-gaps":
@@ -508,6 +511,15 @@ def make_handler(
             entries = CompanyBlacklist(blacklist_path).list_entries()
             body = render_blacklist_html(entries).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_failure_kinds(self) -> None:
+            """The failed-applications log grouped by kind, for the
+            dashboard's Failure Summary modal - the counterpart to `job-bot
+            report --by-failure`, read-only like _handle_weekly_activity.
+            Uncapped: kinds are already grouped, and the modal scrolls.
+            """
+            kinds = AuditLogger(failed_applications_log_path).failure_kinds()
+            self._send(200, "text/html; charset=utf-8", render_failure_kinds_html(kinds).encode("utf-8"))
 
         def _handle_weekly_activity(self, tracker: Tracker) -> None:
             """Applications sent per week, for the dashboard's Weekly

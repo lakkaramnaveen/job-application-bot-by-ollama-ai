@@ -5,6 +5,7 @@ from job_bot.dashboard.render import (
     render_answer_gaps_html,
     render_audit_log_html,
     render_blacklist_html,
+    render_failure_kinds_html,
     render_faq_html,
     render_missing_qualifications_html,
     render_page_html,
@@ -826,3 +827,30 @@ def test_render_page_html_shows_a_signed_out_banner_with_the_local_time(chicago_
 
 def test_render_page_html_has_no_banner_when_not_signed_out():
     assert 'class="signed-out-banner"' not in render_page_html([make_job()])
+
+
+def test_render_failure_kinds_html_empty_state():
+    assert "No failed applications recorded." in render_failure_kinds_html([])
+
+
+def test_render_failure_kinds_html_keeps_order_and_shows_local_last_seen(chicago_tz):
+    html = render_failure_kinds_html(
+        [
+            {"kind": "apply_error: stuck on a step", "count": 124, "last_seen": "2026-09-14T01:00:00+00:00"},
+            {"kind": "prep_error: Could not reach Ollama", "count": 10, "last_seen": "2026-09-23T17:42:01+00:00"},
+        ]
+    )
+    assert html.index("stuck on a step") < html.index("Could not reach Ollama")
+    assert "<td>124</td><td>2026-09-13 20:00</td>" in html
+
+
+def test_render_failure_kinds_html_escapes_error_text():
+    html = render_failure_kinds_html([{"kind": "apply_error: <img src=x onerror=alert(1)>", "count": 1, "last_seen": ""}])
+    assert "<img" not in html
+    assert "&lt;img" in html
+
+
+def test_render_page_html_includes_the_failure_summary_button_and_dialog():
+    html = render_page_html([make_job()])
+    assert 'id="showFailureKinds"' in html
+    assert 'id="failureKindsDialog"' in html

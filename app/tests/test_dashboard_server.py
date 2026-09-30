@@ -1367,3 +1367,18 @@ def test_index_shows_the_signed_out_banner_only_after_a_signed_out_search(live_s
 
     audit.log("search", keywords="x", location="y", results=3)
     assert 'class="signed-out-banner"' not in page()
+
+
+def test_get_failure_kinds_groups_the_failed_applications_log(live_server, tmp_path):
+    with urllib.request.urlopen(f"{live_server}/api/failure-kinds") as resp:
+        assert "No failed applications recorded." in resp.read().decode("utf-8")
+
+    failures = AuditLogger(tmp_path / "failed_applications.log")
+    failures.log("apply_error", job_id="1", error="Locator.wait_for: Timeout 5000ms exceeded.")
+    failures.log("apply_error", job_id="2", error="Locator.wait_for: Timeout 8000ms exceeded.")
+
+    with urllib.request.urlopen(f"{live_server}/api/failure-kinds") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+    assert "<td>2</td>" in body
+    assert "apply_error: Locator.wait_for: Timeout Nms exceeded." in body

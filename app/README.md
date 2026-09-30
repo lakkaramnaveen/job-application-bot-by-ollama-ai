@@ -642,6 +642,10 @@ seen, and lets you:
 - **Export CSV or JSON** for whatever's currently filtered/searched, not just
   the visible page - the same output `job-bot export` (`--format csv`/`json`)
   produces on the command line.
+- **See failures grouped by kind** in a Failure Summary modal - the
+  dashboard counterpart to `job-bot report --by-failure`: which kinds of
+  failure dominate the failed-applications log, most common first, with a
+  count and when each was last seen.
 - **See applications sent per week** in a modal - the dashboard
   counterpart to `job-bot report --by-week`, one row per week (Monday to
   Sunday, local time), most recent first, broken down by each week's

@@ -379,6 +379,28 @@ def render_weekly_activity_html(breakdown: dict[str, dict[str, int]]) -> str:
     )
 
 
+def render_failure_kinds_html(kinds: list[dict[str, Any]]) -> str:
+    """The failed-applications log grouped by kind (AuditLogger.
+    failure_kinds(), already most common first) as an HTML table fragment,
+    for the dashboard's Failure Summary modal - the dashboard counterpart to
+    `job-bot report --by-failure`. Kinds come from logged error text, which
+    can contain anything a page or exception said, so every field is
+    escaped.
+    """
+    if not kinds:
+        return '<p class="empty">No failed applications recorded.</p>'
+    rows = "".join(
+        f"<tr><td>{int(kind['count'])}</td>"
+        f"<td>{html.escape(format_local_timestamp(str(kind['last_seen'])))}</td>"
+        f"<td>{html.escape(str(kind['kind']))}</td></tr>"
+        for kind in kinds
+    )
+    return (
+        '<table class="failure-kinds"><thead><tr><th>Count</th><th>Last seen</th><th>Kind</th></tr></thead>'
+        f"<tbody>{rows}</tbody></table>"
+    )
+
+
 def render_answer_gaps_html(gaps: dict[str, dict[str, Any]]) -> str:
     """Unanswered required-question gaps (AnswerGapStore.list_unanswered())
     as an HTML fragment, for the dashboard's Unanswered Questions modal -
@@ -674,6 +696,12 @@ def render_page_html(
               background: var(--surface); color: var(--fg); }}
   .audit-log-failures-label {{ display: block; font-size: 0.85rem; margin-bottom: 0.75rem;
               color: var(--fg); }}
+  .failure-kinds {{ border-collapse: collapse; width: 100%; font-size: 0.85rem; display: block;
+              max-height: 60vh; overflow-y: auto; }}
+  .failure-kinds th, .failure-kinds td {{ padding: 0.3rem 0.6rem; text-align: left; vertical-align: top;
+              border-bottom: 1px solid var(--border); }}
+  .failure-kinds td:first-child {{ text-align: right; }}
+  .failure-kinds td:nth-child(2) {{ white-space: nowrap; }}
   .weekly-activity {{ border-collapse: collapse; width: 100%; font-size: 0.85rem; }}
   .weekly-activity th, .weekly-activity td {{ padding: 0.3rem 0.6rem; text-align: right;
               border-bottom: 1px solid var(--border); }}
@@ -716,6 +744,7 @@ def render_page_html(
   <button type="button" id="manageBlacklist" class="export-link">Manage Blacklist</button>
   <button type="button" id="showMissingQualifications" class="export-link">Missing Qualifications</button>
   <button type="button" id="showWeeklyActivity" class="export-link">Weekly Activity</button>
+  <button type="button" id="showFailureKinds" class="export-link">Failure Summary</button>
   <button type="button" id="showAnswerGaps" class="export-link">Unanswered Questions</button>
   <button type="button" id="showFaq" class="export-link">FAQ Answers</button>
   <button type="button" id="showQaHistory" class="export-link">Q&amp;A History</button>
@@ -755,6 +784,12 @@ def render_page_html(
   <h2>Blacklisted companies</h2>
   <div id="blacklistContent"></div>
   <button type="button" id="blacklistClose">Close</button>
+</dialog>
+
+<dialog id="failureKindsDialog">
+  <h2>Failures by kind</h2>
+  <div id="failureKindsContent"></div>
+  <button type="button" id="failureKindsClose">Close</button>
 </dialog>
 
 <dialog id="weeklyActivityDialog">
@@ -1053,6 +1088,22 @@ document.getElementById('showMissingQualifications').addEventListener('click', a
 }});
 document.getElementById('missingQualificationsClose').addEventListener(
   'click', () => missingQualificationsDialog.close()
+);
+
+const failureKindsDialog = document.getElementById('failureKindsDialog');
+document.getElementById('showFailureKinds').addEventListener('click', async () => {{
+  const content = document.getElementById('failureKindsContent');
+  content.innerHTML = 'Loading...';
+  failureKindsDialog.showModal();
+  try {{
+    const res = await fetch('/api/failure-kinds');
+    content.innerHTML = res.ok ? await res.text() : 'Could not load the failure summary.';
+  }} catch (err) {{
+    content.innerHTML = 'Could not load the failure summary (network error).';
+  }}
+}});
+document.getElementById('failureKindsClose').addEventListener(
+  'click', () => failureKindsDialog.close()
 );
 
 const weeklyActivityDialog = document.getElementById('weeklyActivityDialog');
