@@ -235,6 +235,14 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     answer_gaps = AnswerGapStore(settings.answer_gaps_path)
     tracker = Tracker(settings.db_path)
 
+    # --keywords/--location override SEARCH_KEYWORDS/SEARCH_LOCATION for
+    # this run only, same precedence as every other flag below. Resolved
+    # onto args here so the search, the audit log, and the failure log all
+    # record what was actually searched.
+    if args.keywords is None:
+        args.keywords = settings.search_keywords
+    if args.location is None:
+        args.location = settings.search_location
     min_score = args.min_score if args.min_score is not None else settings.min_match_score
     raw_exclude = (
         args.exclude_title_keywords
@@ -2363,8 +2371,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("login", help="Open a browser to log into LinkedIn once; the session persists locally.")
 
     run_p = sub.add_parser("run", help="Search, score, tailor, and apply to jobs.")
-    run_p.add_argument("--keywords", default="software engineer")
-    run_p.add_argument("--location", default="United States")
+    run_p.add_argument(
+        "--keywords", default=None, help="What to search LinkedIn for (default: SEARCH_KEYWORDS in .env)."
+    )
+    run_p.add_argument(
+        "--location", default=None, help="Where to search (default: SEARCH_LOCATION in .env)."
+    )
     run_p.add_argument("--max-apps", type=int, default=5)
     run_p.add_argument(
         "--search-pool",

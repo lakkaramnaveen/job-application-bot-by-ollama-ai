@@ -34,6 +34,8 @@ links to the section with the full detail:
 6. **Sanity-check your setup** - `job-bot doctor` (local file/config
    checks) and `job-bot test-provider` (one real API/Ollama call).
 7. **Dry run** - `job-bot run --keywords "..." --location "..." --dry-run`
+   (or set `SEARCH_KEYWORDS`/`SEARCH_LOCATION` in `.env` once and just run
+   `job-bot run --dry-run` - the flags override them for a single run)
    does everything except the final Submit click, so you can see what it
    would have done.
 8. **For real** - drop `--dry-run`, add `--yes-i-understand-the-risk` to

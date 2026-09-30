@@ -17,7 +17,7 @@ import pytest
 
 from job_bot.browser.base_adapter import JobPosting
 from job_bot.browser.linkedin_adapter import LinkedInSignedOut, NavigationFailed, UnansweredRequiredQuestion
-from job_bot.cli import cmd_run
+from job_bot.cli import build_parser, cmd_run
 from job_bot.config import Settings
 from job_bot.llm.base import LLMProvider
 from job_bot.llm.claude_provider import ClaudeProviderError
@@ -747,6 +747,44 @@ def test_loop_backs_off_after_a_throttled_cycle_even_if_it_applied_to_something(
     assert "Applied: Backend Engineer at Acme Corp" in out
     assert "Backing off" in out
     assert sleeps == [args.loop_interval_minutes * 60]
+
+
+class RecordingSearchAdapter(FakeAdapter):
+    def __init__(self, page):
+        super().__init__(page)
+        self.searches = []
+
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+        self.searches.append((keywords, location))
+        return [JOB]
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [
+        ({"keywords": None, "location": None}, ("Full Stack Engineer", "Remote")),  # from .env
+        ({"keywords": "Data Engineer", "location": None}, ("Data Engineer", "Remote")),  # flag wins
+        ({"keywords": None, "location": "Austin, TX"}, ("Full Stack Engineer", "Austin, TX")),
+    ],
+)
+def test_run_searches_for_search_keywords_and_location_from_env_unless_flags_override(tmp_path, monkeypatch, flags, expected):
+    adapter = RecordingSearchAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path, search_keywords="Full Stack Engineer", search_location="Remote")
+    cmd_run(settings, make_args(**flags))
+
+    assert adapter.searches == [expected]
+    # the audit log records what was actually searched, not None
+    entry = AuditLogger(settings.audit_log_path).read_entries(action="search")[0]
+    assert (entry["details"]["keywords"], entry["details"]["location"]) == expected
+
+
+def test_run_parser_leaves_keywords_and_location_unset_so_env_can_supply_them():
+    args = build_parser().parse_args(["run"])
+    assert args.keywords is None and args.location is None
 
 
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):

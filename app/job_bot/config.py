@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     # future prompts as if it were a verified previous answer.
     faq_save_confidence: float = 0.7
 
+    # What `job-bot run` searches LinkedIn for when --keywords/--location
+    # aren't given - set once here instead of typing them on every run.
+    # The flags still override these for one invocation.
+    search_keywords: str = "software engineer"
+    search_location: str = "United States"
+
     # Extra floor `job-bot run` enforces on top of the LLM's own should_apply
     # verdict - a posting only gets applied to if should_apply is True AND
     # match_score >= this. The scorer's own prompt already tells the model
