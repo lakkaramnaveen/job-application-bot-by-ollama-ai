@@ -1382,3 +1382,41 @@ def test_get_failure_kinds_groups_the_failed_applications_log(live_server, tmp_p
         body = resp.read().decode("utf-8")
     assert "<td>2</td>" in body
     assert "apply_error: Locator.wait_for: Timeout Nms exceeded." in body
+
+
+def _request_with_host(url: str, host: str, *, method: str = "GET"):
+    req = urllib.request.Request(url, method=method, headers={"Host": host})
+    if method == "POST":
+        req.data = b"{}"
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Origin", url.split("/api")[0])
+    return urllib.request.urlopen(req)
+
+
+@pytest.mark.parametrize("path", ["/", "/api/jobs", "/api/qa-history", "/api/audit-log"])
+def test_a_dns_rebinding_host_header_is_refused_on_every_get(live_server, path):
+    """A page on attacker.example that rebinds its own name to 127.0.0.1 is
+    same-origin with the dashboard as far as the browser is concerned - but
+    its requests still say Host: attacker.example:<port>. Must be refused
+    before any data is read.
+    """
+    port = urlsplit(live_server).port
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _request_with_host(f"{live_server}{path}", f"attacker.example:{port}")
+    assert exc_info.value.code == 403
+    assert "Unexpected Host header" in exc_info.value.read().decode("utf-8")
+
+
+def test_a_dns_rebinding_host_header_is_refused_on_posts_too(live_server, tmp_path):
+    port = urlsplit(live_server).port
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _request_with_host(f"{live_server}/api/jobs/job1/blacklist", f"attacker.example:{port}", method="POST")
+    assert exc_info.value.code == 403
+    assert not CompanyBlacklist(tmp_path / "blacklist.json").is_blocked("Acme Corp")
+
+
+@pytest.mark.parametrize("host_name", ["127.0.0.1", "localhost"])
+def test_both_local_host_names_are_accepted(live_server, host_name):
+    port = urlsplit(live_server).port
+    with _request_with_host(f"{live_server}/api/stats", f"{host_name}:{port}") as resp:
+        assert resp.status == 200

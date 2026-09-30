@@ -12,6 +12,14 @@ them requires) are what stand in for auth here. See _is_same_origin,
 _handle_status_update, _handle_blacklist, _handle_blacklist_remove,
 _handle_note_set, _handle_answer_gaps_dismiss, and _handle_faq_remove
 below.
+
+Every request, GET included, must also carry a Host header naming this
+server (_is_expected_host). Binding to 127.0.0.1 doesn't stop DNS
+rebinding: a page on attacker.example can make its own name resolve to
+127.0.0.1, and the browser then treats the dashboard as that page's own
+origin - letting it read every GET response (the whole tracker, Q&A
+history, audit log) and pass the Origin check on POSTs. The Host header
+still says attacker.example:<port> in that case, so it's rejected.
 """
 
 import io
@@ -180,7 +188,19 @@ def make_handler(
             job_id = unquote(path[len(prefix) : len(path) - len(suffix)])
             return job_id or None
 
+        def _is_expected_host(self) -> bool:
+            """True if the Host header names this server - see the module
+            docstring's DNS-rebinding note. A missing Host header is only
+            possible from a hand-written HTTP/1.0 client, never a browser,
+            so it's rejected like any other unexpected value.
+            """
+            port = cast(ThreadingHTTPServer, self.server).server_port
+            return self.headers.get("Host") in {f"{DASHBOARD_HOST}:{port}", f"localhost:{port}"}
+
         def do_GET(self) -> None:  # noqa: N802 - required name for BaseHTTPRequestHandler
+            if not self._is_expected_host():
+                self._send_text(403, "Unexpected Host header")
+                return
             parsed = urlparse(self.path)
             tracker = Tracker(db_path)
 
@@ -223,6 +243,9 @@ def make_handler(
                 self._send_text(404, "Not found")
 
         def do_POST(self) -> None:  # noqa: N802 - required name for BaseHTTPRequestHandler
+            if not self._is_expected_host():
+                self._send_text(403, "Unexpected Host header")
+                return
             try:
                 self._dispatch_post()
             except CorruptDataFile as e:
