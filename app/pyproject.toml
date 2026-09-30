@@ -41,6 +41,14 @@ include = ["job_bot*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Name every failed/errored test in the end-of-run summary, so an
+# intermittent setup error (e.g. a Playwright browser launch flaking under
+# load) is identifiable from the run that hit it, not only by re-running.
+addopts = "-rfE"
+# Dump every thread's stack if one test runs past 5 minutes - the slowest
+# real tests take ~20s, so this only fires on a genuine hang, and turns a
+# silent stall of the whole suite into a traceback pointing at the test.
+faulthandler_timeout = 300
 
 [tool.coverage.run]
 source = ["job_bot"]
