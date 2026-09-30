@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from job_bot.resume.store import unusable_faq_reason
-from job_bot.text_utils import format_local_timestamp
+from job_bot.text_utils import format_local_timestamp, is_per_position_field
 from job_bot.tracker.db import TRACKER_STATUSES
 
 # job.url ultimately comes from a scraped LinkedIn anchor href (see
@@ -407,9 +407,20 @@ def render_answer_gaps_html(gaps: dict[str, dict[str, Any]]) -> str:
         count = info.get("count", 1)
         example = f"{info.get('example_title', '')} at {info.get('example_company', '')}"
         safe_question = html.escape(question, quote=True)
+        # Same explanation `job-bot review-answers` gives instead of
+        # prompting (is_per_position_field()): answering this one once would
+        # put the same date on every position of every form, so Dismiss is
+        # the only sensible action - say so rather than leave it looking
+        # like an ordinary question worth answering.
+        note = (
+            ' <span class="gap-unanswerable">&#9888; per-position work-history date - one saved answer '
+            "would be used for every position, so it can't be answered once; dismiss it</span>"
+            if is_per_position_field(question)
+            else ""
+        )
         items.append(
             f'<li><span class="gap-text"><span class="gap-count">{count}</span> {html.escape(question)} '
-            f'<span class="gap-example">e.g. {html.escape(example)}</span></span> '
+            f'<span class="gap-example">e.g. {html.escape(example)}</span>{note}</span> '
             f'<button type="button" class="gap-dismiss-button" data-question="{safe_question}">'
             "Dismiss</button></li>"
         )
@@ -632,6 +643,7 @@ def render_page_html(
   .faq-list li:last-child {{ border-bottom: none; }}
   .faq-list dl {{ margin: 0; }}
   .faq-list dt {{ font-weight: 600; }}
+  .gap-unanswerable {{ display: block; font-size: 0.8em; color: #b45309; margin-top: 0.2rem; }}
   .faq-unusable {{ font-weight: 400; font-size: 0.8em; color: #b45309; margin-left: 0.4rem; }}
   .faq-unusable-summary {{ font-size: 0.85rem; color: #b45309; margin: 0 0 0.75rem; }}
   .faq-list dd {{ margin: 0.25rem 0 0; color: var(--fg); }}

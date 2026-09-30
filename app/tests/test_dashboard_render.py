@@ -800,3 +800,18 @@ def test_render_rows_html_shows_the_applied_date_in_local_time_not_the_raw_utc_v
 
 def test_render_rows_html_still_shows_a_dash_when_never_applied():
     assert "<td>-</td>" in render_rows_html([make_job(applied_at=None, status="seen")])
+
+
+def test_render_answer_gaps_html_explains_a_per_position_date_field_instead_of_inviting_an_answer():
+    html = render_answer_gaps_html(
+        {
+            "Year of From": {"count": 15, "example_title": "SWE", "example_company": "Globex"},
+            "Willing to relocate?": {"count": 2, "example_title": "SWE", "example_company": "Acme"},
+        }
+    )
+    assert html.count('class="gap-unanswerable"') == 1
+    # the note sits inside the Year of From entry, not the relocation one
+    year = html.index("Year of From")
+    assert year < html.index("per-position work-history date") < html.index("Willing to relocate?")
+    # still dismissable like any other gap
+    assert 'data-question="Year of From"' in html
