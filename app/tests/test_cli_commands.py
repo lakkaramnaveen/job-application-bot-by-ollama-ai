@@ -2614,6 +2614,59 @@ def test_doctor_json_passed_count_matches_a_fully_healthy_setup(tmp_path, capsys
     assert payload["passed"] == payload["total"] - 2
 
 
+def _with_saved_session(settings):
+    settings.browser_profile_dir.mkdir(parents=True)
+    (settings.browser_profile_dir / "placeholder").write_text("x")
+
+
+def _session_check(capsys) -> dict:
+    payload = json.loads(capsys.readouterr().out)
+    return next(c for c in payload["checks"] if c["label"] == "LinkedIn session saved")
+
+
+def test_doctor_flags_a_saved_session_whose_last_search_found_linkedin_signed_out(tmp_path, capsys):
+    """The profile folder existing isn't the same as being signed in - a run
+    that stopped on LinkedIn's sign-in wall (4c22dcd) must make this fail,
+    even though doctor itself never contacts LinkedIn.
+    """
+    settings = make_settings(tmp_path)
+    _with_saved_session(settings)
+    audit = AuditLogger(settings.audit_log_path)
+    audit.log("search", keywords="python", location="Remote", results=12)
+    audit.log("search_error", keywords="python", location="Remote", error="not signed in", signed_out=True)
+
+    cmd_doctor(settings, doctor_args(format="json"))
+
+    check = _session_check(capsys)
+    assert check["ok"] is False
+    assert "found LinkedIn signed out - run `job-bot login`" in check["detail"]
+
+
+def test_doctor_clears_the_signed_out_flag_once_a_later_search_succeeds(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    _with_saved_session(settings)
+    audit = AuditLogger(settings.audit_log_path)
+    audit.log("search_error", keywords="python", location="Remote", error="not signed in", signed_out=True)
+    audit.log("search", keywords="python", location="Remote", results=12)  # after `job-bot login`
+
+    cmd_doctor(settings, doctor_args(format="json"))
+
+    assert _session_check(capsys)["ok"] is True
+
+
+def test_doctor_ignores_a_search_error_that_was_not_a_sign_out(tmp_path, capsys):
+    """A network hiccup on the last search says nothing about the session."""
+    settings = make_settings(tmp_path)
+    _with_saved_session(settings)
+    AuditLogger(settings.audit_log_path).log(
+        "search_error", keywords="python", location="Remote", error="net::ERR_NETWORK_CHANGED", signed_out=False
+    )
+
+    cmd_doctor(settings, doctor_args(format="json"))
+
+    assert _session_check(capsys)["ok"] is True
+
+
 # --- review-answers ---
 
 

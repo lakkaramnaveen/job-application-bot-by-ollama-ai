@@ -24,6 +24,7 @@ from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.ollama_provider import OllamaProviderError
 from job_bot.models.schemas import ApplicationAnswer, CoverLetter, JobMatchScore, TailoredResume
 from job_bot.safety.answer_gaps import AnswerGapStore
+from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.rate_limiter import DailyCapReached
 from job_bot.tracker.db import Tracker
 
@@ -1535,6 +1536,9 @@ def test_loop_stops_instead_of_retrying_when_linkedin_is_signed_out(tmp_path, mo
     assert "job-bot login" in out
     assert "Stopping the loop" in out
     assert adapter.search_calls == 1
+    # the structured flag `job-bot doctor` reads back (not the message text)
+    entry = AuditLogger(settings.audit_log_path).read_entries(action="search_error")[0]
+    assert entry["details"]["signed_out"] is True
 
 
 def test_loop_recovers_from_a_search_failure_on_the_next_cycle(tmp_path, monkeypatch):
