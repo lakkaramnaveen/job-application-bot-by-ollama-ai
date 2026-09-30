@@ -2700,6 +2700,30 @@ def test_review_answers_saves_a_given_answer_to_faq_and_resolves_the_gap(tmp_pat
     assert "Answered 1 question(s). 0 still unanswered." in capsys.readouterr().out
 
 
+def test_review_answers_never_offers_to_cache_a_per_position_date_field(tmp_path, monkeypatch, capsys):
+    """"Year of From" is LinkedIn's work-history block - one cached answer
+    would put the same date on every position of every future form. It must
+    be explained, not prompted for, while ordinary gaps still are.
+    """
+    settings = make_settings(tmp_path)
+    gaps = AnswerGapStore(settings.answer_gaps_path)
+    for _ in range(3):  # most frequent, so it would be prompted first
+        gaps.record("Year of From", job_id="1", company="Globex", title="SWE")
+    gaps.record("Willing to relocate?", job_id="2", company="Acme", title="SWE")
+    prompted = []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompted.append(prompt) or "No")
+
+    cmd_review_answers(settings, review_answers_args())
+
+    out = capsys.readouterr().out
+    assert "per-position work-history date" in out
+    assert 'job-bot review-answers --dismiss "Year of From"' in out
+    assert len(prompted) == 1  # only the relocation question
+    faq = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
+    assert faq == {"Willing to relocate?": "No"}
+    assert "Year of From" in AnswerGapStore(settings.answer_gaps_path).list_unanswered()
+
+
 def test_review_answers_leaves_a_skipped_question_as_a_gap(tmp_path, monkeypatch):
     settings = make_settings(tmp_path)
     question = "Are you comfortable commuting to this job's location?"

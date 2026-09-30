@@ -29,3 +29,20 @@ def is_echoed_question(question: str, answer: str) -> bool:
 
     normalized_answer = normalize(answer)
     return bool(normalized_answer) and normalized_answer == normalize(question)
+
+
+# LinkedIn Easy Apply's own work-history block labels, confirmed verbatim in
+# data/failed_applications.log (7 different companies' forms) - one set per
+# position, each with its own dates. Exact labels only, not a pattern: a
+# "From"/"To" question elsewhere can be perfectly answerable.
+_PER_POSITION_FIELD_LABELS = frozenset({"month of from", "year of from", "month of to", "year of to"})
+
+
+def is_per_position_field(label: str) -> bool:
+    """True for a work-history date field whose right answer differs per
+    position. The LLM only ever sees the bare label, so it can't know which
+    position is meant, and a single cached FAQ answer would put the same date
+    on every position of every future application - wrong data, submitted
+    under the user's name. Such a field is left unanswered instead.
+    """
+    return " ".join(label.strip().rstrip("?:*").casefold().split()) in _PER_POSITION_FIELD_LABELS

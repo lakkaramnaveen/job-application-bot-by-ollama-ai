@@ -63,7 +63,7 @@ from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.safety.confirm import SubmitConfirmer
 from job_bot.safety.rate_limiter import DailyCapReached, RateLimiter
-from job_bot.text_utils import is_echoed_question, normalize_company_name
+from job_bot.text_utils import is_echoed_question, is_per_position_field, normalize_company_name
 from job_bot.tracker.db import (
     TRACKER_STATUSES,
     InvalidStatus,
@@ -565,6 +565,11 @@ def _run_apply_cycle(
         return cover_letter, resume_path
 
     def answer(question: str, job_id: str) -> str:
+        if is_per_position_field(question):
+            # No LLM call, nothing recorded or cached - see
+            # is_per_position_field(). "" leaves it to the adapter's normal
+            # unanswered-required-question handling.
+            return ""
         faq_answers = resume_store.faq_answers()
         # An exact-text match against FAQ_PATH is already a curated,
         # confident, resume-grounded answer (see save_faq_answer() below and
@@ -974,6 +979,15 @@ def cmd_review_answers(settings: Settings, args: argparse.Namespace) -> None:
         times = "time" if count == 1 else "times"
         print(f'"{question}"')
         print(f"  seen {count} {times}, e.g. {info.get('example_title', '')} at {info.get('example_company', '')}")
+        if is_per_position_field(question):
+            # Offering to cache one answer here would put that date on every
+            # position of every future form - see is_per_position_field().
+            print(
+                "  Not answerable here: this is a per-position work-history date, so one saved answer "
+                "would be used for every position on every form. Dismiss it with "
+                f'`job-bot review-answers --dismiss "{question}"`.\n'
+            )
+            continue
         try:
             answer = input("  Answer (blank to skip, Ctrl+C to stop): ").strip()
         except (EOFError, KeyboardInterrupt):

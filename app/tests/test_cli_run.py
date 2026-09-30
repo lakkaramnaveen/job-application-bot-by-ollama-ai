@@ -626,6 +626,34 @@ def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch
     assert len(adapter.fill_and_submit_calls) == 1
 
 
+class WorkHistoryDateAdapter(FakeAdapter):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        self.fill_and_submit_calls.append({"answered": answer_question("Year of From")})
+        return not dry_run
+
+
+def test_run_leaves_a_per_position_date_field_unanswered_without_asking_the_llm(tmp_path, monkeypatch):
+    """The LLM sees only the bare label, so it can't know which position is
+    meant, and even a cached FAQ answer would be the same date for every
+    position - "" without an LLM call, recorded nowhere.
+    """
+    provider = FakeProvider(ApplicationAnswer(answer="2019", confidence=0.95, based_on_resume=True))
+    adapter = WorkHistoryDateAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path)
+    settings.faq_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.faq_path.write_text(json.dumps({"Year of From": "2019"}), encoding="utf-8")
+
+    cmd_run(settings, make_args())
+
+    assert adapter.fill_and_submit_calls[0]["answered"] == ""
+    assert ApplicationAnswer not in provider.schemas_requested
+    assert Tracker(settings.db_path).recent_qa_pairs() == []
+
+
 def test_run_ignores_an_echoed_answer_already_cached_in_the_faq(tmp_path, monkeypatch):
     """Entries cached before the echo check existed are still in real users'
     FAQ files - they must fall through to the LLM, not be replayed.
