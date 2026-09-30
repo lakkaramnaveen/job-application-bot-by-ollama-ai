@@ -819,6 +819,29 @@ def test_run_plan_describes_loop_mode_as_running_until_the_cap(tmp_path, monkeyp
     assert "Loop mode: applying until today's cap is reached" in plan
 
 
+def test_run_refuses_loop_combined_with_dry_run(tmp_path, monkeypatch, capsys):
+    """Nothing would ever end it: a dry run never uses up the cap that ends
+    a loop. Must refuse before searching anything."""
+    adapter = FakeAdapter(page=None)
+    searched = []
+    adapter.search = lambda *a, **kw: searched.append(True) or [JOB]
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    def fail_if_the_loop_starts(seconds):
+        raise AssertionError("the loop started - it would repeat the dry run forever")
+
+    monkeypatch.setattr("job_bot.cli.time.sleep", fail_if_the_loop_starts)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_run(make_settings(tmp_path), make_args(loop=True, dry_run=True))
+
+    assert exc_info.value.code == 1
+    assert "--loop can't be combined with --dry-run" in capsys.readouterr().err
+    assert searched == []
+
+
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):
     """A fresh install has no blacklist file - that's not corruption."""
     adapter = FakeAdapter(page=None)

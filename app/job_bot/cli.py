@@ -184,6 +184,19 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     the blacklist, and the audit log - so this is the one place to read to
     understand what actually happens during a real run.
     """
+    if args.loop and args.dry_run:
+        # A loop ends when today's cap is used up, but a dry run never
+        # submits - so nothing would ever end it. Every cycle would re-search,
+        # regenerate materials with the LLM for the same postings, and walk
+        # LinkedIn's Easy Apply forms up to Submit again, indefinitely.
+        print(
+            "Error: --loop can't be combined with --dry-run - a dry run never uses up the daily "
+            "cap that ends a loop, so it would repeat the same postings forever. Run the dry run "
+            "once without --loop.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     for warning in settings.validate_ready():
         print(f"Warning: {warning}")
 
