@@ -412,6 +412,19 @@ class Tracker:
             rows = conn.execute(f"SELECT status, COUNT(*) FROM jobs {where} GROUP BY status", params).fetchall()
         return dict(rows)
 
+    def stale_applications(self, days: int) -> list[dict[str, Any]]:
+        """Jobs still "applied" with applied_at more than `days` days ago -
+        the one definition of "stale" shared by `job-bot report
+        --stale-days`, `job-bot mark-stale`, and the dashboard's Mark Stale
+        button (oldest first).
+        """
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        return [
+            job
+            for job in self.list_jobs(status="applied", sort="applied_at", direction="asc")
+            if job["applied_at"] and job["applied_at"] < cutoff
+        ]
+
     def applications_by_week(self) -> dict[str, dict[str, int]]:
         """Week start (Monday, ISO date, local time) -> status -> count of
         jobs applied to that week - shared by `job-bot report --by-week`

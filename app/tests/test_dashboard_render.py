@@ -854,3 +854,10 @@ def test_render_page_html_includes_the_failure_summary_button_and_dialog():
     html = render_page_html([make_job()])
     assert 'id="showFailureKinds"' in html
     assert 'id="failureKindsDialog"' in html
+
+
+def test_render_page_html_offers_mark_stale_only_with_a_stale_threshold():
+    html = render_page_html([make_job()], stale_after_days=14)
+    assert 'id="markStale"' in html
+    assert 'data-days="14"' in html
+    assert 'id="markStale"' not in render_page_html([make_job()])

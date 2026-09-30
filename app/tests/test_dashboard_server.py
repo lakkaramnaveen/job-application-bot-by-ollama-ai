@@ -1420,3 +1420,52 @@ def test_both_local_host_names_are_accepted(live_server, host_name):
     port = urlsplit(live_server).port
     with _request_with_host(f"{live_server}/api/stats", f"{host_name}:{port}") as resp:
         assert resp.status == 200
+
+
+def _backdate(tmp_path, job_id, days):
+    conn = sqlite3.connect(tmp_path / "db.sqlite3")
+    when = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    conn.execute("UPDATE jobs SET applied_at = ? WHERE job_id = ?", (when, job_id))
+    conn.commit()
+    conn.close()
+
+
+def test_post_mark_stale_marks_only_stale_applications_and_audits_them(live_server, tmp_path):
+    tracker = Tracker(tmp_path / "db.sqlite3")
+    tracker.upsert_job("recent", "SRE", "Globex", "https://example.com/recent")
+    tracker.mark_applied("recent")
+    _backdate(tmp_path, "job1", 20)  # the fixture's applied job, now past the 14-day default
+
+    resp = _post_json(f"{live_server}/api/mark-stale", {})
+
+    assert resp.status == 200
+    assert json.loads(resp.read().decode("utf-8")) == {"ok": True, "marked": 1, "days": 14}
+    assert tracker.get_job("job1")["status"] == "no_response"
+    assert tracker.get_job("recent")["status"] == "applied"
+    entry = AuditLogger(tmp_path / "audit.log").read_entries(action="marked_no_response")[0]
+    assert entry["details"]["job_id"] == "job1"
+    assert entry["details"]["via"] == "dashboard"
+
+
+def test_post_mark_stale_rejects_a_cross_origin_request(live_server, tmp_path):
+    _backdate(tmp_path, "job1", 20)
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _post_json(f"{live_server}/api/mark-stale", {}, same_origin=False)
+    assert exc_info.value.code == 403
+    assert Tracker(tmp_path / "db.sqlite3").get_job("job1")["status"] == "applied"
+
+
+def test_post_mark_stale_rejects_a_non_json_content_type(live_server, tmp_path):
+    """Valid JSON sent as text/plain - the CORS-simple request a cross-site
+    page could send - must be refused by the Content-Type check itself."""
+    _backdate(tmp_path, "job1", 20)
+    req = urllib.request.Request(
+        f"{live_server}/api/mark-stale",
+        data=b"{}",
+        method="POST",
+        headers={"Content-Type": "text/plain", "Origin": live_server},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+    assert exc_info.value.code == 400
+    assert Tracker(tmp_path / "db.sqlite3").get_job("job1")["status"] == "applied"

@@ -1585,12 +1585,7 @@ def _print_missing_qualifications_breakdown(tracker: Tracker, *, limit: int | No
 
 
 def _stale_applications(tracker: Tracker, days: int) -> list[dict]:
-    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
-    return [
-        job
-        for job in tracker.list_jobs(status="applied", sort="applied_at", direction="asc")
-        if job["applied_at"] and job["applied_at"] < cutoff
-    ]
+    return tracker.stale_applications(days)
 
 
 def cmd_mark_stale(settings: Settings, args: argparse.Namespace) -> None:

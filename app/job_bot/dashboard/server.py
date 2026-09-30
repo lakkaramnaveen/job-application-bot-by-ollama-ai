@@ -2,11 +2,11 @@
 localhost only (never 0.0.0.0) since it serves your application data with
 no access control. See render.py for the HTML/escaping logic this wraps.
 
-The dashboard also accepts six state-changing requests: POST status
+The dashboard also accepts seven state-changing requests: POST status
 update, POST blacklist (add), POST blacklist/remove, POST note, POST
-answer-gaps/dismiss, and POST faq/remove. Because the server has no auth,
+answer-gaps/dismiss, POST faq/remove, and POST mark-stale. Because the server has no auth,
 any page open in the same browser could in principle try to trigger one
-(a "drive-by localhost" request) - _is_same_origin (all six) plus the
+(a "drive-by localhost" request) - _is_same_origin (all seven) plus the
 browser's own CORS preflight (triggered by the JSON Content-Type each of
 them requires) are what stand in for auth here. See _is_same_origin,
 _handle_status_update, _handle_blacklist, _handle_blacklist_remove,
@@ -267,6 +267,8 @@ def make_handler(
                 self._handle_answer_gaps_dismiss()
             elif urlparse(self.path).path == "/api/faq/remove":
                 self._handle_faq_remove()
+            elif urlparse(self.path).path == "/api/mark-stale":
+                self._handle_mark_stale(Tracker(db_path))
             else:
                 self._send_text(404, "Not found")
 
@@ -644,6 +646,33 @@ def make_handler(
 
             removed = CompanyBlacklist(blacklist_path).remove(company)
             self._send_json(200, {"ok": True, "company": company, "removed": removed})
+
+        def _handle_mark_stale(self, tracker: Tracker) -> None:
+            """The dashboard counterpart to `job-bot mark-stale`: every job
+            still "applied" after stale_after_days (the same threshold the
+            clock markers use) becomes no_response, each change audit-logged
+            like the CLI's. Same protections as every other state-changing
+            POST - same origin, and a JSON body (so a cross-site form can't
+            send it without a CORS preflight). The body's content is unused.
+            """
+            if not self._is_same_origin():
+                self._send_text(403, "Cross-origin request rejected")
+                return
+            if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+                self._send_text(400, "Content-Type must be application/json")
+                return
+            audit = AuditLogger(audit_log_path)
+            stale = tracker.stale_applications(stale_after_days)
+            for job in stale:
+                tracker.update_status(job["job_id"], "no_response")
+                audit.log(
+                    "marked_no_response",
+                    job_id=job["job_id"],
+                    applied_at=job["applied_at"],
+                    days=stale_after_days,
+                    via="dashboard",
+                )
+            self._send_json(200, {"ok": True, "marked": len(stale), "days": stale_after_days})
 
         def _handle_answer_gaps_dismiss(self) -> None:
             """The dashboard counterpart to `job-bot review-answers

@@ -620,6 +620,11 @@ seen, and lets you:
   scored rather than just tracked. A ⚠️ before the score means the
   eligibility gate flagged or categorically disqualified this job -
   hover for the specific posting wording that drove the verdict.
+- **Close out silent applications in one click** - the "Mark N+ day silent as
+  no response" button does what `job-bot mark-stale` does (after a
+  confirmation), using the same STALE_AFTER_DAYS threshold as the clock
+  markers; each change is audit-logged. A later reply found by
+  `job-bot gmail-sync` still updates the job.
 - **Spot stale applications at a glance** - a ⏰ next to the applied date
   means no reply after `STALE_AFTER_DAYS` (default 14), the same
   threshold `job-bot report --stale-days` uses, now visible without

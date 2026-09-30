@@ -545,6 +545,14 @@ def render_page_html(
     signed_out_at: str | None = None,
 ) -> str:
     rows_html = render_rows_html(jobs, stale_after_days=stale_after_days)
+    # The dashboard counterpart to `job-bot mark-stale` - only offered when
+    # there's a stale threshold to apply (the same one the clock markers use).
+    mark_stale_button = (
+        f'<button type="button" id="markStale" class="export-link" data-days="{int(stale_after_days)}">'
+        f"Mark {int(stale_after_days)}+ day silent as no response</button>"
+        if stale_after_days is not None
+        else ""
+    )
     # The dashboard counterpart to doctor's "LinkedIn session saved" check
     # (AuditLogger.last_search_signed_out_at()): until `job-bot login` and a
     # successful search, every run stops at LinkedIn's sign-in wall.
@@ -749,6 +757,7 @@ def render_page_html(
   <button type="button" id="showFaq" class="export-link">FAQ Answers</button>
   <button type="button" id="showQaHistory" class="export-link">Q&amp;A History</button>
   <button type="button" id="showAuditLog" class="export-link">Audit Log</button>
+  {mark_stale_button}
 </form>
 
 <div class="table-wrap">
@@ -1089,6 +1098,25 @@ document.getElementById('showMissingQualifications').addEventListener('click', a
 document.getElementById('missingQualificationsClose').addEventListener(
   'click', () => missingQualificationsDialog.close()
 );
+
+const markStaleButton = document.getElementById('markStale');
+if (markStaleButton) {{
+  markStaleButton.addEventListener('click', async () => {{
+    const days = markStaleButton.dataset.days;
+    // Bulk and not undoable in one click - confirm first, like the CLI's --dry-run.
+    if (!confirm(`Mark every application with no reply after ${{days}} days as no_response?`)) return;
+    try {{
+      const res = await fetch('/api/mark-stale', {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: '{{}}',
+      }});
+      const data = await res.json();
+      alert(res.ok ? `Marked ${{data.marked}} application(s) no_response.` : 'Could not mark stale applications.');
+      if (res.ok) location.reload();
+    }} catch (err) {{
+      alert('Could not mark stale applications (network error).');
+    }}
+  }});
+}}
 
 const failureKindsDialog = document.getElementById('failureKindsDialog');
 document.getElementById('showFailureKinds').addEventListener('click', async () => {{
