@@ -798,20 +798,26 @@ def _run_apply_cycle(
 
         if submitted:
             # The browser has already clicked Submit for real at this
-            # point - mark_applied() must run before anything that could
-            # raise, so a real submission is never lost from the tracker
-            # (which would risk a duplicate real application on a future
-            # run). record_application()'s own cap check is defense in
-            # depth against a second concurrent `job-bot run` process
-            # racing this one; if it loses that race, stop cleanly
-            # rather than crash mid-loop.
+            # point - both safety records for it must be written before
+            # anything that could raise: mark_applied() so a real
+            # submission is never lost from the tracker (a duplicate real
+            # application on a future run), and record_application() so it
+            # always counts toward the daily cap (an audit write failing
+            # here - disk full mid-run - used to skip it, letting the next
+            # run exceed the cap). record_application()'s own cap check is
+            # defense in depth against a second concurrent `job-bot run`
+            # process racing this one; if it loses that race, stop cleanly
+            # (after logging this submission) rather than crash mid-loop.
             tracker.mark_applied(posting.job_id)
+            try:
+                rate_limiter.record_application()
+                cap_reached_concurrently = False
+            except DailyCapReached:
+                cap_reached_concurrently = True
             audit.log("applied", job_id=posting.job_id, company=posting.company)
             applied += 1
             print(f"Applied: {posting.title} at {posting.company}")
-            try:
-                rate_limiter.record_application()
-            except DailyCapReached:
+            if cap_reached_concurrently:
                 print("Daily application cap reached (possibly by a concurrent run). Stopping.")
                 break
         else:

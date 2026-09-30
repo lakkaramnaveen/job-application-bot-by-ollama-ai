@@ -25,7 +25,7 @@ from job_bot.llm.ollama_provider import OllamaProviderError
 from job_bot.models.schemas import ApplicationAnswer, CoverLetter, JobMatchScore, TailoredResume
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
-from job_bot.safety.rate_limiter import DailyCapReached
+from job_bot.safety.rate_limiter import DailyCapReached, RateLimiter
 from job_bot.tracker.db import Tracker
 
 JOB = JobPosting(
@@ -636,6 +636,34 @@ def test_run_refuses_to_start_when_a_log_it_writes_to_is_unwritable(tmp_path, mo
     assert "refusing to start a run" in err
     assert str(getattr(settings, which)) in err
     assert searched == []
+
+
+def test_a_real_submission_counts_toward_the_daily_cap_even_if_the_audit_write_fails(tmp_path, monkeypatch):
+    """Both safety records for a submission that already happened -
+    mark_applied() (no duplicate application) and record_application()
+    (the daily cap) - must be written before anything that can raise.
+    Before, an "applied" audit write failing mid-run (disk full, a
+    permission change after the start-of-run preflight) skipped
+    record_application(), so the next run could exceed the cap.
+    """
+    real_log = AuditLogger.log
+
+    def log_fails_on_applied(self, action, **details):
+        if action == "applied":
+            raise OSError(28, "No space left on device")
+        return real_log(self, action, **details)
+
+    monkeypatch.setattr(AuditLogger, "log", log_fails_on_applied)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    with pytest.raises(OSError):
+        cmd_run(settings, make_args())
+
+    assert Tracker(settings.db_path).has_applied("job1") is True
+    assert RateLimiter(settings.db_path, settings.effective_daily_cap()).count_today() == 1
 
 
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):
