@@ -468,16 +468,16 @@ def test_post_status_rejects_unknown_job(live_server):
 def test_post_status_rejects_non_json_content_type(live_server):
     req = urllib.request.Request(
         f"{live_server}/api/jobs/job1/status",
-        data=b"status=offer",
+        # Valid JSON under a CORS-simple Content-Type - a non-JSON body would
+        # be rejected by the parser anyway, hiding a deleted Content-Type check.
+        data=json.dumps({"status": "offer"}).encode("utf-8"),
         method="POST",
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": live_server,
-        },
+        headers={"Content-Type": "text/plain", "Origin": live_server},
     )
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(req)
     assert exc_info.value.code == 400
+    assert "Content-Type must be application/json" in exc_info.value.read().decode("utf-8")
 
 
 def test_post_status_rejects_cross_origin_request(live_server):
@@ -689,13 +689,14 @@ def test_post_note_rejects_a_cross_origin_request(live_server):
 def test_post_note_rejects_non_json_content_type(live_server):
     req = urllib.request.Request(
         f"{live_server}/api/jobs/job1/note",
-        data=b"note=x",
+        data=json.dumps({"note": "x"}).encode("utf-8"),  # valid JSON - see the status test above
         method="POST",
-        headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": live_server},
+        headers={"Content-Type": "text/plain", "Origin": live_server},
     )
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(req)
     assert exc_info.value.code == 400
+    assert "Content-Type must be application/json" in exc_info.value.read().decode("utf-8")
 
 
 def test_post_note_rejects_a_non_string_note_value(live_server):
@@ -1159,13 +1160,14 @@ def test_post_blacklist_remove_rejects_a_cross_origin_request(live_server, tmp_p
 def test_post_blacklist_remove_rejects_non_json_content_type(live_server):
     req = urllib.request.Request(
         f"{live_server}/api/blacklist/remove",
-        data=b"company=x",
+        data=json.dumps({"company": "x"}).encode("utf-8"),  # valid JSON - see the status test above
         method="POST",
-        headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": live_server},
+        headers={"Content-Type": "text/plain", "Origin": live_server},
     )
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(req)
     assert exc_info.value.code == 400
+    assert "Content-Type must be application/json" in exc_info.value.read().decode("utf-8")
 
 
 def test_post_blacklist_remove_rejects_a_non_string_company_value(live_server):
@@ -1314,3 +1316,39 @@ def test_get_weekly_activity_counts_the_fixtures_applied_job_this_week(live_serv
     this_week = week_start(datetime.now(UTC).isoformat())
     assert f"<tr><td>{this_week}</td><td>1</td><td>1</td></tr>" in body
 
+
+@pytest.mark.parametrize(
+    ("path", "store_setup"),
+    [
+        ("/api/answer-gaps/dismiss", "gap"),
+        ("/api/faq/remove", "faq"),
+    ],
+)
+def test_state_changing_json_endpoints_reject_a_non_json_content_type(live_server, tmp_path, path, store_setup):
+    """Part of the dashboard's CSRF defence (see SECURITY.md): a cross-site
+    page can POST text/plain without a CORS preflight, but not
+    application/json. The body here is valid JSON on purpose - a non-JSON
+    body would be rejected by the JSON parser anyway, and then this test
+    would pass even with the Content-Type check deleted. Blacklist-remove/
+    status/note already had this test; these two didn't.
+    """
+    if store_setup == "gap":
+        AnswerGapStore(tmp_path / "answer_gaps.json").record("Q?", job_id="1", company="Acme", title="X")
+    else:
+        ResumeStore(tmp_path / "resume.txt", tmp_path / "faq_answers.json").save_faq_answer("Q?", "A")
+    req = urllib.request.Request(
+        f"{live_server}{path}",
+        data=json.dumps({"question": "Q?"}).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "text/plain", "Origin": live_server},
+    )
+
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req)
+
+    assert exc_info.value.code == 400
+    assert "Content-Type must be application/json" in exc_info.value.read().decode("utf-8")
+    if store_setup == "gap":
+        assert "Q?" in AnswerGapStore(tmp_path / "answer_gaps.json").list_unanswered()
+    else:
+        assert ResumeStore(tmp_path / "resume.txt", tmp_path / "faq_answers.json").faq_answers() == {"Q?": "A"}
