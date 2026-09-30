@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from job_bot.config import HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError
+from job_bot.config import APP_DIR, HARD_DAILY_APPLICATION_CEILING, Settings, SettingsError
 
 ENV_EXAMPLE_PATH = Path(__file__).resolve().parent.parent / ".env.example"
 
@@ -17,6 +17,40 @@ def make_settings(tmp_path, **overrides):
     )
     defaults.update(overrides)
     return Settings(**defaults)
+
+
+def test_relative_data_paths_are_anchored_to_the_app_folder_not_the_current_directory(tmp_path, monkeypatch):
+    """.env.example's own values are relative (`DB_PATH=./data/job_bot.sqlite3`).
+    Resolved against the current directory, running `job-bot` from anywhere
+    but app/ used a fresh, empty data folder - no tracker history, no
+    blacklist, a logged-out browser profile. Found on a real install.
+    """
+    monkeypatch.chdir(tmp_path)  # anywhere but the app folder
+    monkeypatch.setenv("DB_PATH", "./data/job_bot.sqlite3")
+    monkeypatch.setenv("BLACKLIST_PATH", "data/company_blacklist.json")
+    monkeypatch.setenv("BROWSER_PROFILE_DIR", "./data/browser_profile")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.db_path == APP_DIR / "data" / "job_bot.sqlite3"
+    assert settings.blacklist_path == APP_DIR / "data" / "company_blacklist.json"
+    assert settings.browser_profile_dir == APP_DIR / "data" / "browser_profile"
+
+
+def test_absolute_data_paths_are_left_alone_and_home_is_expanded(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    settings = Settings(_env_file=None, db_path=tmp_path / "x.sqlite3", faq_path=Path("~/faq.json"))
+    assert settings.db_path == tmp_path / "x.sqlite3"
+    assert settings.faq_path == tmp_path / "faq.json"
+
+
+def test_every_path_in_env_example_resolves_inside_the_app_folder(monkeypatch, tmp_path):
+    """Loading .env.example itself, from an unrelated directory, must point
+    every data path at the app's own data folder."""
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(_env_file=str(ENV_EXAMPLE_PATH))
+    for field in ("faq_path", "blacklist_path", "db_path", "browser_profile_dir", "audit_log_path"):
+        assert getattr(settings, field).is_relative_to(APP_DIR), field
 
 
 def test_validate_ready_passes_with_resume_and_key(tmp_path):

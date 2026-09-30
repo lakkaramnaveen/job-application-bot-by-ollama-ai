@@ -8,7 +8,7 @@ actually required (a resume file, and an API key if using Claude).
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
@@ -151,6 +151,36 @@ class Settings(BaseSettings):
 
     # --- Dashboard ---
     dashboard_port: int = 8765
+
+    @field_validator(
+        "resume_path",
+        "faq_path",
+        "blacklist_path",
+        "db_path",
+        "browser_profile_dir",
+        "audit_log_path",
+        "failed_applications_log_path",
+        "answer_gaps_path",
+        "applications_dir",
+        "gmail_credentials_path",
+        "gmail_token_path",
+    )
+    @classmethod
+    def _anchor_relative_paths_to_app_dir(cls, value: Path) -> Path:
+        """A relative path from .env (e.g. .env.example's own
+        `DB_PATH=./data/job_bot.sqlite3`) means relative to the app folder,
+        where that .env lives and where every default above points - not to
+        whatever directory `job-bot` happens to be started from. Before this,
+        Path() resolved it against the current directory, so running from
+        anywhere else silently used a fresh, empty data folder: no tracker
+        history (re-applying to jobs already applied to), no blacklist, and a
+        never-logged-in browser profile. Confirmed on a real install - a
+        stray ~/data/ with its own empty tracker and unauthenticated profile,
+        whose searches all hit LinkedIn's sign-in wall. `~` is expanded too;
+        absolute paths are left as-is.
+        """
+        value = value.expanduser()
+        return value if value.is_absolute() else APP_DIR / value
 
     def effective_daily_cap(self) -> int:
         """The daily cap actually enforced: never above the hard ceiling."""
