@@ -192,3 +192,32 @@ def test_a_close_failure_does_not_mask_a_real_error_from_inside_the_block(monkey
         browser_session(tmp_path / "profile", headless=True),
     ):
         raise RuntimeError("something went wrong inside the block")
+
+
+def test_default_mode_creates_the_profile_private_to_this_user(monkeypatch, tmp_path):
+    """The profile holds the live LinkedIn session cookie."""
+    chromium = FakeChromium()
+    chromium.persistent_context = FakeContext()
+    monkeypatch.setattr(session_module, "sync_playwright", lambda: FakePlaywrightCM(chromium))
+    profile_dir = tmp_path / "profile"
+
+    with browser_session(profile_dir, headless=True):
+        pass
+
+    assert profile_dir.stat().st_mode & 0o777 == 0o700
+
+
+def test_default_mode_tightens_an_existing_world_readable_profile(monkeypatch, tmp_path):
+    """Profiles created before this change were 755 - mkdir(exist_ok=True)
+    alone would never fix that."""
+    chromium = FakeChromium()
+    chromium.persistent_context = FakeContext()
+    monkeypatch.setattr(session_module, "sync_playwright", lambda: FakePlaywrightCM(chromium))
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    profile_dir.chmod(0o755)
+
+    with browser_session(profile_dir, headless=True):
+        pass
+
+    assert profile_dir.stat().st_mode & 0o777 == 0o700

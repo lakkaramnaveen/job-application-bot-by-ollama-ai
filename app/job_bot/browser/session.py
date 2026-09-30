@@ -5,6 +5,7 @@ section for the user-facing explanation.
 """
 
 import contextlib
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -66,7 +67,14 @@ def browser_session(
             yield context
         return
 
-    profile_dir.mkdir(parents=True, exist_ok=True)
+    # The profile holds the live LinkedIn session cookie - effectively a
+    # password for the account while it's valid - so keep it readable by
+    # this user only. chmod too, not just mkdir's mode: a profile created
+    # before this (or by an older version) was world-readable (755), and
+    # mkdir(exist_ok=True) never touches an existing directory's mode.
+    profile_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":  # POSIX permission bits don't apply on Windows
+        profile_dir.chmod(0o700)
     with sync_playwright() as p:
         try:
             context = p.chromium.launch_persistent_context(

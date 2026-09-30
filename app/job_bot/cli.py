@@ -15,6 +15,7 @@ propagating out of a command is a real bug.
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -2220,6 +2221,29 @@ def _daily_cap_usage_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, remaining > 0, detail)
 
 
+def _browser_profile_private_check(settings: Settings) -> tuple[str, bool, str]:
+    """The browser profile holds the live LinkedIn session cookie - anyone
+    who can read it can use the account until the session expires. Profiles
+    created before browser_session() made them 0o700 are world-readable
+    (755); this flags that, and `job-bot login`/`run` fix it on their next
+    launch. Passes when there's no profile yet (nothing to protect) and on
+    Windows, where POSIX permission bits don't apply.
+    """
+    label = "LinkedIn session private to this user"
+    profile = settings.browser_profile_dir
+    if os.name == "nt" or not profile.exists():
+        return (label, True, "")
+    mode = profile.stat().st_mode & 0o777
+    if mode & 0o077:
+        return (
+            label,
+            False,
+            f"{profile} is readable by other users (mode {mode:o}) - run `chmod 700 \"{profile}\"`, "
+            "or it's fixed the next time `job-bot login`/`job-bot run` opens the browser",
+        )
+    return (label, True, "")
+
+
 def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     """Check local setup for the common ways `job-bot run` fails partway
     through rather than up front - deliberately file/config checks only, no
@@ -2260,6 +2284,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     else:
         session_detail = str(settings.browser_profile_dir)
     checks.append(("LinkedIn session saved", session_ready and signed_out_at is None, session_detail))
+    checks.append(_browser_profile_private_check(settings))
 
     gmail_ready = settings.gmail_credentials_path.exists()
     checks.append(

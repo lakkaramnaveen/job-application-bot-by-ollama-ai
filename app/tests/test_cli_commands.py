@@ -2605,7 +2605,8 @@ def test_doctor_json_reports_each_check_and_the_pass_count(tmp_path, capsys):
 def test_doctor_json_passed_count_matches_a_fully_healthy_setup(tmp_path, capsys):
     settings = make_settings(tmp_path)
     settings.resume_path.write_text("resume", encoding="utf-8")
-    settings.browser_profile_dir.mkdir(parents=True)
+    settings.browser_profile_dir.mkdir(parents=True, mode=0o700)
+    settings.browser_profile_dir.chmod(0o700)  # healthy = private (browser_session creates it that way)
     (settings.browser_profile_dir / "placeholder").write_text("x")
 
     cmd_doctor(settings, doctor_args(format="json"))
@@ -4188,3 +4189,32 @@ def test_doctor_points_to_a_resume_that_moved_one_folder_down(tmp_path, capsys):
     check = next(c for c in json.loads(capsys.readouterr().out)["checks"] if c["label"] == "Resume file readable")
     assert check["ok"] is False
     assert f"a file with the same name is at {moved}" in check["detail"]
+
+
+def _profile_private_check(capsys) -> dict:
+    payload = json.loads(capsys.readouterr().out)
+    return next(c for c in payload["checks"] if c["label"] == "LinkedIn session private to this user")
+
+
+def test_doctor_flags_a_world_readable_browser_profile(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.browser_profile_dir.mkdir(parents=True)
+    settings.browser_profile_dir.chmod(0o755)
+
+    cmd_doctor(settings, doctor_args(format="json"))
+
+    check = _profile_private_check(capsys)
+    assert check["ok"] is False
+    assert "readable by other users (mode 755)" in check["detail"]
+    assert "chmod 700" in check["detail"]
+
+
+def test_doctor_passes_a_private_or_missing_browser_profile(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    cmd_doctor(settings, doctor_args(format="json"))  # no profile yet
+    assert _profile_private_check(capsys)["ok"] is True
+
+    settings.browser_profile_dir.mkdir(parents=True)
+    settings.browser_profile_dir.chmod(0o700)
+    cmd_doctor(settings, doctor_args(format="json"))
+    assert _profile_private_check(capsys)["ok"] is True
