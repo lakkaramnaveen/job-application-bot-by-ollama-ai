@@ -520,8 +520,19 @@ def render_page_html(
     refresh_seconds: int = 5,
     counts: dict[str, int] | None = None,
     stale_after_days: int | None = None,
+    signed_out_at: str | None = None,
 ) -> str:
     rows_html = render_rows_html(jobs, stale_after_days=stale_after_days)
+    # The dashboard counterpart to doctor's "LinkedIn session saved" check
+    # (AuditLogger.last_search_signed_out_at()): until `job-bot login` and a
+    # successful search, every run stops at LinkedIn's sign-in wall.
+    signed_out_banner = (
+        '<p class="signed-out-banner" role="alert">&#9888; The last search '
+        f"({html.escape(format_local_timestamp(signed_out_at))}) found LinkedIn signed out - run "
+        "<code>job-bot login</code> before the next <code>job-bot run</code>.</p>"
+        if signed_out_at
+        else ""
+    )
     stats_html = render_stats_html(counts or {}, status)
     status_options = [("", "All statuses"), *((s, s.replace("_", " ")) for s in sorted(TRACKER_STATUSES))]
     eligibility_options = [
@@ -643,6 +654,8 @@ def render_page_html(
   .faq-list li:last-child {{ border-bottom: none; }}
   .faq-list dl {{ margin: 0; }}
   .faq-list dt {{ font-weight: 600; }}
+  .signed-out-banner {{ margin: 0 0 1rem; padding: 0.6rem 0.8rem; border-radius: 6px;
+              border: 1px solid #b45309; color: #b45309; font-size: 0.9rem; }}
   .gap-unanswerable {{ display: block; font-size: 0.8em; color: #b45309; margin-top: 0.2rem; }}
   .faq-unusable {{ font-weight: 400; font-size: 0.8em; color: #b45309; margin-left: 0.4rem; }}
   .faq-unusable-summary {{ font-size: 0.85rem; color: #b45309; margin: 0 0 0.75rem; }}
@@ -680,6 +693,7 @@ def render_page_html(
 <h1>{html.escape(PAGE_TITLE)}</h1>
 <p class="subtitle">Auto-refreshes every {refresh_seconds}s. Update a status inline below, or via
 `job-bot status` / `job-bot run` / `job-bot gmail-sync`.</p>
+{signed_out_banner}
 
 <div class="stats" id="stats">
 {stats_html}

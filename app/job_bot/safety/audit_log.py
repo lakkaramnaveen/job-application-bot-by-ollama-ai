@@ -120,3 +120,19 @@ class AuditLogger:
             entries.append(entry)
         entries.reverse()
         return entries
+
+    def last_search_signed_out_at(self) -> str | None:
+        """The timestamp of the most recent search outcome here if that
+        search found LinkedIn signed out (cmd_run logs search_error with
+        signed_out=True for LinkedInSignedOut), else None. Only the latest
+        search counts: a successful search after `job-bot login` clears it,
+        and a search_error that wasn't a sign-out says nothing about the
+        session. Shared by `job-bot doctor` and the dashboard's banner -
+        neither contacts LinkedIn itself.
+        """
+        for entry in self.read_entries():  # most recent first
+            if entry.get("action") == "search":
+                return None
+            if entry.get("action") == "search_error":
+                return str(entry.get("timestamp", "")) if entry["details"].get("signed_out") is True else None
+        return None

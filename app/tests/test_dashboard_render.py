@@ -815,3 +815,14 @@ def test_render_answer_gaps_html_explains_a_per_position_date_field_instead_of_i
     assert year < html.index("per-position work-history date") < html.index("Willing to relocate?")
     # still dismissable like any other gap
     assert 'data-question="Year of From"' in html
+
+
+def test_render_page_html_shows_a_signed_out_banner_with_the_local_time(chicago_tz):
+    html = render_page_html([make_job()], signed_out_at="2026-09-14T01:00:00+00:00")
+    assert 'class="signed-out-banner"' in html
+    assert "2026-09-13 20:00" in html
+    assert "job-bot login" in html
+
+
+def test_render_page_html_has_no_banner_when_not_signed_out():
+    assert 'class="signed-out-banner"' not in render_page_html([make_job()])

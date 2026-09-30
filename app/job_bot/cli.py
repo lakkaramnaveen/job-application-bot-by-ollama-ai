@@ -466,7 +466,7 @@ def _run_apply_cycle(
         # unattended run instead of just costing this one cycle, exactly
         # the failure mode --loop exists to run through unattended over
         # many hours. Confirmed live before this fix.
-        # signed_out is what `job-bot doctor` keys off (_last_search_signed_out_at)
+        # signed_out is what doctor and the dashboard key off (AuditLogger.last_search_signed_out_at())
         # - a structured flag, not a match on the error message's wording.
         signed_out = isinstance(e, LinkedInSignedOut)
         audit.log(
@@ -2122,22 +2122,6 @@ def _daily_cap_usage_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, remaining > 0, detail)
 
 
-def _last_search_signed_out_at(settings: Settings) -> str | None:
-    """The timestamp of the most recent search outcome in the audit log if
-    that search found LinkedIn signed out (LinkedInSignedOut), else None.
-    doctor stays offline, so it can't ask LinkedIn - but "LinkedIn session
-    saved" used to pass on a non-empty profile folder alone, even right
-    after a run stopped on the sign-in wall. Only the latest search counts:
-    a successful search after `job-bot login` clears it.
-    """
-    for entry in AuditLogger(settings.audit_log_path).read_entries():  # most recent first
-        if entry.get("action") == "search":
-            return None
-        if entry.get("action") == "search_error":
-            return str(entry.get("timestamp", "")) if entry["details"].get("signed_out") is True else None
-    return None
-
-
 def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
     """Check local setup for the common ways `job-bot run` fails partway
     through rather than up front - deliberately file/config checks only, no
@@ -2167,7 +2151,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         )
 
     session_ready = settings.browser_profile_dir.exists() and any(settings.browser_profile_dir.iterdir())
-    signed_out_at = _last_search_signed_out_at(settings) if session_ready else None
+    signed_out_at = AuditLogger(settings.audit_log_path).last_search_signed_out_at() if session_ready else None
     if not session_ready:
         session_detail = "run `job-bot login` first"
     elif signed_out_at is not None:

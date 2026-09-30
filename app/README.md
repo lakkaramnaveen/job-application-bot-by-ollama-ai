@@ -596,6 +596,10 @@ build step, no separate frontend, nothing to deploy. Shows title, company, fit
 score, status (color-coded), and applied date for every job `job-bot run` has
 seen, and lets you:
 
+- **See when LinkedIn needs a fresh login** - if the most recent search hit
+  LinkedIn's sign-in wall, a banner at the top says so (with its time) and
+  points to `job-bot login`, the same thing `job-bot doctor` reports. It
+  clears on its own once a later search succeeds.
 - **Click a status pill** (e.g. "Interviewing 3") above the table to filter to
   it instantly - the pill counts update live as statuses change, and only
   scope to whichever statuses currently have a match (plus whatever's

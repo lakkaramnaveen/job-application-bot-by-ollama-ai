@@ -1352,3 +1352,18 @@ def test_state_changing_json_endpoints_reject_a_non_json_content_type(live_serve
         assert "Q?" in AnswerGapStore(tmp_path / "answer_gaps.json").list_unanswered()
     else:
         assert ResumeStore(tmp_path / "resume.txt", tmp_path / "faq_answers.json").faq_answers() == {"Q?": "A"}
+
+
+def test_index_shows_the_signed_out_banner_only_after_a_signed_out_search(live_server, tmp_path):
+    def page() -> str:
+        with urllib.request.urlopen(f"{live_server}/") as resp:
+            return resp.read().decode("utf-8")
+
+    assert 'class="signed-out-banner"' not in page()
+
+    audit = AuditLogger(tmp_path / "audit.log")
+    audit.log("search_error", keywords="x", location="y", error="not signed in", signed_out=True)
+    assert 'class="signed-out-banner"' in page()
+
+    audit.log("search", keywords="x", location="y", results=3)
+    assert 'class="signed-out-banner"' not in page()

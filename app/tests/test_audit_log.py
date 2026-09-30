@@ -140,3 +140,16 @@ def test_read_entries_empty_when_the_path_is_unreadable(tmp_path):
     path = tmp_path / "audit.log"
     path.mkdir()
     assert AuditLogger(path).read_entries() == []
+
+
+def test_last_search_signed_out_at_is_the_latest_search_outcome_only(tmp_path):
+    logger = AuditLogger(tmp_path / "audit.log")
+    assert logger.last_search_signed_out_at() is None  # no searches yet
+
+    logger.log("search_error", keywords="x", location="y", error="not signed in", signed_out=True)
+    logger.log("scored", job_id="1")  # not a search outcome - ignored
+    signed_out_at = logger.last_search_signed_out_at()
+    assert signed_out_at is not None and signed_out_at.startswith("20")
+
+    logger.log("search", keywords="x", location="y", results=3)  # after `job-bot login`
+    assert logger.last_search_signed_out_at() is None

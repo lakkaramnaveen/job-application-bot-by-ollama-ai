@@ -284,6 +284,7 @@ def make_handler(
                 direction=params["direction"],
                 counts=tracker.status_counts(search=params["search"], eligibility=params["eligibility"]),
                 stale_after_days=stale_after_days,
+                signed_out_at=AuditLogger(audit_log_path).last_search_signed_out_at(),
             ).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
 
