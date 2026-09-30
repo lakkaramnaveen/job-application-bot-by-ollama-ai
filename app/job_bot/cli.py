@@ -1593,6 +1593,41 @@ def _stale_applications(tracker: Tracker, days: int) -> list[dict]:
     ]
 
 
+def cmd_mark_stale(settings: Settings, args: argparse.Namespace) -> None:
+    """Mark every application still "applied" with no reply after N days
+    (default STALE_AFTER_DAYS) as no_response, in one go - the same "stale"
+    rule `report --stale-days` and the dashboard's clock marker use. Before
+    this, closing out a batch of silent applications meant one `job-bot
+    status <job_id> no_response` per job. Each change is written to the
+    audit log (manual `status` changes aren't), since a bulk edit should be
+    traceable and reversible by hand. `--dry-run` lists them and changes
+    nothing.
+    """
+    days = args.days if args.days is not None else settings.stale_after_days
+    if days < 1:
+        print("Error: --days must be at least 1.", file=sys.stderr)
+        sys.exit(1)
+    tracker = Tracker(settings.db_path)
+    stale = _stale_applications(tracker, days)
+    if not stale:
+        print(f"No applications have gone {days}+ days without a reply.")
+        return
+    audit = AuditLogger(settings.audit_log_path)
+    verb = "Would mark" if args.dry_run else "Marked"
+    for job in stale:
+        if not args.dry_run:
+            tracker.update_status(job["job_id"], "no_response")
+            audit.log("marked_no_response", job_id=job["job_id"], applied_at=job["applied_at"], days=days)
+        print(
+            f"  {verb} no_response: {job['company']} - {job['title']} "
+            f"(applied {format_local_timestamp(job['applied_at'])})"
+        )
+    if args.dry_run:
+        print(f"{len(stale)} application(s) would be marked - re-run without --dry-run to apply.")
+    else:
+        print(f"Marked {len(stale)} application(s) no_response.")
+
+
 def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
     """Print status counts, plus three optional sections: `--stale-days`
     (applications with no reply worth a manual follow-up), `--by-score`
@@ -2532,6 +2567,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--format", choices=["text", "json"], default="text", help="Print as one JSON object instead."
     )
 
+    mark_stale_p = sub.add_parser(
+        "mark-stale",
+        help="Mark applications with no reply after N days as no_response, all at once.",
+    )
+    mark_stale_p.add_argument(
+        "--days", type=int, default=None, help="Days without a reply (default: STALE_AFTER_DAYS from .env)."
+    )
+    mark_stale_p.add_argument("--dry-run", action="store_true", help="Only list them; change nothing.")
     status_p = sub.add_parser(
         "status",
         help="Record an application outcome by hand, or view one job's record with no <status>.",
@@ -2884,6 +2927,8 @@ def main() -> None:
             cmd_doctor(settings, args)
         elif args.command == "status":
             cmd_status(settings, args)
+        elif args.command == "mark-stale":
+            cmd_mark_stale(settings, args)
         elif args.command == "review-answers":
             cmd_review_answers(settings, args)
         elif args.command == "report":

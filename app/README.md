@@ -433,6 +433,8 @@ job-bot report --by-failure             # the failed-applications log grouped by
 job-bot report --by-missing-qualifications # which missing qualifications the LLM scorer flags most often across postings
 job-bot report --by-missing-qualifications --missing-qualifications-limit 10 # only the 10 most common (most distinct phrases only occur once)
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response
+job-bot mark-stale --dry-run            # list applications with no reply after STALE_AFTER_DAYS (or --days N)
+job-bot mark-stale                      # ...and mark them all no_response at once (each change is audit-logged)
 job-bot status <job_id>                 # no status - print the job's record, its match reasoning, eligibility verdict, and missing qualifications (if scored), tailored resume (if any), and Q&A history instead
 job-bot status <job_id> --format json   # same view as one JSON object, for a script watching one specific application
 job-bot status <job_id> --note "Recruiter mentioned $150k base."   # attach a free-text note (independent of status)

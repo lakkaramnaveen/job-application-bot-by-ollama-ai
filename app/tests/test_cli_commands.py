@@ -26,6 +26,7 @@ from job_bot.cli import (
     cmd_export,
     cmd_faq,
     cmd_gmail_sync,
+    cmd_mark_stale,
     cmd_qa_history,
     cmd_report,
     cmd_resume_history,
@@ -3798,6 +3799,7 @@ def test_main_reports_a_corrupted_tracker_database_cleanly(tmp_path, monkeypatch
         (["job-bot", "qa-history"], "cmd_qa_history"),
         (["job-bot", "resume-history"], "cmd_resume_history"),
         (["job-bot", "audit-log"], "cmd_audit_log"),
+        (["job-bot", "mark-stale"], "cmd_mark_stale"),
     ],
 )
 def test_main_dispatches_each_subcommand_to_its_own_handler(tmp_path, monkeypatch, argv, cmd_name):
@@ -4218,3 +4220,66 @@ def test_doctor_passes_a_private_or_missing_browser_profile(tmp_path, capsys):
     settings.browser_profile_dir.chmod(0o700)
     cmd_doctor(settings, doctor_args(format="json"))
     assert _profile_private_check(capsys)["ok"] is True
+
+
+def _mark_stale(settings, **overrides):
+    defaults = dict(days=None, dry_run=False)
+    defaults.update(overrides)
+    cmd_mark_stale(settings, argparse.Namespace(**defaults))
+
+
+def _applied_job(settings, job_id, days_ago):
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job(job_id, "Engineer", "Acme", f"https://x/{job_id}")
+    tracker.mark_applied(job_id)
+    _backdate_applied_at(settings.db_path, job_id, datetime.now(UTC) - timedelta(days=days_ago))
+
+
+def test_mark_stale_marks_only_applications_past_the_threshold(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    _applied_job(settings, "old", days_ago=20)
+    _applied_job(settings, "recent", days_ago=3)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("interviewing", "Engineer", "Globex", "https://x/i")
+    tracker.mark_applied("interviewing")
+    tracker.update_status("interviewing", "interviewing")
+    _backdate_applied_at(settings.db_path, "interviewing", datetime.now(UTC) - timedelta(days=30))
+
+    _mark_stale(settings, days=14)
+
+    assert tracker.get_job("old")["status"] == "no_response"
+    assert tracker.get_job("recent")["status"] == "applied"
+    assert tracker.get_job("interviewing")["status"] == "interviewing"  # only "applied" ones
+    assert "Marked 1 application(s) no_response." in capsys.readouterr().out
+    entry = AuditLogger(settings.audit_log_path).read_entries(action="marked_no_response")[0]
+    assert entry["details"]["job_id"] == "old"
+
+
+def test_mark_stale_dry_run_changes_nothing(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    _applied_job(settings, "old", days_ago=20)
+
+    _mark_stale(settings, days=14, dry_run=True)
+
+    assert Tracker(settings.db_path).get_job("old")["status"] == "applied"
+    out = capsys.readouterr().out
+    assert "Would mark no_response: Acme - Engineer" in out
+    assert "1 application(s) would be marked" in out
+    assert AuditLogger(settings.audit_log_path).read_entries(action="marked_no_response") == []
+
+
+def test_mark_stale_defaults_to_stale_after_days(tmp_path, capsys):
+    settings = make_settings(tmp_path, stale_after_days=30)
+    _applied_job(settings, "twenty_days", days_ago=20)
+
+    _mark_stale(settings)  # no --days: STALE_AFTER_DAYS=30, so 20 days isn't stale yet
+
+    assert Tracker(settings.db_path).get_job("twenty_days")["status"] == "applied"
+    assert "No applications have gone 30+ days without a reply." in capsys.readouterr().out
+
+
+def test_mark_stale_rejects_a_non_positive_days(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        _mark_stale(make_settings(tmp_path), days=0)
+    assert exc_info.value.code == 1
+    assert "--days must be at least 1" in capsys.readouterr().err
