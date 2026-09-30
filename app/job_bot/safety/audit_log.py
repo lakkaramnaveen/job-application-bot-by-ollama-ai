@@ -79,7 +79,12 @@ class AuditLogger:
             raw = self._path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return []
-        except UnicodeDecodeError:
+        except (OSError, UnicodeDecodeError):
+            # OSError beyond a missing file (permission denied, a directory
+            # where the file should be) - unreadable is the same as empty
+            # for every reader here (`job-bot audit-log`, the dashboard's
+            # Audit Log view, doctor), the same fallback the JSON stores
+            # use; doctor's "Audit log writable" check reports it.
             return []
 
         entries = []

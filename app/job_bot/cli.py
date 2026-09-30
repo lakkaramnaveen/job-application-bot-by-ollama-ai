@@ -195,6 +195,21 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
+    # Same idea for the two logs every run writes to: the first write
+    # (the audit log's "search" entry) happens outside any try/except, so
+    # an unwritable log crashed the run with a raw OSError traceback. The
+    # audit trail is a safety mechanism (safety/audit_log.py), so a run that
+    # can't record what it does shouldn't start.
+    for log_path in (settings.audit_log_path, settings.failed_applications_log_path):
+        error = _log_unwritable_reason(log_path)
+        if error is not None:
+            print(
+                f"Error: {log_path} is not writable ({error}) - refusing to start a run that "
+                "couldn't record what it does (`job-bot doctor` checks it).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     provider = get_provider(settings)
     resume_store = ResumeStore(settings.resume_path, settings.faq_path)
     rate_limiter = RateLimiter(settings.db_path, settings.effective_daily_cap())
@@ -1840,6 +1855,25 @@ def _probe_writable(directory: Path) -> str | None:
     return None
 
 
+def _log_unwritable_reason(path: Path) -> str | None:
+    """Why the append-only log at `path` can't be written, or None if it
+    can - without creating it. doctor's _audit_log_check/_failed_
+    applications_log_check open in append mode, which creates an empty
+    file; fine for doctor, but a run with no failures deliberately leaves
+    no failed-applications log behind. So an existing file is opened for
+    append (writing nothing), and a missing one gets its directory probed
+    instead (_probe_writable).
+    """
+    if not path.exists():
+        return _probe_writable(path.parent)
+    try:
+        with path.open("a", encoding="utf-8"):
+            pass
+    except OSError as e:
+        return str(e)
+    return None
+
+
 def _blacklist_check(settings: Settings) -> tuple[str, bool, str]:
     """Neither missing (a fresh install has no blacklist file yet, which is
     fine) nor present-but-corrupted should look the same as "no companies
@@ -2096,11 +2130,7 @@ def _last_search_signed_out_at(settings: Settings) -> str | None:
     after a run stopped on the sign-in wall. Only the latest search counts:
     a successful search after `job-bot login` clears it.
     """
-    try:
-        entries = AuditLogger(settings.audit_log_path).read_entries()
-    except OSError:
-        return None  # _audit_log_check reports an unreadable log; doctor must not crash
-    for entry in entries:  # most recent first
+    for entry in AuditLogger(settings.audit_log_path).read_entries():  # most recent first
         if entry.get("action") == "search":
             return None
         if entry.get("action") == "search_error":

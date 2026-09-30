@@ -612,6 +612,32 @@ def test_run_still_answers_questions_when_the_faq_path_is_unreadable(tmp_path, m
     assert "Warning: answer not cached" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("which", ["audit_log_path", "failed_applications_log_path"])
+def test_run_refuses_to_start_when_a_log_it_writes_to_is_unwritable(tmp_path, monkeypatch, capsys, which):
+    """The first audit write happens outside any try/except - an unwritable
+    log used to crash the run with a raw IsADirectoryError traceback. Must
+    stop cleanly before searching, naming the file.
+    """
+    adapter = FakeAdapter(page=None)
+    searched = []
+    adapter.search = lambda *a, **kw: searched.append(True) or [JOB]
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path)
+    getattr(settings, which).mkdir(parents=True)  # a directory where the log file should be
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_run(settings, make_args())
+
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "refusing to start a run" in err
+    assert str(getattr(settings, which)) in err
+    assert searched == []
+
+
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):
     """A fresh install has no blacklist file - that's not corruption."""
     adapter = FakeAdapter(page=None)

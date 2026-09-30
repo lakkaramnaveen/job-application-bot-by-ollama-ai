@@ -129,3 +129,14 @@ def test_read_entries_returns_empty_for_a_non_utf8_file(tmp_path):
     logger = AuditLogger(path)
 
     assert logger.read_entries() == []
+
+
+def test_read_entries_empty_when_the_path_is_unreadable(tmp_path):
+    """A directory where the log should be (or permission denied) used to
+    escape as a raw IsADirectoryError from `job-bot audit-log`, the
+    dashboard's Audit Log view, and doctor - same empty fallback as a
+    missing or non-UTF-8 file now.
+    """
+    path = tmp_path / "audit.log"
+    path.mkdir()
+    assert AuditLogger(path).read_entries() == []
