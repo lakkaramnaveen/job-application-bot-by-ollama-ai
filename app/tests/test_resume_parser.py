@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from job_bot.resume.parser import ResumeParseError, parse_resume
+from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 
 
 def test_parse_resume_raises_for_missing_file(tmp_path):
@@ -151,3 +151,45 @@ def test_parse_resume_raises_for_pdf_with_no_extractable_text(tmp_path, monkeypa
 
     with pytest.raises(ResumeParseError, match="No extractable text found in PDF"):
         parse_resume(path)
+
+
+def test_find_moved_resume_finds_the_same_name_one_folder_down(tmp_path):
+    """The real case: RESUME_PATH still points at ~/Desktop/<name>, but the
+    file moved into ~/Desktop/DESK/ along with the project."""
+    (tmp_path / "DESK").mkdir()
+    moved = tmp_path / "DESK" / "My resume.docx"
+    moved.write_bytes(b"x")
+    assert find_moved_resume(tmp_path / "My resume.docx") == moved
+
+
+def test_find_moved_resume_returns_none_when_nothing_matches(tmp_path):
+    (tmp_path / "DESK").mkdir()
+    (tmp_path / "DESK" / "Other resume.docx").write_bytes(b"x")
+    assert find_moved_resume(tmp_path / "My resume.docx") is None
+
+
+def test_find_moved_resume_starts_from_the_nearest_folder_that_still_exists(tmp_path):
+    """If the old folder itself is gone (renamed), search from its parent."""
+    (tmp_path / "renamed").mkdir()
+    moved = tmp_path / "renamed" / "cv.pdf"
+    moved.write_bytes(b"x")
+    assert find_moved_resume(tmp_path / "old-folder" / "cv.pdf") == moved
+
+
+def test_find_moved_resume_is_bounded_in_depth_and_skips_hidden_folders(tmp_path):
+    deep = tmp_path / "a" / "b" / "c"
+    deep.mkdir(parents=True)
+    (deep / "cv.pdf").write_bytes(b"x")  # three levels down - beyond max_depth=2
+    hidden = tmp_path / ".cache"
+    hidden.mkdir()
+    (hidden / "cv.pdf").write_bytes(b"x")
+    assert find_moved_resume(tmp_path / "cv.pdf") is None
+
+
+def test_find_moved_resume_gives_up_after_max_entries(tmp_path):
+    (tmp_path / "zz").mkdir()
+    (tmp_path / "zz" / "cv.pdf").write_bytes(b"x")
+    for i in range(20):
+        (tmp_path / f"filler-{i:02d}.txt").write_text("x")
+    assert find_moved_resume(tmp_path / "cv.pdf", max_entries=10) is None
+    assert find_moved_resume(tmp_path / "cv.pdf") == tmp_path / "zz" / "cv.pdf"

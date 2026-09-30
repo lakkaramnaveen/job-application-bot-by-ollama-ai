@@ -96,3 +96,38 @@ def _parse_docx(path: Path) -> str:
     if not text.strip():
         raise ResumeParseError(f"No extractable text found in DOCX: {path}")
     return text
+
+
+def find_moved_resume(path: Path, *, max_depth: int = 2, max_entries: int = 5000) -> Path | None:
+    """A file with `path`'s exact name near where `path` used to be, or None
+    - for suggesting a fix when RESUME_PATH points at a resume that was
+    moved rather than deleted (the real case this exists for: a resume on
+    the Desktop moved one folder down along with the project).
+
+    Searches up to `max_depth` directory levels below the nearest existing
+    ancestor of `path`'s folder, skipping hidden directories, and gives up
+    after `max_entries` directory entries so a large home directory can't
+    make `job-bot doctor`/`run` slow. Only ever suggests - nothing is
+    changed. Matches are sorted so the suggestion is deterministic.
+    """
+    start = path.parent
+    while not start.exists() and start != start.parent:
+        start = start.parent
+    matches: list[Path] = []
+    seen = 0
+    frontier = [(start, 0)]
+    while frontier:
+        directory, depth = frontier.pop(0)
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            seen += 1
+            if seen > max_entries:
+                return min(matches) if matches else None
+            if entry.name == path.name and entry.is_file():
+                matches.append(entry)
+            elif depth < max_depth and not entry.name.startswith(".") and entry.is_dir() and not entry.is_symlink():
+                frontier.append((entry, depth + 1))
+    return min(matches) if matches else None

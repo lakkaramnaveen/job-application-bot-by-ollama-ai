@@ -34,6 +34,16 @@ def test_validate_ready_fails_when_resume_missing(tmp_path):
         settings.validate_ready()
 
 
+def test_validate_ready_suggests_where_a_moved_resume_went(tmp_path):
+    (tmp_path / "DESK").mkdir()
+    moved = tmp_path / "DESK" / "resume.txt"
+    moved.write_text("Jane Doe - Software Engineer", encoding="utf-8")
+    settings = make_settings(tmp_path, resume_path=tmp_path / "resume.txt")
+
+    with pytest.raises(SettingsError, match=re.escape(f"a file with the same name is at {moved}")):
+        settings.validate_ready()
+
+
 def test_validate_ready_fails_for_a_present_but_unparseable_resume(tmp_path):
     """Real bug this guards against: a resume file that exists (passing the
     old exists()-only check) but can't actually be parsed - here an empty

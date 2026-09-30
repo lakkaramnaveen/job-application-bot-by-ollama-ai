@@ -4112,3 +4112,17 @@ def test_report_by_failure_omitted_without_failures_and_in_json_only_when_reques
     assert json.loads(capsys.readouterr().out)["by_failure"][0]["kind"] == "prep_error: boom N"
     cmd_report(settings, report_args(format="json"))
     assert "by_failure" not in json.loads(capsys.readouterr().out)
+
+
+def test_doctor_points_to_a_resume_that_moved_one_folder_down(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    moved_dir = settings.resume_path.parent / "DESK"
+    moved_dir.mkdir(parents=True, exist_ok=True)
+    moved = moved_dir / settings.resume_path.name
+    moved.write_text("resume", encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args(format="json"))
+
+    check = next(c for c in json.loads(capsys.readouterr().out)["checks"] if c["label"] == "Resume file readable")
+    assert check["ok"] is False
+    assert f"a file with the same name is at {moved}" in check["detail"]

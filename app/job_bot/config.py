@@ -11,7 +11,7 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from job_bot.resume.parser import ResumeParseError, parse_resume
+from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 
 APP_DIR = Path(__file__).resolve().parent.parent
 
@@ -174,7 +174,13 @@ class Settings(BaseSettings):
         warnings: list[str] = []
 
         if not self.resume_path.exists():
-            errors.append(f"Resume file not found at {self.resume_path} (set RESUME_PATH in .env).")
+            moved = find_moved_resume(self.resume_path)
+            hint = (
+                f"a file with the same name is at {moved} - set RESUME_PATH to that in .env"
+                if moved is not None
+                else "set RESUME_PATH in .env"
+            )
+            errors.append(f"Resume file not found at {self.resume_path} ({hint}).")
         else:
             try:
                 parse_resume(self.resume_path)

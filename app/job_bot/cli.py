@@ -57,7 +57,7 @@ from job_bot.llm.ollama_provider import OllamaProviderError, quit_ollama
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
-from job_bot.resume.parser import ResumeParseError, parse_resume
+from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 from job_bot.resume.store import ResumeStore, unusable_faq_reason
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
@@ -1886,7 +1886,11 @@ def _resume_check(settings: Settings) -> tuple[str, bool, str]:
     `job-bot doctor` giving it a clean bill of health.
     """
     if not settings.resume_path.exists():
-        return ("Resume file readable", False, str(settings.resume_path))
+        moved = find_moved_resume(settings.resume_path)
+        detail = str(settings.resume_path)
+        if moved is not None:
+            detail += f" not found - a file with the same name is at {moved}; set RESUME_PATH to it in .env"
+        return ("Resume file readable", False, detail)
     try:
         parse_resume(settings.resume_path)
     except ResumeParseError as e:
