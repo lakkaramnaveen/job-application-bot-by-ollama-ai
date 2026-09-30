@@ -1881,6 +1881,30 @@ def _faq_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, True, "")
 
 
+def _faq_usability_check(settings: Settings) -> tuple[str, bool, str]:
+    """Cached FAQ answers every run skips (unusable_faq_reason() - an
+    echoed question or leaked reasoning). Harmless to a run, which already
+    skips them, but otherwise only visible via `job-bot faq clean` or the
+    dashboard's FAQ panel - doctor is the one place a user checks for "is
+    anything off?". A corrupt or unreadable file passes here: _faq_check
+    above already reports it, and flagging it twice would be noise.
+    """
+    label = "FAQ cache has no unusable answers (optional)"
+    try:
+        answers = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
+    except OSError:
+        # faq_answers() only swallows bad JSON/encoding, not an unreadable
+        # path (e.g. a directory where the file should be) - _faq_check
+        # above reports that one, and doctor itself must never crash.
+        return (label, True, "skipped - FAQ cache unreadable, see the check above")
+    unusable = [question for question, answer in answers.items() if unusable_faq_reason(question, answer)]
+    if not unusable:
+        return (label, True, "")
+    examples = ", ".join(f'"{question}"' for question in unusable[:3])
+    more = f" and {len(unusable) - 3} more" if len(unusable) > 3 else ""
+    return (label, False, f"{len(unusable)} skipped by every run ({examples}{more}) - run `job-bot faq clean`")
+
+
 def _answer_gaps_check(settings: Settings) -> tuple[str, bool, str]:
     """Same corruption-hides-as-empty risk _blacklist_check/_faq_check
     guard against, for ANSWER_GAPS_PATH - AnswerGapStore._load()
@@ -2057,6 +2081,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         _resume_check(settings),
         _blacklist_check(settings),
         _faq_check(settings),
+        _faq_usability_check(settings),
         _answer_gaps_check(settings),
         _applications_dir_check(settings),
         _audit_log_check(settings),

@@ -2103,6 +2103,55 @@ def test_doctor_passes_faq_check_with_a_real_faq_file(tmp_path, capsys):
     assert "[OK] FAQ cache valid" in capsys.readouterr().out
 
 
+def test_doctor_flags_unusable_cached_faq_answers_and_points_to_faq_clean(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.faq_path.write_text(
+        json.dumps(
+            {
+                "Willing to relocate?": "No",
+                "Phone country code": "Phone country code",
+                "Years of Python?": "Let me check the resume first.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cmd_doctor(settings, doctor_args())
+
+    out = capsys.readouterr().out
+    assert "[OK] FAQ cache valid" in out  # the file itself is fine
+    line = next(line for line in out.splitlines() if "FAQ cache has no unusable answers" in line)
+    assert line.startswith("[!!]")
+    assert "2 skipped by every run" in line
+    assert '"Phone country code"' in line
+    assert "job-bot faq clean" in line
+
+
+def test_doctor_faq_usability_check_lists_at_most_three_examples(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    settings.faq_path.write_text(json.dumps({f"Field {i}": f"Field {i}" for i in range(5)}), encoding="utf-8")
+
+    cmd_doctor(settings, doctor_args())
+
+    line = next(line for line in capsys.readouterr().out.splitlines() if "no unusable answers" in line)
+    assert "5 skipped by every run" in line
+    assert "and 2 more" in line
+    assert '"Field 3"' not in line
+
+
+def test_doctor_faq_usability_check_passes_with_no_file_or_a_corrupt_one(tmp_path, capsys):
+    """A missing file is a fresh install; a corrupt one is _faq_check's to
+    report - flagging it here too would be double-counting.
+    """
+    settings = make_settings(tmp_path)
+    cmd_doctor(settings, doctor_args())
+    assert "[OK] FAQ cache has no unusable answers" in capsys.readouterr().out
+
+    settings.faq_path.write_text("not valid json {{{", encoding="utf-8")
+    cmd_doctor(settings, doctor_args())
+    assert "[OK] FAQ cache has no unusable answers" in capsys.readouterr().out
+
+
 def test_doctor_flags_a_corrupted_faq_file(tmp_path, capsys):
     settings = make_settings(tmp_path)
     settings.faq_path.write_text("not valid json {{{", encoding="utf-8")
