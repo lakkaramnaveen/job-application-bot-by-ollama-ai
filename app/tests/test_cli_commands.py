@@ -791,20 +791,6 @@ def test_report_json_includes_by_company_only_when_requested(tmp_path, capsys):
     assert "by_company" not in payload
 
 
-@pytest.fixture
-def chicago_tz(monkeypatch):
-    """Pin the local timezone so _week_start()'s local-time bucketing is
-    deterministic regardless of the machine running the suite.
-    """
-    import time
-
-    monkeypatch.setenv("TZ", "America/Chicago")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
-
-
 def test_report_by_week_counts_applications_per_week_most_recent_first(tmp_path, capsys, chicago_tz):
     settings = make_settings(tmp_path)
     tracker = Tracker(settings.db_path)
@@ -4026,3 +4012,18 @@ def test_corrupt_data_file_is_a_clean_user_facing_error():
     e.g. `job-bot blacklist add` against an unreadable blacklist file.
     """
     assert CorruptDataFile in EXPECTED_ERRORS
+
+
+def test_report_stale_list_shows_the_applied_date_in_local_time(tmp_path, capsys, chicago_tz):
+    """Sunday 8pm in Chicago is 01:00 Monday UTC - the stale list used to
+    print applied_at[:10], i.e. the UTC date (Monday).
+    """
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("job1", "Engineer", "Acme", "https://x/1")
+    tracker.mark_applied("job1")
+    _backdate_applied_at(settings.db_path, "job1", datetime(2026, 9, 14, 1, tzinfo=UTC))
+
+    cmd_report(settings, report_args(stale_days=7))
+
+    assert "(applied 2026-09-13 20:00)" in capsys.readouterr().out

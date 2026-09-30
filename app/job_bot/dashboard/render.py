@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from job_bot.resume.store import unusable_faq_reason
+from job_bot.text_utils import format_local_timestamp
 from job_bot.tracker.db import TRACKER_STATUSES
 
 # job.url ultimately comes from a scraped LinkedIn anchor href (see
@@ -202,7 +203,7 @@ def render_rows_html(jobs: list[dict[str, Any]], *, stale_after_days: int | None
         )
         status = str(job.get("status", ""))
         applied_at_raw = job.get("applied_at")
-        applied_at = html.escape(str(applied_at_raw or "-"))
+        applied_at = html.escape(format_local_timestamp(str(applied_at_raw)) if applied_at_raw else "-")
         is_stale = (
             stale_cutoff is not None
             and status == "applied"

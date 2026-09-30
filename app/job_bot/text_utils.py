@@ -1,3 +1,6 @@
+from datetime import datetime
+
+
 def normalize_company_name(name: str) -> str:
     """Canonical form for comparing company names across the codebase -
     trimmed, casefolded, and with internal whitespace collapsed to single
@@ -46,3 +49,18 @@ def is_per_position_field(label: str) -> bool:
     under the user's name. Such a field is left unanswered instead.
     """
     return " ".join(label.strip().rstrip("?:*").casefold().split()) in _PER_POSITION_FIELD_LABELS
+
+
+def format_local_timestamp(value: str) -> str:
+    """A stored UTC ISO timestamp (applied_at and friends) as "YYYY-MM-DD
+    HH:MM" in the user's local time - the same local-time convention
+    Tracker.applications_by_week() already uses, so an application sent on a
+    Sunday evening in a UTC-negative zone shows as that Sunday everywhere,
+    not as Monday. A value that doesn't parse is returned unchanged rather
+    than raising: this is display-only, and a hand-edited row shouldn't take
+    down a whole report or dashboard page.
+    """
+    try:
+        return datetime.fromisoformat(value).astimezone().strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return value

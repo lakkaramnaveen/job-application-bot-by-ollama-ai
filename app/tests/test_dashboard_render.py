@@ -790,3 +790,13 @@ def test_render_faq_html_shows_no_flags_or_summary_when_every_answer_is_usable()
     html = render_faq_html({"Willing to relocate?": "No"})
     assert "faq-unusable" not in html
     assert "flagged" not in html
+
+
+def test_render_rows_html_shows_the_applied_date_in_local_time_not_the_raw_utc_value(chicago_tz):
+    html = render_rows_html([make_job(applied_at="2026-09-14T01:00:00+00:00")])
+    assert "2026-09-13 20:00" in html
+    assert "2026-09-14T01:00:00+00:00" not in html
+
+
+def test_render_rows_html_still_shows_a_dash_when_never_applied():
+    assert "<td>-</td>" in render_rows_html([make_job(applied_at=None, status="seen")])

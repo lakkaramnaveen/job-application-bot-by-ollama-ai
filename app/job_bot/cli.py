@@ -63,7 +63,12 @@ from job_bot.safety.audit_log import AuditLogger
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.safety.confirm import SubmitConfirmer
 from job_bot.safety.rate_limiter import DailyCapReached, RateLimiter
-from job_bot.text_utils import is_echoed_question, is_per_position_field, normalize_company_name
+from job_bot.text_utils import (
+    format_local_timestamp,
+    is_echoed_question,
+    is_per_position_field,
+    normalize_company_name,
+)
 from job_bot.tracker.db import (
     TRACKER_STATUSES,
     InvalidStatus,
@@ -1490,7 +1495,7 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
     if stale:
         print(f"\nApplied {stale_days}+ days ago with no reply ({len(stale)}):")
         for job in stale:
-            print(f"  {job['job_id']}  {job['company']} - {job['title']}  (applied {job['applied_at'][:10]})")
+            print(f"  {job['job_id']}  {job['company']} - {job['title']}  (applied {format_local_timestamp(job['applied_at'])})")
 
     if args.by_score:
         _print_score_breakdown(tracker)

@@ -1,6 +1,11 @@
 import pytest
 
-from job_bot.text_utils import is_echoed_question, is_per_position_field, normalize_company_name
+from job_bot.text_utils import (
+    format_local_timestamp,
+    is_echoed_question,
+    is_per_position_field,
+    normalize_company_name,
+)
 
 
 def test_normalize_company_name_strips_and_casefolds():
@@ -52,3 +57,13 @@ def test_is_per_position_field_matches_linkedins_work_history_date_labels(label)
 )
 def test_is_per_position_field_leaves_other_questions_alone(label):
     assert is_per_position_field(label) is False
+
+
+def test_format_local_timestamp_converts_utc_to_local_time(chicago_tz):
+    assert format_local_timestamp("2026-09-14T01:00:00+00:00") == "2026-09-13 20:00"
+    assert format_local_timestamp("2026-09-21T14:12:14.401707+00:00") == "2026-09-21 09:12"
+
+
+@pytest.mark.parametrize("value", ["not a date", ""])
+def test_format_local_timestamp_returns_an_unparseable_value_unchanged(value):
+    assert format_local_timestamp(value) == value
