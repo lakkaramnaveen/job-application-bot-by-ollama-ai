@@ -32,6 +32,7 @@ from job_bot.browser.linkedin_adapter import (
     EXPERIENCE_LEVEL_CODES,
     LinkedInAdapter,
     LinkedInSignedOut,
+    NavigationFailed,
     UnansweredRequiredQuestion,
 )
 from job_bot.browser.session import BrowserSessionError, browser_session
@@ -109,6 +110,11 @@ def _apply_provider_overrides(settings: Settings, args: argparse.Namespace) -> N
             settings.ollama_model = args.model
 
 
+# Consecutive job-page load failures (NavigationFailed, i.e. already past
+# _goto_with_retry()'s own retries) after which a cycle stops - see its use
+# in _run_apply_cycle(). Low on purpose: one or two can be a genuine blip,
+# three in a row has only ever been LinkedIn refusing every load.
+NAVIGATION_FAILURE_STREAK_LIMIT = 3
 LOGIN_WAIT_TIMEOUT_MS = 600_000  # 10 minutes - generous for 2FA/security checkpoints
 
 
@@ -259,7 +265,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         page = context.new_page()
         adapter = LinkedInAdapter(page)
 
-        def run_one_cycle() -> tuple[int, int, bool]:
+        def run_one_cycle() -> tuple[int, int, bool, bool]:
             # Re-fetched every cycle, not captured once before the loop:
             # --loop can run for many hours, and ResumeStore.resume_text()
             # re-parses only if the file's mtime actually changed since the
@@ -290,7 +296,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             )
 
         if not args.loop:
-            applied, failed, _fatal_error = run_one_cycle()
+            applied, failed, _fatal_error, _throttled = run_one_cycle()
             _print_cycle_summary(applied, failed, rate_limiter, settings)
             if rate_limiter.remaining_today() <= 0:
                 _quit_ollama_if_configured(settings)
@@ -303,7 +309,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         )
         try:
             while True:
-                applied, failed, fatal_error = run_one_cycle()
+                applied, failed, fatal_error, throttled = run_one_cycle()
                 _print_cycle_summary(applied, failed, rate_limiter, settings)
                 if fatal_error:
                     # Same reasoning _is_ollama_unreachable()/
@@ -329,7 +335,17 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 if page.is_closed():
                     print("Browser window was closed - stopping.")
                     break
-                if applied == 0:
+                if throttled:
+                    # LinkedIn was refusing page loads (see
+                    # NAVIGATION_FAILURE_STREAK_LIMIT) - searching again right
+                    # away, even after a cycle that applied to something,
+                    # would just resume hammering it.
+                    print(
+                        f"Backing off {args.loop_interval_minutes} minute(s) before the next cycle "
+                        "since LinkedIn was refusing page loads..."
+                    )
+                    time.sleep(args.loop_interval_minutes * 60)
+                elif applied == 0:
                     # Nothing applied this cycle (no eligible postings found,
                     # or the search itself failed) - back off rather than
                     # re-hammering LinkedIn's search immediately. When the
@@ -424,7 +440,7 @@ def _run_apply_cycle(
     max_years_experience: int | None,
     require_w2: bool,
     include_external: bool,
-) -> tuple[int, int, bool]:
+) -> tuple[int, int, bool, bool]:
     """One search -> score -> tailor -> apply pass over a fresh batch of
     postings. Called once for a plain `job-bot run`, or repeatedly for
     `--loop` (back-to-back with no sleep as long as each cycle keeps
@@ -432,8 +448,11 @@ def _run_apply_cycle(
     before the next one) - re-running search() each cycle is what lets loop
     mode pick up postings that appeared after the previous cycle, not just
     the ones visible at process start. Returns (applied, failed,
-    fatal_error) for that cycle only, not a running total across
-    cycles.
+    fatal_error, throttled) for that cycle only, not a running total
+    across cycles. throttled is True when the cycle stopped because
+    LinkedIn refused NAVIGATION_FAILURE_STREAK_LIMIT job-page loads in a
+    row - --loop then backs off loop_interval_minutes even if the cycle
+    applied to something, instead of searching again immediately.
 
     fatal_error is True when this cycle stopped early because the
     LLM provider itself was unreachable/misconfigured (Ollama down, Claude
@@ -478,7 +497,7 @@ def _run_apply_cycle(
         print(f"Error searching for postings: {e}")
         # A signed-out session fails every search identically until the
         # user runs `job-bot login` - fatal the same way a down provider is.
-        return 0, 1, signed_out
+        return 0, 1, signed_out, False
     audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
     def should_skip(posting: JobPosting) -> bool:
@@ -694,6 +713,8 @@ def _run_apply_cycle(
     applied = 0
     failed = 0
     fatal_error = False
+    throttled = False
+    consecutive_navigation_failures = 0
     for posting in postings:
         if applied >= args.max_apps:
             break
@@ -712,6 +733,7 @@ def _run_apply_cycle(
 
         try:
             description = adapter.load_description(posting)
+            consecutive_navigation_failures = 0
             if not clears_the_bar(posting, description, existing):
                 continue
             cover_letter, resume_path = generate_materials(posting, description)
@@ -750,6 +772,22 @@ def _run_apply_cycle(
                 # repeating the same failure once per remaining posting.
                 print("Browser window was closed - stopping the run.")
                 break
+            if isinstance(e, NavigationFailed):
+                consecutive_navigation_failures += 1
+                if consecutive_navigation_failures >= NAVIGATION_FAILURE_STREAK_LIMIT:
+                    # Confirmed in data/failed_applications.log: once LinkedIn
+                    # starts refusing job-page loads it refuses all of them -
+                    # bursts of 18, 16, 15 and 11 consecutive failures within
+                    # seconds. Continuing through the rest of the postings is
+                    # exactly the request pattern that gets an automated
+                    # account restricted, so stop this cycle instead.
+                    print(
+                        f"LinkedIn refused {consecutive_navigation_failures} job page loads in a row - "
+                        "it's likely rate-limiting this session. Stopping this cycle instead of loading "
+                        "the rest."
+                    )
+                    throttled = True
+                    break
             continue
 
         try:
@@ -824,7 +862,7 @@ def _run_apply_cycle(
             audit.log("dry_run_stopped", job_id=posting.job_id)
             print(f"[dry-run] Would apply to {posting.title} at {posting.company}")
 
-    return applied, failed, fatal_error
+    return applied, failed, fatal_error, throttled
 
 
 _STATUS_VIEW_FIELDS = (

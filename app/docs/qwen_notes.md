@@ -176,6 +176,24 @@ echoed entry already in FAQ_PATH is skipped rather than replayed; and
 Echoed entries already on disk are not rewritten - remove them with
 `job-bot faq remove` if you want them gone from the file too.
 
+## 7. LinkedIn refusing page loads in bursts (not a model issue)
+
+**Symptom:** many `prep_error`s in a row for different postings, all
+"Failed to load https://www.linkedin.com/jobs/view/N/... after N attempts"
+(or, before retries existed, `net::ERR_HTTP_RESPONSE_CODE_FAILURE`). `job-bot
+report --by-failure` shows them as one of the biggest kinds.
+
+**Why it matters:** they aren't independent - `data/failed_applications.log`
+shows bursts of 18, 16, 15 and 11 consecutive refusals within seconds, i.e.
+LinkedIn rate-limiting the session. Loading the remaining postings anyway is
+the request pattern most likely to get an automated account restricted.
+
+**Fix:** `_goto_with_retry()` raises `NavigationFailed` once its retries are
+exhausted; `_run_apply_cycle()` stops the cycle after
+`NAVIGATION_FAILURE_STREAK_LIMIT` (3) of them in a row (a successful load
+resets the count), and `--loop` then backs off `loop_interval_minutes` even if
+the cycle applied to something.
+
 ## General guidance for a future session
 
 - When a local-model failure looks bizarre or shows up as a repeating

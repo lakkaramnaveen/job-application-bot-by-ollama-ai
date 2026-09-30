@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from job_bot.browser.base_adapter import JobPosting
-from job_bot.browser.linkedin_adapter import LinkedInSignedOut, UnansweredRequiredQuestion
+from job_bot.browser.linkedin_adapter import LinkedInSignedOut, NavigationFailed, UnansweredRequiredQuestion
 from job_bot.cli import cmd_run
 from job_bot.config import Settings
 from job_bot.llm.base import LLMProvider
@@ -664,6 +664,89 @@ def test_a_real_submission_counts_toward_the_daily_cap_even_if_the_audit_write_f
 
     assert Tracker(settings.db_path).has_applied("job1") is True
     assert RateLimiter(settings.db_path, settings.effective_daily_cap()).count_today() == 1
+
+
+def _postings(n):
+    return [
+        JobPosting(job_id=f"nav-{i}", title="Backend Engineer", company="Acme Corp", url=f"https://x/nav-{i}", description="")
+        for i in range(n)
+    ]
+
+
+class ScriptedLoadAdapter(FakeAdapter):
+    """load_description() fails with NavigationFailed for the job ids in
+    `failing`, and records every load attempted."""
+
+    def __init__(self, page, postings, failing):
+        super().__init__(page)
+        self._postings, self._failing, self.loads = postings, set(failing), []
+
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+        return self._postings
+
+    def load_description(self, posting):
+        self.loads.append(posting.job_id)
+        if posting.job_id in self._failing:
+            raise NavigationFailed(f"Failed to load {posting.url} after 3 attempts")
+        return super().load_description(posting)
+
+
+def test_run_stops_the_cycle_after_three_consecutive_page_load_failures(tmp_path, monkeypatch, capsys):
+    """data/failed_applications.log shows LinkedIn refusing every job-page
+    load in bursts (18 in a row within 2 seconds) - the run must stop after
+    NAVIGATION_FAILURE_STREAK_LIMIT instead of loading the rest.
+    """
+    postings = _postings(6)
+    adapter = ScriptedLoadAdapter(None, postings, failing=[p.job_id for p in postings])
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    cmd_run(make_settings(tmp_path), make_args(max_apps=10))
+
+    assert adapter.loads == ["nav-0", "nav-1", "nav-2"]
+    assert "LinkedIn refused 3 job page loads in a row" in capsys.readouterr().out
+
+
+def test_a_successful_page_load_resets_the_failure_streak(tmp_path, monkeypatch):
+    """Two blips, a success, two more blips: never three in a row, so every
+    posting is still attempted."""
+    postings = _postings(5)
+    adapter = ScriptedLoadAdapter(None, postings, failing=["nav-0", "nav-1", "nav-3", "nav-4"])
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    cmd_run(make_settings(tmp_path), make_args(max_apps=10))
+
+    assert adapter.loads == ["nav-0", "nav-1", "nav-2", "nav-3", "nav-4"]
+
+
+def test_loop_backs_off_after_a_throttled_cycle_even_if_it_applied_to_something(tmp_path, monkeypatch, capsys):
+    """A cycle that applied to something normally searches again right away
+    - after LinkedIn started refusing loads that would just resume the
+    hammering, so it must sleep loop_interval_minutes first.
+    """
+    postings = _postings(4)  # nav-0 applies, then 3 refused loads
+    adapter = ScriptedLoadAdapter(None, postings, failing=["nav-1", "nav-2", "nav-3"])
+    sleeps = []
+
+    def stop_at_first_sleep(seconds):
+        sleeps.append(seconds)
+        raise KeyboardInterrupt  # ends --loop cleanly ("Stopped.")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", stop_at_first_sleep)
+
+    args = make_args(loop=True, max_apps=10)
+    cmd_run(make_settings(tmp_path), args)
+
+    out = capsys.readouterr().out
+    assert "Applied: Backend Engineer at Acme Corp" in out
+    assert "Backing off" in out
+    assert sleeps == [args.loop_interval_minutes * 60]
 
 
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):

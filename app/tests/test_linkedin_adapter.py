@@ -20,6 +20,7 @@ from job_bot.browser.linkedin_adapter import (
     RESULTS_PER_PAGE,
     LinkedInAdapter,
     LinkedInSignedOut,
+    NavigationFailed,
     is_signed_out_url,
 )
 
@@ -124,8 +125,11 @@ def test_goto_with_retry_raises_after_exhausting_retries_on_a_generic_playwright
 
     monkeypatch.setattr(playwright_page, "goto", always_fails)
 
-    with pytest.raises(RuntimeError, match="Failed to load"):
+    # NavigationFailed specifically (cli.py counts a streak of these), and
+    # still a RuntimeError for every existing caller.
+    with pytest.raises(NavigationFailed, match="Failed to load") as exc_info:
         adapter._goto_with_retry("https://example.com/never-loads")
+    assert isinstance(exc_info.value, RuntimeError)
 
 
 def test_fill_and_submit_ignores_an_unrelated_dialog_ahead_of_the_real_one(playwright_page):

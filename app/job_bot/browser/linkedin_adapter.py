@@ -176,6 +176,14 @@ def is_signed_out_url(url: str) -> bool:
     return any(marker in url for marker in _SIGNED_OUT_URL_MARKERS)
 
 
+class NavigationFailed(RuntimeError):
+    """_goto_with_retry() exhausted its retries - a RuntimeError subclass so
+    every existing `except RuntimeError`/message check is unaffected, but
+    cli.py can recognize a streak of these (LinkedIn refusing page loads)
+    without matching on message text.
+    """
+
+
 class LinkedInSignedOut(RuntimeError):
     """The browser profile's LinkedIn session has expired, so the search page
     redirected to a sign-in wall instead of results. Without this, the
@@ -644,7 +652,7 @@ class LinkedInAdapter(JobBoardAdapter):
                 last_error = e
                 logger.warning("Navigation to %s failed (attempt %d): %s - retrying", url, attempt + 1, e)
                 time.sleep(ACTION_DELAY_SECONDS)
-        raise RuntimeError(f"Failed to load {url} after {NAVIGATION_RETRIES + 1} attempts") from last_error
+        raise NavigationFailed(f"Failed to load {url} after {NAVIGATION_RETRIES + 1} attempts") from last_error
 
     def _upload_resume_if_requested(self, dialog: Locator, resume_path: str | None) -> None:
         if not resume_path:
