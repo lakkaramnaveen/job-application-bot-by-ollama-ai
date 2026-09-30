@@ -48,7 +48,11 @@ STATUS_RANK = {
     "withdrawn": 3,
     "no_response": 3,
 }
-TERMINAL_STATUSES = frozenset({"offer", "rejected", "withdrawn", "no_response"})
+# no_response is deliberately NOT terminal: it only means no reply had
+# arrived yet when it was set (by hand, or in bulk by `job-bot mark-stale`),
+# and late replies are common. A real reply - interview, offer, or
+# rejection - must still land on it; see _should_update().
+TERMINAL_STATUSES = frozenset({"offer", "rejected", "withdrawn"})
 # "skipped" means the bot decided *not* to apply - there's no real
 # application behind it to correlate an email with, so it's excluded from
 # email-driven updates the same way a terminal status is, rather than
@@ -121,11 +125,20 @@ def find_matching_job(jobs: list[dict], company_guess: str) -> dict | None:
     return None
 
 
+# The statuses only an actual reply from the employer can produce - the
+# ones allowed to move a job out of no_response. An "application received"
+# confirmation (-> "applied") isn't a reply to the application, so it
+# doesn't reopen one that was closed out as no_response.
+_REPLY_STATUSES = frozenset({"interviewing", "offer", "rejected"})
+
+
 def _should_update(current_status: str, new_status: str) -> bool:
     if current_status in NEVER_UPDATE_VIA_EMAIL:
         return False
     if current_status == new_status:
         return False
+    if current_status == "no_response":
+        return new_status in _REPLY_STATUSES
     return STATUS_RANK.get(new_status, 0) >= STATUS_RANK.get(current_status, 0)
 
 

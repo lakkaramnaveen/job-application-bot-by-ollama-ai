@@ -1,3 +1,5 @@
+import pytest
+
 from job_bot.integrations.gmail_client import EmailMessage
 from job_bot.integrations.gmail_sync import _contains_as_whole_word, find_matching_job, sync_gmail
 from job_bot.llm.base import LLMProvider
@@ -290,6 +292,47 @@ def test_sync_gmail_never_updates_a_terminal_status(tmp_path):
 
     assert result.updated == []
     assert tracker.get_job("job1")["status"] == "offer"
+
+
+@pytest.mark.parametrize(
+    ("category", "expected"),
+    [("interview_invite", "interviewing"), ("offer", "offer"), ("rejection", "rejected")],
+)
+def test_sync_gmail_a_late_reply_updates_a_no_response_job(tmp_path, category, expected):
+    """no_response only means no reply had arrived yet - `job-bot
+    mark-stale` sets it in bulk, and late replies are common. A real reply
+    must still land on it; it used to be treated as terminal and ignored.
+    """
+    tracker = make_tracker_with_job(tmp_path, status="no_response")
+    gmail = FakeGmailClient([make_email()])
+    provider = QueueProvider([make_classification(category=category)])
+
+    result = sync_gmail(provider, gmail, tracker)
+
+    assert result.updated == [("job1", "Acme Corp", expected)]
+    assert tracker.get_job("job1")["status"] == expected
+
+
+def test_sync_gmail_a_confirmation_email_does_not_reopen_a_no_response_job(tmp_path):
+    """An "application received" email isn't a reply to the application."""
+    tracker = make_tracker_with_job(tmp_path, status="no_response")
+    gmail = FakeGmailClient([make_email()])
+    provider = QueueProvider([make_classification(category="application_confirmation")])
+
+    result = sync_gmail(provider, gmail, tracker)
+
+    assert result.updated == []
+    assert tracker.get_job("job1")["status"] == "no_response"
+
+
+@pytest.mark.parametrize("status", ["offer", "rejected", "withdrawn"])
+def test_sync_gmail_still_never_touches_a_genuinely_final_status(tmp_path, status):
+    tracker = make_tracker_with_job(tmp_path, status=status)
+    gmail = FakeGmailClient([make_email()])
+    provider = QueueProvider([make_classification(category="interview_invite")])
+
+    assert sync_gmail(provider, gmail, tracker).updated == []
+    assert tracker.get_job("job1")["status"] == status
 
 
 def test_sync_gmail_never_updates_a_skipped_job(tmp_path):
