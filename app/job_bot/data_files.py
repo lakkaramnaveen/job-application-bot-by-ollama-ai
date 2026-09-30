@@ -33,7 +33,9 @@ def assert_safe_to_overwrite(path: Path, expected_type: type) -> None:
         return
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+        # OSError too: a permission problem or a directory where the file
+        # should be is just as unreadable, and just as unsafe to replace.
         raise CorruptDataFile(path, str(e)) from e
     if not isinstance(data, expected_type):
         raise CorruptDataFile(path, f"expected a JSON {expected_type.__name__}, found {type(data).__name__}")

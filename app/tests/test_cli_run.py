@@ -575,6 +575,42 @@ def test_run_refuses_to_start_when_the_blacklist_file_is_unreadable(tmp_path, mo
     assert settings.blacklist_path.read_bytes() == b'["Acme"'
 
 
+def test_run_refuses_cleanly_when_the_blacklist_path_is_a_directory(tmp_path, monkeypatch, capsys):
+    """An OSError, not just bad JSON - must hit the same clean refusal, not
+    a raw IsADirectoryError traceback.
+    """
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path)
+    settings.blacklist_path.mkdir(parents=True)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_run(settings, make_args())
+
+    assert exc_info.value.code == 1
+    assert "no company would be blocked this run" in capsys.readouterr().err
+
+
+def test_run_still_answers_questions_when_the_faq_path_is_unreadable(tmp_path, monkeypatch, capsys):
+    """faq_answers() is called for every question - an OSError there used
+    to fail every posting that asked one.
+    """
+    adapter = FakeAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path)
+    settings.faq_path.mkdir(parents=True)
+
+    cmd_run(settings, make_args())
+
+    assert adapter.fill_and_submit_calls[0]["answered"] == "5 years"
+    assert "Warning: answer not cached" in capsys.readouterr().out
+
+
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):
     """A fresh install has no blacklist file - that's not corruption."""
     adapter = FakeAdapter(page=None)

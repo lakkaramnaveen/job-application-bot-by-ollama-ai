@@ -64,7 +64,10 @@ class ResumeStore:
             return {}
         try:
             data = json.loads(self._faq_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            # OSError too (permission denied, a directory where the file
+            # should be) - unreadable is corruption for this purpose, and
+            # without it every question asked during `job-bot run` crashed.
             # UnicodeDecodeError alongside JSONDecodeError - a faq_cache.json
             # saved with a non-UTF-8 encoding (a hand edit, a bad
             # restore/backup, ...) is corruption exactly the same way

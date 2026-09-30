@@ -76,3 +76,26 @@ def test_saving_to_a_healthy_file_still_works(tmp_path):
     store.save_faq_answer("Q1?", "A1")
     store.save_faq_answer("Q2?", "A2")
     assert json.loads(faq_path.read_text()) == {"Q1?": "A1", "Q2?": "A2"}
+
+
+def test_a_directory_where_the_file_should_be_is_refused_not_crashed_on(tmp_path):
+    """OSError (a directory in place, permission denied) used to escape as a
+    raw IsADirectoryError/PermissionError traceback instead of the clean
+    refusal.
+    """
+    path = tmp_path / "f.json"
+    path.mkdir()
+    with pytest.raises(CorruptDataFile, match="refusing to overwrite"):
+        assert_safe_to_overwrite(path, dict)
+
+
+def test_every_store_loads_an_unreadable_path_as_empty_instead_of_crashing(tmp_path):
+    """Same graceful fallback as invalid JSON (doctor reports it) - before,
+    faq_answers() raised on every question `job-bot run` asked.
+    """
+    for name in ("faq.json", "blacklist.json", "gaps.json"):
+        (tmp_path / name).mkdir()
+
+    assert ResumeStore(tmp_path / "resume.txt", tmp_path / "faq.json").faq_answers() == {}
+    assert CompanyBlacklist(tmp_path / "blacklist.json").list_companies() == []
+    assert AnswerGapStore(tmp_path / "gaps.json").list_unanswered() == {}

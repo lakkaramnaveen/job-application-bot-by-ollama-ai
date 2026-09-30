@@ -1890,13 +1890,7 @@ def _faq_usability_check(settings: Settings) -> tuple[str, bool, str]:
     above already reports it, and flagging it twice would be noise.
     """
     label = "FAQ cache has no unusable answers (optional)"
-    try:
-        answers = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
-    except OSError:
-        # faq_answers() only swallows bad JSON/encoding, not an unreadable
-        # path (e.g. a directory where the file should be) - _faq_check
-        # above reports that one, and doctor itself must never crash.
-        return (label, True, "skipped - FAQ cache unreadable, see the check above")
+    answers = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
     unusable = [question for question, answer in answers.items() if unusable_faq_reason(question, answer)]
     if not unusable:
         return (label, True, "")

@@ -39,7 +39,7 @@ class CompanyBlacklist:
             return {}
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             # UnicodeDecodeError alongside JSONDecodeError - a
             # company_blacklist.json saved with a non-UTF-8 encoding is
             # corruption exactly the same way invalid JSON already is, and
