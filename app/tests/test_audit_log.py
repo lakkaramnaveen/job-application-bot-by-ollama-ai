@@ -153,3 +153,26 @@ def test_last_search_signed_out_at_is_the_latest_search_outcome_only(tmp_path):
 
     logger.log("search", keywords="x", location="y", results=3)  # after `job-bot login`
     assert logger.last_search_signed_out_at() is None
+
+
+def test_failure_kinds_groups_the_same_failure_across_different_numbers(tmp_path):
+    logger = AuditLogger(tmp_path / "failed_applications.log")
+    logger.log("apply_error", job_id="1", error="Easy Apply dialog never appeared for job 111 within 10s")
+    logger.log("apply_error", job_id="2", error="Easy Apply dialog never appeared for job 222 within 12s")
+    logger.log("prep_error", job_id="3", error="Could not reach Ollama\nCall log: extra detail")
+    logger.log("search_error", keywords="x", location="y")  # no error field at all
+
+    kinds = logger.failure_kinds()
+
+    assert [k["kind"] for k in kinds] == [
+        "apply_error: Easy Apply dialog never appeared for job N within Ns",
+        "prep_error: Could not reach Ollama",  # first line only
+        "search_error",
+    ]
+    assert [k["count"] for k in kinds] == [2, 1, 1]
+    # most recent occurrence of each kind
+    assert kinds[0]["last_seen"] == logger.read_entries(action="apply_error")[0]["timestamp"]
+
+
+def test_failure_kinds_empty_without_a_log(tmp_path):
+    assert AuditLogger(tmp_path / "absent.log").failure_kinds() == []

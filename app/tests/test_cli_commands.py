@@ -112,6 +112,7 @@ def report_args(**overrides) -> argparse.Namespace:
         by_eligibility=False,
         by_company=False,
         by_week=False,
+        by_failure=False,
         by_missing_qualifications=False,
         missing_qualifications_limit=None,
         format="text",
@@ -4080,3 +4081,34 @@ def test_report_stale_list_shows_the_applied_date_in_local_time(tmp_path, capsys
     cmd_report(settings, report_args(stale_days=7))
 
     assert "(applied 2026-09-13 20:00)" in capsys.readouterr().out
+
+
+def test_report_by_failure_prints_kinds_most_common_first(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path).upsert_job("job1", "Engineer", "Acme", "https://x/1")
+    failures = AuditLogger(settings.failed_applications_log_path)
+    failures.log("prep_error", job_id="9", error="Could not reach Ollama")
+    for job_id in ("1", "2"):
+        failures.log("apply_error", job_id=job_id, error=f"Locator.wait_for: Timeout {job_id}000ms exceeded.")
+
+    cmd_report(settings, report_args(by_failure=True))
+
+    out = capsys.readouterr().out
+    assert "Failures by kind (most common first):" in out
+    lines = [line for line in out.splitlines() if "_error:" in line]
+    assert "2" in lines[0].split()[0] and "apply_error: Locator.wait_for: Timeout Nms exceeded." in lines[0]
+    assert "prep_error: Could not reach Ollama" in lines[1]
+
+
+def test_report_by_failure_omitted_without_failures_and_in_json_only_when_requested(tmp_path, capsys):
+    settings = make_settings(tmp_path)
+    Tracker(settings.db_path).upsert_job("job1", "Engineer", "Acme", "https://x/1")
+
+    cmd_report(settings, report_args(by_failure=True))
+    assert "Failures by kind" not in capsys.readouterr().out
+
+    AuditLogger(settings.failed_applications_log_path).log("prep_error", job_id="9", error="boom 42")
+    cmd_report(settings, report_args(by_failure=True, format="json"))
+    assert json.loads(capsys.readouterr().out)["by_failure"][0]["kind"] == "prep_error: boom N"
+    cmd_report(settings, report_args(format="json"))
+    assert "by_failure" not in json.loads(capsys.readouterr().out)

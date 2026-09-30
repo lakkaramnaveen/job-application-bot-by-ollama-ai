@@ -427,6 +427,7 @@ job-bot report --by-score --format json # same data as one JSON object, for a sc
 job-bot report --by-eligibility         # counts by eligibility-gate verdict (pass/flag/fail/not scored)
 job-bot report --by-company             # counts by company, most-applied first
 job-bot report --by-week                # applications sent per week (Mon-Sun, local time), most recent first, by current status
+job-bot report --by-failure             # the failed-applications log grouped by kind of failure (job ids/timeouts normalized), most common first
 job-bot report --by-missing-qualifications # which missing qualifications the LLM scorer flags most often across postings
 job-bot report --by-missing-qualifications --missing-qualifications-limit 10 # only the 10 most common (most distinct phrases only occur once)
 job-bot status <job_id> interviewing    # or: offer, rejected, withdrawn, no_response

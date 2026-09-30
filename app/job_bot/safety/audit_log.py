@@ -136,3 +136,24 @@ class AuditLogger:
             if entry.get("action") == "search_error":
                 return str(entry.get("timestamp", "")) if entry["details"].get("signed_out") is True else None
         return None
+
+    def failure_kinds(self) -> list[dict[str, Any]]:
+        """This log's entries grouped by kind of failure - "{action}:
+        {first line of the error}", with every digit run replaced by "N" so
+        the same failure on different job ids, timeouts, or line/column
+        numbers groups together - most common first (ties alphabetical),
+        each with its count and most recent timestamp. For `job-bot report
+        --by-failure` on the failed-applications log: which failure types
+        actually dominate, without reading hundreds of entries one by one.
+        """
+        kinds: dict[str, dict[str, Any]] = {}
+        for entry in self.read_entries():  # most recent first
+            action = str(entry.get("action", ""))
+            error = str(entry["details"].get("error", "")).strip()
+            first_line = error.splitlines()[0] if error else ""
+            normalized = re.sub(r"\d+", "N", " ".join(first_line.split()))[:120]
+            kind = f"{action}: {normalized}" if normalized else action
+            if kind not in kinds:
+                kinds[kind] = {"kind": kind, "count": 0, "last_seen": str(entry.get("timestamp", ""))}
+            kinds[kind]["count"] += 1
+        return sorted(kinds.values(), key=lambda k: (-k["count"], k["kind"].casefold()))

@@ -1419,6 +1419,18 @@ def _print_weekly_breakdown(tracker: Tracker) -> None:
         print(row + str(sum(counts.values())))
 
 
+def _print_failure_breakdown(settings: Settings) -> None:
+    """Guarded like _print_weekly_breakdown: jobs can be tracked with nothing
+    ever failing, in which case there's no section to print.
+    """
+    kinds = AuditLogger(settings.failed_applications_log_path).failure_kinds()
+    if not kinds:
+        return
+    print("\nFailures by kind (most common first):")
+    for kind in kinds:
+        print(f"  {kind['count']:>4}  last {format_local_timestamp(kind['last_seen'])}  {kind['kind']}")
+
+
 def _missing_qualifications_breakdown(tracker: Tracker, *, limit: int | None = None) -> dict[str, int]:
     """Thin wrapper around Tracker.missing_qualifications_counts() (see its
     own docstring for the exact-string-counting/limit reasoning) - kept
@@ -1471,7 +1483,9 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
     `--by-missing-qualifications` (which specific gaps the LLM scorer keeps
     flagging across postings - see _missing_qualifications_breakdown;
     `--missing-qualifications-limit` caps it to the N most common), and
-    `--by-week` (applications sent per week - see _weekly_breakdown).
+    `--by-week` (applications sent per week - see _weekly_breakdown), and
+    `--by-failure` (the failed-applications log grouped by kind of failure,
+    most common first - see AuditLogger.failure_kinds()).
     `--format json` prints the same data as one
     JSON object instead - for a script or cron job that wants to alert on
     e.g. a growing stale-applications count without scraping the
@@ -1505,6 +1519,8 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
             payload["by_company"] = _company_breakdown(tracker)
         if args.by_week:
             payload["by_week"] = _weekly_breakdown(tracker)
+        if args.by_failure:
+            payload["by_failure"] = AuditLogger(settings.failed_applications_log_path).failure_kinds()
         if args.by_missing_qualifications:
             payload["by_missing_qualifications"] = _missing_qualifications_breakdown(
                 tracker, limit=args.missing_qualifications_limit
@@ -1536,6 +1552,9 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
 
     if args.by_week:
         _print_weekly_breakdown(tracker)
+
+    if args.by_failure:
+        _print_failure_breakdown(settings)
 
     if args.by_missing_qualifications:
         _print_missing_qualifications_breakdown(tracker, limit=args.missing_qualifications_limit)
@@ -2552,6 +2571,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--by-week",
         action="store_true",
         help="Count applications sent per week (local time, most recent first), by current status.",
+    )
+    report_p.add_argument(
+        "--by-failure",
+        action="store_true",
+        help="Group the failed-applications log by kind of failure, most common first.",
     )
     report_p.add_argument(
         "--by-missing-qualifications",
