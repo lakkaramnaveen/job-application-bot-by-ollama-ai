@@ -787,6 +787,38 @@ def test_run_parser_leaves_keywords_and_location_unset_so_env_can_supply_them():
     assert args.keywords is None and args.location is None
 
 
+def _run_plan_output(tmp_path, monkeypatch, capsys, **arg_overrides) -> str:
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    settings = make_settings(tmp_path, llm_provider="ollama", ollama_model="qwen3:30b")
+    cmd_run(settings, make_args(**arg_overrides))
+    out = capsys.readouterr().out
+    # the plan is printed before anything else the run does
+    return out.split("Applied:")[0].split("[dry-run]")[0]
+
+
+def test_run_states_its_plan_before_opening_the_browser(tmp_path, monkeypatch, capsys):
+    """A stale RESUME_PATH, the wrong search terms, or a used-up daily cap
+    each used to surface only as a confusing failure deep into a run."""
+    plan = _run_plan_output(tmp_path, monkeypatch, capsys, keywords="Full Stack Engineer", location="Remote", max_apps=3)
+
+    assert 'Searching LinkedIn for "Full Stack Engineer" in "Remote".' in plan
+    assert "Model: ollama (qwen3:30b)" in plan
+    assert "resume.txt" in plan
+    assert "Applying to up to 3 posting(s) this run" in plan
+
+
+def test_run_plan_says_so_for_a_dry_run(tmp_path, monkeypatch, capsys):
+    assert "Dry run: nothing will be submitted." in _run_plan_output(tmp_path, monkeypatch, capsys, dry_run=True)
+
+
+def test_run_plan_describes_loop_mode_as_running_until_the_cap(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("job_bot.cli.time.sleep", lambda s: (_ for _ in ()).throw(KeyboardInterrupt()))
+    plan = _run_plan_output(tmp_path, monkeypatch, capsys, loop=True, max_apps=2)
+    assert "Loop mode: applying until today's cap is reached" in plan
+
+
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):
     """A fresh install has no blacklist file - that's not corruption."""
     adapter = FakeAdapter(page=None)

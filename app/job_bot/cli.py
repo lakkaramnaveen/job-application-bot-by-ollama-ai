@@ -268,6 +268,8 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     require_w2 = args.require_w2 or settings.require_w2
     include_external = args.include_external_apply or settings.enable_external_apply
 
+    _print_run_plan(settings, args, rate_limiter, min_score)
+
     with browser_session(
         settings.browser_profile_dir, headless=args.headless, cdp_url=settings.browser_cdp_url
     ) as context:
@@ -424,6 +426,35 @@ def _quit_ollama_if_configured(settings: Settings) -> None:
         print("Daily cap reached - quit Ollama.")
     else:
         print("Daily cap reached - could not quit Ollama (it may already be stopped).")
+
+
+def _print_run_plan(settings: Settings, args: argparse.Namespace, rate_limiter: RateLimiter, min_score: int) -> None:
+    """A few lines stating what this run is about to do, before the browser
+    opens - the effective search, model, resume, and how many applications
+    can actually go out. Each of these, when silently wrong, used to surface
+    only as a confusing failure deep into a run (a stale RESUME_PATH, the
+    hardcoded "software engineer" default searched instead of the intended
+    role, a daily cap already used up); stated up front, a wrong value is
+    obvious before anything is searched or submitted.
+    """
+    model = settings.ollama_model if settings.llm_provider == "ollama" else settings.claude_model
+    print(f'Searching LinkedIn for "{args.keywords}" in "{args.location}".')
+    print(f"Model: {settings.llm_provider} ({model}) | Resume: {settings.resume_path}")
+    if args.dry_run:
+        print("Dry run: nothing will be submitted.")
+    else:
+        remaining = rate_limiter.remaining_today()
+        cap = settings.effective_daily_cap()
+        if args.loop:
+            # --max-apps limits each cycle; --loop keeps cycling until the cap.
+            print(f"Loop mode: applying until today's cap is reached ({remaining} of {cap} left today).")
+        else:
+            print(
+                f"Applying to up to {min(args.max_apps, remaining)} posting(s) this run "
+                f"({remaining} of {cap} left today)."
+            )
+    if min_score > 0:
+        print(f"Only applying to postings scored {min_score}+.")
 
 
 def _run_apply_cycle(
