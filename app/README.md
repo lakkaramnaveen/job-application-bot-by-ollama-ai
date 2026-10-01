@@ -68,6 +68,11 @@ links to the section with the full detail:
   Apply form has failed that many times, since every retry regenerates
   the resume and cover letter; unanswered required questions don't count
   toward it. `0` retries forever.
+  To retry one posting yourself (e.g. after a fix), or watch its form with
+  `--dry-run`, run `job-bot run --job-id <id>` - the id is the number in its
+  LinkedIn URL, as shown by `job-bot audit-log --failures`. It must be one a
+  search has already found, skips the search, and ignores
+  `MAX_APPLY_ATTEMPTS`.
 - **Selectors may need tuning.** LinkedIn's page structure isn't public and
   changes over time. If a run stops finding a button/field it used to find,
   check `job_bot/browser/linkedin_adapter.py`'s `SELECTORS` dict first, and use

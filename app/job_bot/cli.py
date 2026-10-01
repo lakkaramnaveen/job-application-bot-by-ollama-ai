@@ -196,6 +196,12 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    if args.loop and getattr(args, "job_id", None):
+        print(
+            "Error: --loop can't be combined with --job-id - --job-id runs the given posting(s) once.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     for warning in settings.validate_ready():
         print(f"Warning: {warning}")
@@ -472,7 +478,10 @@ def _print_run_plan(settings: Settings, args: argparse.Namespace, rate_limiter: 
     obvious before anything is searched or submitted.
     """
     model = settings.ollama_model if settings.llm_provider == "ollama" else settings.claude_model
-    print(f'Searching LinkedIn for "{args.keywords}" in "{args.location}".')
+    if getattr(args, "job_id", None):
+        print(f"Running just the requested posting(s): {', '.join(args.job_id)} (no search).")
+    else:
+        print(f'Searching LinkedIn for "{args.keywords}" in "{args.location}".')
     print(f"Model: {settings.llm_provider} ({model}) | Resume: {settings.resume_path}")
     if args.dry_run:
         print("Dry run: nothing will be submitted.")
@@ -544,37 +553,55 @@ def _run_apply_cycle(
     every 20 minutes until manually interrupted, indistinguishable from a
     normal cycle that just found no eligible postings.
     """
-    try:
-        postings = adapter.search(
-            args.keywords,
-            args.location,
-            max_results=args.search_pool,
-            experience_levels=experience_levels,
-            include_external=include_external,
-        )
-    except Exception as e:  # noqa: BLE001 - a search failure should cost this cycle, not crash the whole run/loop
-        # Real bug this guards against: search() itself (not yet a specific
-        # posting) failing - e.g. LinkedIn briefly rate-limiting/erroring on
-        # the search results page itself after _goto_with_retry()'s own
-        # retries are exhausted - propagated straight out of this function
-        # uncaught. In --loop mode especially, that crashed the entire
-        # unattended run instead of just costing this one cycle, exactly
-        # the failure mode --loop exists to run through unattended over
-        # many hours. Confirmed live before this fix.
-        # signed_out is what doctor and the dashboard key off (AuditLogger.last_search_signed_out_at())
-        # - a structured flag, not a match on the error message's wording.
-        signed_out = isinstance(e, LinkedInSignedOut)
-        audit.log(
-            "search_error", keywords=args.keywords, location=args.location, error=str(e), signed_out=signed_out
-        )
-        failure_log.log(
-            "search_error", keywords=args.keywords, location=args.location, error=str(e), signed_out=signed_out
-        )
-        print(f"Error searching for postings: {e}")
-        # A signed-out session fails every search identically until the
-        # user runs `job-bot login` - fatal the same way a down provider is.
-        return 0, 1, signed_out, False
-    audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
+    requested_ids: list[str] = getattr(args, "job_id", None) or []
+    if requested_ids:
+        # `--job-id`: exactly these previously seen postings, instead of a
+        # search - to retry one that failed (e.g. after a fix) or dry-run
+        # it to watch the form. Only tracked postings: their title, company,
+        # and URL come from the tracker, the same source cmd_run's skip
+        # logic already trusts.
+        postings: list[JobPosting] = []
+        for job_id in requested_ids:
+            job = tracker.get_job(job_id)
+            if job is None:
+                print(f"Job {job_id} isn't in the tracker - `job-bot run` hasn't seen it in a search yet.")
+                continue
+            postings.append(
+                JobPosting(job_id=job_id, title=job["title"], company=job["company"], url=job["url"], description="")
+            )
+        audit.log("requested_jobs", job_ids=requested_ids, found=len(postings))
+    else:
+        try:
+            postings = adapter.search(
+                args.keywords,
+                args.location,
+                max_results=args.search_pool,
+                experience_levels=experience_levels,
+                include_external=include_external,
+            )
+        except Exception as e:  # noqa: BLE001 - a search failure should cost this cycle, not crash the whole run/loop
+            # Real bug this guards against: search() itself (not yet a specific
+            # posting) failing - e.g. LinkedIn briefly rate-limiting/erroring on
+            # the search results page itself after _goto_with_retry()'s own
+            # retries are exhausted - propagated straight out of this function
+            # uncaught. In --loop mode especially, that crashed the entire
+            # unattended run instead of just costing this one cycle, exactly
+            # the failure mode --loop exists to run through unattended over
+            # many hours. Confirmed live before this fix.
+            # signed_out is what doctor and the dashboard key off (AuditLogger.last_search_signed_out_at())
+            # - a structured flag, not a match on the error message's wording.
+            signed_out = isinstance(e, LinkedInSignedOut)
+            audit.log(
+                "search_error", keywords=args.keywords, location=args.location, error=str(e), signed_out=signed_out
+            )
+            failure_log.log(
+                "search_error", keywords=args.keywords, location=args.location, error=str(e), signed_out=signed_out
+            )
+            print(f"Error searching for postings: {e}")
+            # A signed-out session fails every search identically until the
+            # user runs `job-bot login` - fatal the same way a down provider is.
+            return 0, 1, signed_out, False
+        audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
     def should_skip(posting: JobPosting) -> bool:
         """Cheap, deterministic reasons to pass over this posting before
@@ -583,8 +610,14 @@ def _run_apply_cycle(
         so the main loop below handles them directly.
         """
         if tracker.has_applied(posting.job_id):
+            if posting.job_id in requested_ids:
+                print(f"Skipping {posting.title} at {posting.company}: already applied.")
             return True
-        if settings.max_apply_attempts > 0 and tracker.apply_failures(posting.job_id) >= settings.max_apply_attempts:
+        if (
+            settings.max_apply_attempts > 0
+            and posting.job_id not in requested_ids  # an explicit --job-id is a deliberate retry
+            and tracker.apply_failures(posting.job_id) >= settings.max_apply_attempts
+        ):
             audit.log("skip_too_many_failures", job_id=posting.job_id, limit=settings.max_apply_attempts)
             return True
         if blacklist.is_blocked(posting.company):
@@ -2509,6 +2542,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=25,
         help="How many Easy-Apply postings to fetch and score before filtering down to --max-apps.",
+    )
+    run_p.add_argument(
+        "--job-id",
+        action="append",
+        metavar="ID",
+        help="Run just this previously seen posting instead of searching (repeatable) - e.g. to retry "
+        "one that failed, or with --dry-run to watch its form. Ignores MAX_APPLY_ATTEMPTS.",
     )
     run_p.add_argument("--dry-run", action="store_true", help="Stop right before the final Submit click.")
     run_p.add_argument("--headless", action="store_true", help="Run the browser without a visible window.")

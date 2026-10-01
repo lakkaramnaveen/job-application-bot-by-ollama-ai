@@ -218,6 +218,7 @@ def run_args(**overrides):
         loop=False,
         loop_interval_minutes=20,
         include_external_apply=False,
+        job_id=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)

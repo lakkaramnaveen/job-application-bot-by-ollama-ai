@@ -209,6 +209,7 @@ def make_args(**overrides) -> argparse.Namespace:
         loop=False,
         loop_interval_minutes=20,
         include_external_apply=False,
+        job_id=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -2405,3 +2406,57 @@ def test_an_unanswered_required_question_does_not_count_as_a_failed_attempt(tmp_
     cmd_run(settings, make_args())
 
     assert Tracker(settings.db_path).apply_failures(JOB.job_id) == 0
+
+
+class SearchMustNotRunAdapter(StuckFormAdapter):
+    def search(self, *args, **kwargs):
+        raise AssertionError("--job-id must not search")
+
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        self.fill_and_submit_calls.append({"posting": posting, "dry_run": dry_run})
+        return not dry_run
+
+
+def test_job_id_runs_just_that_tracked_posting_without_searching(tmp_path, monkeypatch, capsys):
+    """`job-bot run --job-id ID`: retry/dry-run one posting already seen,
+    e.g. after a fix - even past MAX_APPLY_ATTEMPTS."""
+    adapter = SearchMustNotRunAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    settings = make_settings(tmp_path, max_apply_attempts=1)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("j9", "Platform Engineer", "Acme Corp", "https://example.com/jobs/view/j9/")
+    tracker.upsert_job("other", "Other", "Globex", "https://example.com/jobs/view/other/")
+    tracker.record_apply_failure("j9")  # already at the cap
+
+    cmd_run(settings, make_args(job_id=["j9", "unknown"], dry_run=True))
+
+    assert [c["posting"].job_id for c in adapter.fill_and_submit_calls] == ["j9"]
+    assert adapter.fill_and_submit_calls[0]["posting"].url == "https://example.com/jobs/view/j9/"
+    out = capsys.readouterr().out
+    assert "Job unknown isn't in the tracker" in out
+    assert "Running just the requested posting(s): j9, unknown (no search)." in out
+    assert "Searching LinkedIn" not in out
+
+
+def test_job_id_reports_a_posting_already_applied_to(tmp_path, monkeypatch, capsys):
+    adapter = SearchMustNotRunAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    settings = make_settings(tmp_path)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("j9", "Platform Engineer", "Acme Corp", "https://example.com/jobs/view/j9/")
+    tracker.mark_applied("j9")
+
+    cmd_run(settings, make_args(job_id=["j9"]))
+
+    assert adapter.fill_and_submit_calls == []
+    assert "Skipping Platform Engineer at Acme Corp: already applied." in capsys.readouterr().out
+
+
+def test_job_id_with_loop_is_refused(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        cmd_run(make_settings(tmp_path), make_args(job_id=["j9"], loop=True))
+    assert "--loop can't be combined with --job-id" in capsys.readouterr().err
