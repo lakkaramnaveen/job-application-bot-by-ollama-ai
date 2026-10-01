@@ -813,8 +813,13 @@ class LinkedInAdapter(JobBoardAdapter):
                 continue
             answer = answer_question(label) if label else ""
             if answer:
-                if (text_input.get_attribute("type") or "").casefold() == "number":
+                field_type = (text_input.get_attribute("type") or "").casefold()
+                if field_type == "number":
                     answer = self._numeric_value(answer) or answer
+                elif field_type == "tel":
+                    answer = self._phone_value(answer) or answer
+                elif field_type == "email":
+                    answer = self._email_value(answer) or answer
                 text_input.fill(answer)
 
         for group in dialog.locator("fieldset").all():
@@ -1005,6 +1010,40 @@ class LinkedInAdapter(JobBoardAdapter):
             if not deduped or deduped[-1] != line:
                 deduped.append(line)
         return "\n".join(deduped)
+
+    @staticmethod
+    def _phone_value(answer: str) -> str | None:
+        """Just the phone number from a free-text answer, as digits, for an
+        input[type="tel"] field - or None if the answer contains none.
+
+        Real failure (2026-10-01): the cached FAQ answer for "Mobile phone
+        number*" was a whole contact block - name, phone, email, and city on
+        separate lines - typed verbatim into the tel field. LinkedIn
+        silently refused the step; the bot clicked Next until its step cap
+        and reported "no Next/Review/Submit button found" on 5 of 5
+        postings. Same §3 pattern as _numeric_value(): the cached text
+        isn't shaped for the field it lands in.
+
+        A leading US/Canada "+1" is dropped: the Easy Apply form has its own
+        "Phone country code" select, and the field wants the national
+        number. Other countries' digits are kept as written.
+        """
+        for match in re.finditer(r"\+?\d[\d\s().-]{5,}\d", answer):
+            digits = re.sub(r"\D", "", match.group())
+            if 7 <= len(digits) <= 15:
+                if len(digits) == 11 and digits.startswith("1"):
+                    digits = digits[1:]
+                return digits
+        return None
+
+    @staticmethod
+    def _email_value(answer: str) -> str | None:
+        """Just the email address from a free-text answer, for an
+        input[type="email"] field - or None if there isn't one. Same reason
+        as _phone_value(): a cached contact-block answer typed whole into an
+        email field fails validation."""
+        match = re.search(r"[\w.+-]+@[\w-]+(\.[\w-]+)+", answer)
+        return match.group() if match else None
 
     @staticmethod
     def _numeric_value(answer: str) -> str | None:

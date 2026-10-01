@@ -194,6 +194,47 @@ def test_fill_and_submit_works_with_linkedins_native_dialog_modal(playwright_pag
     assert playwright_page.locator("#phone-country").input_value() == "us"
 
 
+def test_a_contact_block_answer_fills_only_the_phone_number_into_a_tel_field(playwright_page):
+    """Real failure (2026-10-01, 5 of 5 postings): the cached answer for
+    "Mobile phone number*" was a whole contact block (name, phone, email,
+    city) typed verbatim into the tel field; LinkedIn refused the step and
+    the run ended "stuck". Only the national digits may go in."""
+    posting = JobPosting(
+        job_id="1", title="X", company="Acme", url=f"file://{NATIVE_DIALOG_FIXTURE_PATH}", description=""
+    )
+    block = "Jane Doe\n+1 314 555 0100\njane.doe@example.com\nSt Louis, MO"
+
+    def answers(label: str) -> str:
+        return block if "mobile phone" in label.casefold() else _answers(label)
+
+    submitted = LinkedInAdapter(playwright_page).fill_and_submit(
+        posting, answer_question=answers, resume_path=None, cover_letter_text=None, dry_run=True
+    )
+
+    assert submitted is False  # reached the final step (dry run)
+    assert playwright_page.locator("#mobile").input_value() == "3145550100"
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ("Jane Doe\n+1 314 555 0100\njane@example.com", "3145550100"),
+        ("(314) 555-0100", "3145550100"),
+        ("314.555.0100", "3145550100"),
+        ("+44 20 7946 0958", "442079460958"),
+        ("I'd rather not say", None),
+        ("5 years", None),
+    ],
+)
+def test_phone_value(answer, expected):
+    assert LinkedInAdapter._phone_value(answer) == expected
+
+
+def test_email_value():
+    assert LinkedInAdapter._email_value("Jane Doe\n+1 314 555 0100\njane.doe@example.com\nSt Louis") == "jane.doe@example.com"
+    assert LinkedInAdapter._email_value("no address here") is None
+
+
 def test_an_unanswerable_required_tel_field_is_reported_not_skipped(playwright_page):
     """A required tel input the bot can't answer must surface as an
     unanswered required question (recorded for review-answers), not be
