@@ -101,6 +101,23 @@ SUBMIT_BUTTON_SELECTORS = (
     'button:has-text("Submit")',
 )
 
+# See LinkedInAdapter._field_errors().
+_FIELD_ERRORS_JS = """(dialog) => {
+  const counter = /\\d+\\s*\\/\\s*\\d+|\\d+ of \\d+ characters/gi;
+  const out = [];
+  for (const el of dialog.querySelectorAll('input:not([type=hidden]), select, textarea')) {
+    const ids = (el.getAttribute('aria-describedby') || '').split(/\\s+/).filter(Boolean);
+    const lines = ids
+      .map(id => (document.getElementById(id) || {}).innerText || '')
+      .join('\\n').split('\\n').map(t => t.replace(counter, '').trim()).filter(Boolean);
+    if (!lines.length && el.getAttribute('aria-invalid') === 'true') lines.push('invalid');
+    if (!lines.length) continue;
+    const label = ((el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.name || el.id || '?').trim();
+    out.push(label.slice(0, 80) + ': ' + Array.from(new Set(lines)).join(' / ').slice(0, 120));
+  }
+  return out;
+}"""
+
 # Small, human-scale pauses between UI actions - not an attempt to evade
 # detection, just to let LinkedIn's client-side rendering keep up so we don't
 # race the DOM. Real users don't click at machine speed either.
@@ -639,9 +656,11 @@ class LinkedInAdapter(JobBoardAdapter):
         # adapter doesn't fill at all).
         visible_button_texts = [t.strip() for t in dialog.locator("button:visible").all_inner_texts()]
         buttons_seen = ", ".join(repr(t) for t in visible_button_texts if t) or "none"
+        field_errors = self._field_errors(dialog)
+        rejected = f" Fields LinkedIn rejected: {'; '.join(field_errors)}." if field_errors else ""
         raise RuntimeError(
             f"Could not complete the Easy Apply form for job {posting.job_id} (stuck on a step with "
-            f"no Next/Review/Submit button found - buttons visible on this step: {buttons_seen})."
+            f"no Next/Review/Submit button found - buttons visible on this step: {buttons_seen}).{rejected}"
         )
 
     def _raise_if_unanswered_required_field(self, dialog: Locator, posting: JobPosting) -> None:
@@ -1010,6 +1029,27 @@ class LinkedInAdapter(JobBoardAdapter):
             if not deduped or deduped[-1] != line:
                 deduped.append(line)
         return "\n".join(deduped)
+
+    @staticmethod
+    def _field_errors(dialog: Locator) -> list[str]:
+        """'label: message' for each field on this step showing a validation
+        error, e.g. "How many years of work experience do you have with
+        Java?: Invalid input" - for the stuck error above.
+
+        Both of 2026-10-01's stuck-form bugs (a contact block in the phone
+        field, "5+ years" in a years field) logged only "buttons visible:
+        'Next'" / "'Back', 'Review'", and each took a live browser probe to
+        explain - though LinkedIn was showing the cause on screen the whole
+        time. Its message is in the text the field's aria-describedby points
+        at, next to a character counter ("0/20", "0 of 20 characters"),
+        which is dropped here; aria-invalid="true" counts too. Best effort:
+        a failure here only loses the extra detail.
+        """
+        try:
+            found = dialog.evaluate(_FIELD_ERRORS_JS)
+        except PlaywrightError:
+            return []
+        return [str(item) for item in found][:5]
 
     @staticmethod
     def _asks_for_a_number(label: str) -> bool:

@@ -27,6 +27,7 @@ from job_bot.browser.linkedin_adapter import (
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
 NATIVE_DIALOG_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_native_dialog.html"
+REJECTED_FIELD_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_rejected_field.html"
 REDESIGNED_JOB_VIEW_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "job_view_redesigned.html"
 LINK_ENTRY_POINT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_link_entry_point.html"
 SEARCH_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results.html"
@@ -729,6 +730,34 @@ def test_stuck_error_names_the_buttons_that_were_actually_on_screen(playwright_p
             cover_letter_text=None,
             dry_run=True,
         )
+
+
+def test_stuck_error_names_the_field_linkedin_rejected_and_why(playwright_page, monkeypatch):
+    """Both of 2026-10-01's stuck-form bugs logged only the visible buttons
+    and needed a live probe to explain, though LinkedIn showed the cause
+    under the field ("Invalid input"). The error now carries it; character
+    counters ("0/20") and fields without an error are left out."""
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.ACTION_DELAY_SECONDS", 0)
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{REJECTED_FIELD_FIXTURE_PATH}", description=""
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        LinkedInAdapter(playwright_page).fill_and_submit(
+            posting,
+            answer_question=lambda label: "about a decade" if "years" in label.casefold() else "Springfield",
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
+
+    message = str(excinfo.value)
+    assert "'Back', 'Review'" in message
+    assert (
+        "Fields LinkedIn rejected: How many years of work experience do you have with Java?: Invalid input."
+        in message
+    )
+    assert "City" not in message and "0/20" not in message
 
 
 def test_unanswered_required_radio_group_fails_fast_with_a_specific_message(playwright_page):

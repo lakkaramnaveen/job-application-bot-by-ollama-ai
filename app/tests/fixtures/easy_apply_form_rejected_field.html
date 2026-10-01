@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: a step LinkedIn refuses to leave</title></head>
+<body>
+  <!-- Modeled on a live form (2026-10-01): the years field is a plain text
+       input with a character counter, validated as a whole number when
+       Review is clicked. An invalid value adds "Invalid input" to the
+       field's aria-describedby text and the step stays put. -->
+  <button aria-label="Easy Apply to this job" onclick="document.getElementById('apply').showModal()">Easy Apply</button>
+
+  <dialog id="apply">
+    <h2>Apply to Acme</h2>
+    <label for="years-java">How many years of work experience do you have with Java?</label>
+    <input id="years-java" type="text" aria-describedby="years-java-error years-java-counter" />
+    <div id="years-java-error"></div>
+    <div id="years-java-counter">0/20<span> 0 of 20 characters</span></div>
+
+    <label for="city">City</label>
+    <input id="city" type="text" aria-describedby="city-counter" />
+    <div id="city-counter">0/20</div>
+
+    <button aria-label="Back">Back</button>
+    <button aria-label="Review your application"
+            onclick="document.getElementById('years-java-error').textContent =
+                     /^\d+$/.test(document.getElementById('years-java').value) ? '' : 'Invalid input'">Review</button>
+  </dialog>
+</body>
+</html>
