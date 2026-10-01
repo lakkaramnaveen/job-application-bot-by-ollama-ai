@@ -2353,3 +2353,55 @@ def test_run_feeds_past_qa_answers_into_the_next_question(tmp_path, monkeypatch)
     prompt = provider.application_answer_prompts[0]
     assert "Willing to relocate?" in prompt
     assert "No" in prompt
+
+
+class StuckFormAdapter(FakeAdapter):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        self.fill_and_submit_calls.append({"posting": posting})
+        raise RuntimeError("Could not complete the Easy Apply form (stuck on a step)")
+
+
+def test_a_posting_that_keeps_failing_is_dropped_after_max_apply_attempts(tmp_path, monkeypatch, capsys):
+    """Real logs: some postings failed the same way 9 times, each retry
+    regenerating the resume and cover letter. After MAX_APPLY_ATTEMPTS
+    failures the posting is skipped before any LLM call."""
+    provider = FakeProvider()
+    adapter = StuckFormAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    settings = make_settings(tmp_path, max_apply_attempts=2)
+
+    for _ in range(4):
+        cmd_run(settings, make_args())
+
+    assert len(adapter.fill_and_submit_calls) == 2
+    assert Tracker(settings.db_path).apply_failures(JOB.job_id) == 2
+    assert "Giving up on this posting after 2 failed attempts (MAX_APPLY_ATTEMPTS=2)." in capsys.readouterr().out
+
+
+def test_max_apply_attempts_zero_retries_forever(tmp_path, monkeypatch):
+    adapter = StuckFormAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    settings = make_settings(tmp_path, max_apply_attempts=0)
+
+    for _ in range(4):
+        cmd_run(settings, make_args())
+
+    assert len(adapter.fill_and_submit_calls) == 4
+
+
+def test_an_unanswered_required_question_does_not_count_as_a_failed_attempt(tmp_path, monkeypatch):
+    """Its fix is answering the question via `job-bot review-answers` - the
+    posting must still be retried after that, however many times it hit it."""
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", UnanswerableAdapter)
+    settings = make_settings(tmp_path, max_apply_attempts=1)
+
+    cmd_run(settings, make_args())
+    cmd_run(settings, make_args())
+
+    assert Tracker(settings.db_path).apply_failures(JOB.job_id) == 0

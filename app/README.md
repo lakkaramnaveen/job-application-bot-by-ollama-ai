@@ -64,6 +64,10 @@ links to the section with the full detail:
   stops a run from sending several roles to the same employer or recruiter;
   it counts every application ever sent there, and `0` (the default) means
   no limit.
+  `MAX_APPLY_ATTEMPTS` (default `3`) stops retrying a posting whose Easy
+  Apply form has failed that many times, since every retry regenerates
+  the resume and cover letter; unanswered required questions don't count
+  toward it. `0` retries forever.
 - **Selectors may need tuning.** LinkedIn's page structure isn't public and
   changes over time. If a run stops finding a button/field it used to find,
   check `job_bot/browser/linkedin_adapter.py`'s `SELECTORS` dict first, and use

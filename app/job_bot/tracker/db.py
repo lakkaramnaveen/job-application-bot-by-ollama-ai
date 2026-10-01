@@ -190,6 +190,8 @@ class Tracker:
                 conn.execute("ALTER TABLE jobs ADD COLUMN eligibility_note TEXT")
             if "missing_qualifications" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN missing_qualifications TEXT")
+            if "apply_failures" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN apply_failures INTEGER NOT NULL DEFAULT 0")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS qa_history (
@@ -334,6 +336,21 @@ class Tracker:
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"No tracked job with id {job_id!r}")
+
+    def record_apply_failure(self, job_id: str) -> int:
+        """Counts one more failed Easy Apply attempt for `job_id` and returns
+        the new total (0 if the job isn't tracked). Backs MAX_APPLY_ATTEMPTS.
+        """
+        with self._transaction() as conn:
+            conn.execute("UPDATE jobs SET apply_failures = apply_failures + 1 WHERE job_id = ?", (job_id,))
+            row = conn.execute("SELECT apply_failures FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+        return int(row[0]) if row else 0
+
+    def apply_failures(self, job_id: str) -> int:
+        """Failed Easy Apply attempts recorded for `job_id` (0 if untracked)."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT apply_failures FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+        return int(row[0]) if row else 0
 
     def mark_skipped(self, job_id: str) -> None:
         self.update_status(job_id, "skipped")

@@ -584,6 +584,9 @@ def _run_apply_cycle(
         """
         if tracker.has_applied(posting.job_id):
             return True
+        if settings.max_apply_attempts > 0 and tracker.apply_failures(posting.job_id) >= settings.max_apply_attempts:
+            audit.log("skip_too_many_failures", job_id=posting.job_id, limit=settings.max_apply_attempts)
+            return True
         if blacklist.is_blocked(posting.company):
             audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
             return True
@@ -902,6 +905,13 @@ def _run_apply_cycle(
                     )
                 except CorruptDataFile as gap_error:
                     print(f"Warning: unanswered question not recorded - {gap_error}")
+            if not isinstance(e, UnansweredRequiredQuestion):
+                attempts = tracker.record_apply_failure(posting.job_id)
+                if settings.max_apply_attempts > 0 and attempts >= settings.max_apply_attempts:
+                    print(
+                        f"  Giving up on this posting after {attempts} failed attempts "
+                        f"(MAX_APPLY_ATTEMPTS={settings.max_apply_attempts})."
+                    )
             audit.log("apply_error", job_id=posting.job_id, error=str(e))
             failure_log.log(
                 "apply_error",

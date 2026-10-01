@@ -1191,3 +1191,32 @@ def test_applications_at_company_counts_only_applied_jobs_matched_case_insensiti
 
     assert tracker.applications_at_company("ACME CORP") == 2
     assert tracker.applications_at_company("Initech") == 0
+
+
+def test_apply_failures_count_up_per_job_and_survive_reopening(tmp_path):
+    db = tmp_path / "t.sqlite3"
+    tracker = Tracker(db)
+    tracker.upsert_job("j1", "Engineer", "Acme", "https://example.com/1")
+
+    assert tracker.apply_failures("j1") == 0
+    assert tracker.record_apply_failure("j1") == 1
+    assert tracker.record_apply_failure("j1") == 2
+    assert Tracker(db).apply_failures("j1") == 2
+    assert tracker.record_apply_failure("untracked") == 0
+    assert tracker.apply_failures("untracked") == 0
+
+
+def test_an_existing_database_gains_the_apply_failures_column(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE jobs (job_id TEXT PRIMARY KEY, title TEXT NOT NULL, company TEXT NOT NULL, url TEXT NOT NULL, "
+        "match_score INTEGER, status TEXT NOT NULL DEFAULT 'seen', first_seen_at TEXT NOT NULL, applied_at TEXT)"
+    )
+    conn.execute("INSERT INTO jobs (job_id, title, company, url, first_seen_at) VALUES ('j1','E','A','u','2026-01-01')")
+    conn.commit()
+    conn.close()
+
+    assert Tracker(db).apply_failures("j1") == 0

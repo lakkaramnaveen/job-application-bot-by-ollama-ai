@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # run sending several roles to one employer or recruiter in a row.
     # 0 (default) means no limit.
     max_applications_per_company: int = 0
+    # A posting whose Easy Apply form has failed this many times is no
+    # longer retried by `job-bot run` - each retry regenerates a tailored
+    # resume and cover letter and drives the whole form again, and in real
+    # logs some postings failed the same way 9 times. Required questions the
+    # bot couldn't answer don't count (answering them via `job-bot
+    # review-answers` is their fix). 0 means retry forever.
+    max_apply_attempts: int = 3
     require_confirm_before_submit: bool = True
     # `job-bot report`'s default for how long an application can sit in
     # "applied" with no reply before it's worth a manual follow-up nudge.
