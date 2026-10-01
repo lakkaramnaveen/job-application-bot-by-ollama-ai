@@ -100,6 +100,44 @@ def _repair_truncated_json_string(content: str) -> str | None:
     return trimmed + '"}'
 
 
+class _MalformedStream(ValueError):
+    """A 200 response whose chunks don't have Ollama's chat shape - retried
+    like any other bad completion."""
+
+
+def _read_chat_stream(resp: httpx.Response) -> tuple[str, str | None]:
+    """Accumulates a streamed /api/chat response: (content, error).
+
+    Real failure this exists for (2026-09-30, Ollama 0.34): when qwen3:30b
+    falls into the trailing-padding loop docs/qwen_notes.md §2 describes,
+    Ollama now aborts the generation itself - "prediction aborted, token
+    repeat limit reached" - and a non-streamed request gets only that HTTP
+    500, with none of the content. 7 of 25 postings in one live run failed
+    this way, every retry identically. Streamed, the complete letter
+    arrives first, followed by the padding and then a final {"error": ...}
+    chunk, so _repair_truncated_json_string() gets to trim the padding and
+    close the JSON exactly as it was built to (confirmed live on two
+    postings that failed every time non-streamed).
+
+    Every chunk must carry either message.content or an error; anything
+    else raises _MalformedStream (an API change, or a garbled body).
+    """
+    parts: list[str] = []
+    error: str | None = None
+    for line in resp.iter_lines():
+        if not line.strip():
+            continue
+        try:
+            chunk = json.loads(line)
+            if "error" in chunk:
+                error = str(chunk["error"])
+                continue
+            parts.append(chunk["message"]["content"])
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            raise _MalformedStream(f"Unexpected Ollama response chunk: {line[:200]!r}") from e
+    return "".join(parts), error
+
+
 class OllamaProviderError(RuntimeError):
     """Raised when the local Ollama server is unreachable or returns bad output."""
 
@@ -130,7 +168,10 @@ class OllamaProvider(LLMProvider):
                 {"role": "user", "content": prompt},
             ],
             "format": schema.model_json_schema(),
-            "stream": False,
+            # Streamed so that a generation Ollama aborts midway still
+            # yields the text produced before the abort - see
+            # _read_chat_stream().
+            "stream": True,
             "options": {"temperature": 0.2},
             # We only ever want the structured answer, never a reasoning
             # trace - on a thinking model (e.g. qwen3) this skips the hidden
@@ -142,11 +183,18 @@ class OllamaProvider(LLMProvider):
         last_error: Exception | None = None
         for _ in range(MAX_GENERATION_ATTEMPTS):
             try:
-                resp = httpx.post(
-                    f"{self._base_url}/api/chat",
-                    json=payload,
-                    timeout=DEFAULT_TIMEOUT,
-                )
+                with httpx.stream(
+                    "POST", f"{self._base_url}/api/chat", json=payload, timeout=DEFAULT_TIMEOUT
+                ) as resp:
+                    if resp.status_code == 404:
+                        raise OllamaProviderError(
+                            f"Model '{self._model}' is not pulled. Run `ollama pull {self._model}`."
+                        )
+                    if resp.status_code != 200:
+                        resp.read()
+                        last_error = OllamaProviderError(f"Ollama returned HTTP {resp.status_code}: {resp.text}")
+                        continue
+                    content, stream_error = _read_chat_stream(resp)
             except httpx.ConnectError as e:
                 raise OllamaProviderError(
                     f"Could not reach Ollama at {self._base_url}. Is it running? "
@@ -155,19 +203,7 @@ class OllamaProvider(LLMProvider):
             except httpx.TimeoutException as e:
                 last_error = e
                 continue
-
-            if resp.status_code == 404:
-                raise OllamaProviderError(
-                    f"Model '{self._model}' is not pulled. Run `ollama pull {self._model}`."
-                )
-            if resp.status_code != 200:
-                last_error = OllamaProviderError(f"Ollama returned HTTP {resp.status_code}: {resp.text}")
-                continue
-
-            try:
-                body = resp.json()
-                content = body["message"]["content"]
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
+            except _MalformedStream as e:
                 last_error = e
                 continue
 
@@ -180,7 +216,7 @@ class OllamaProvider(LLMProvider):
                         return schema.model_validate_json(repaired)
                     except (ValidationError, ValueError):
                         pass
-                last_error = e
+                last_error = OllamaProviderError(f"Ollama aborted generation: {stream_error}") if stream_error else e
                 continue
 
         raise OllamaProviderError(

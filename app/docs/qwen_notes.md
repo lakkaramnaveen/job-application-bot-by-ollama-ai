@@ -99,6 +99,15 @@ output-length-limit issue - it reproduces identically across settings.
   still leaves that quote unescaped) - a naive "one preceding character"
   regex gets this wrong; see `_count_unescaped_quotes()`.
 
+**Ollama 0.34+ aborts the padding loop itself.** Newer Ollama detects the
+repetition and stops generation with `prediction aborted, token repeat limit
+reached`. A non-streamed request then gets only that HTTP 500 - none of the
+content - so the repair above never ran, and every retry failed identically
+(7 of 25 postings in a live run on 2026-09-30). `generate_structured()` now
+streams (`_read_chat_stream()`): the finished letter arrives before the final
+`{"error": ...}` chunk, and the same repair closes it. Confirmed live: two
+postings that failed every time non-streamed now succeed every time.
+
 A plain, unconditional retry (up to `MAX_GENERATION_ATTEMPTS = 3`) also
 helps independently for any other truncated/malformed response shape - a
 `ConnectError` (Ollama unreachable) or a 404 (model not pulled) are the

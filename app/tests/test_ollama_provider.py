@@ -1,3 +1,4 @@
+import json
 import subprocess
 
 import httpx
@@ -372,3 +373,57 @@ def test_repair_producing_still_invalid_json_falls_through_to_a_normal_retry():
         provider.generate_structured(system="sys", prompt="prompt", schema=JobMatchScore)
 
     assert route.call_count == 3
+
+
+def _ndjson(*chunks: dict) -> str:
+    return "".join(json.dumps(c) + "\n" for c in chunks)
+
+
+@respx.mock
+def test_a_streamed_generation_ollama_aborts_for_repetition_is_repaired():
+    """Ollama 0.34 aborts qwen3:30b's trailing-padding loop with "prediction
+    aborted, token repeat limit reached" - non-streamed that's a bare HTTP
+    500 with no content (7 of 25 postings in a live run). Streamed, the
+    finished letter arrives first; the existing truncation repair must turn
+    it into a valid CoverLetter instead of failing the posting.
+    """
+    provider = make_provider()
+    body = _ndjson(
+        {"message": {"role": "assistant", "content": '{"body": "Dear Hiring Manager, '}},
+        {"message": {"role": "assistant", "content": "I would love to join Acme." + "\\n" * 40}},
+        {"error": "prediction aborted, token repeat limit reached"},
+    )
+    route = respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(200, text=body))
+
+    letter = provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
+
+    assert letter.body == "Dear Hiring Manager, I would love to join Acme."
+    assert route.call_count == 1
+    assert json.loads(route.calls[0].request.content)["stream"] is True
+
+
+@respx.mock
+def test_an_unrepairable_aborted_stream_reports_the_abort_reason():
+    provider = make_provider()
+    body = _ndjson(
+        {"message": {"role": "assistant", "content": '{"body": "Dear'}},  # cut off mid-word, no padding
+        {"error": "prediction aborted, token repeat limit reached"},
+    )
+    route = respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(200, text=body))
+
+    with pytest.raises(OllamaProviderError, match="token repeat limit reached"):
+        provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
+    assert route.call_count == 3  # retried, like any other bad completion
+
+
+@respx.mock
+def test_a_normal_multi_chunk_stream_is_joined():
+    provider = make_provider()
+    body = _ndjson(
+        {"message": {"role": "assistant", "content": '{"body": "Dear Hiring'}},
+        {"message": {"role": "assistant", "content": ' Manager."}'}},
+        {"message": {"role": "assistant", "content": ""}, "done": True},
+    )
+    respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(200, text=body))
+
+    assert provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter).body == "Dear Hiring Manager."
