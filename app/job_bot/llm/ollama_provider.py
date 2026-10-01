@@ -22,6 +22,28 @@ DEFAULT_TIMEOUT = 120.0
 MAX_OUTPUT_TOKENS = 4096
 MAX_GENERATION_SECONDS = 240.0
 
+# Context window requested per call (num_ctx). Ollama reserves KV-cache
+# memory for the whole window up front: on qwen3:30b (48 layers x 4 KV heads
+# x 128 dims x 2 x fp16) that's ~98 KB per token, so its 32,768 default cost
+# ~3.2 GB of RAM. Measured on real data, the largest prompt is now ~5k tokens
+# (resume tailoring), plus up to MAX_OUTPUT_TOKENS of output - 12,288 fits
+# that at ~1.2 GB. _context_window() grows it for an unusually large prompt
+# rather than let Ollama silently truncate the input.
+CONTEXT_TOKENS = 12288
+_CONTEXT_STEP = 4096
+# Deliberately pessimistic chars-per-token estimate (English averages ~4), so
+# a prompt is never underestimated into a window it overflows.
+_CHARS_PER_TOKEN_ESTIMATE = 3
+
+
+def _context_window(system: str, prompt: str) -> int:
+    """num_ctx for a request: CONTEXT_TOKENS, or the next multiple of
+    _CONTEXT_STEP that fits a larger prompt plus MAX_OUTPUT_TOKENS."""
+    needed = (len(system) + len(prompt)) // _CHARS_PER_TOKEN_ESTIMATE + MAX_OUTPUT_TOKENS
+    if needed <= CONTEXT_TOKENS:
+        return CONTEXT_TOKENS
+    return -(-needed // _CONTEXT_STEP) * _CONTEXT_STEP
+
 # A local model occasionally emits truncated/malformed JSON for no
 # structural reason (seen live: qwen3:30b cutting a CoverLetter response off
 # mid-string at ~1800 chars, well under any context/output limit) - a bare
@@ -192,7 +214,11 @@ class OllamaProvider(LLMProvider):
             # yields the text produced before the abort - see
             # _read_chat_stream().
             "stream": True,
-            "options": {"temperature": 0.2, "num_predict": MAX_OUTPUT_TOKENS},
+            "options": {
+                "temperature": 0.2,
+                "num_predict": MAX_OUTPUT_TOKENS,
+                "num_ctx": _context_window(system, prompt),
+            },
             # We only ever want the structured answer, never a reasoning
             # trace - on a thinking model (e.g. qwen3) this skips the hidden
             # <think> pass entirely, which is most of the latency. Ollama

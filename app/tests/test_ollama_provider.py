@@ -6,9 +6,11 @@ import pytest
 import respx
 
 from job_bot.llm.ollama_provider import (
+    CONTEXT_TOKENS,
     MAX_OUTPUT_TOKENS,
     OllamaProvider,
     OllamaProviderError,
+    _context_window,
     _repair_truncated_json_string,
     quit_ollama,
 )
@@ -481,3 +483,24 @@ def test_an_unrepairable_timed_out_stream_reports_the_deadline(monkeypatch):
 
     with pytest.raises(OllamaProviderError, match="exceeded"):
         make_provider().generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
+
+
+@respx.mock
+def test_requests_a_right_sized_context_window():
+    """Ollama reserves KV-cache memory for the whole num_ctx up front - its
+    32k default cost ~3.2 GB on qwen3:30b; real prompts need far less."""
+    route = respx.post(f"{BASE_URL}/api/chat").mock(
+        return_value=httpx.Response(200, text=_ndjson({"message": {"content": '{"body": "Hi."}'}}))
+    )
+    make_provider().generate_structured(system="sys", prompt="a normal prompt", schema=CoverLetter)
+    assert json.loads(route.calls[0].request.content)["options"]["num_ctx"] == CONTEXT_TOKENS
+
+
+def test_context_window_grows_for_a_large_prompt_instead_of_truncating_it():
+    """Ollama silently drops the start of a prompt that overflows num_ctx -
+    a large prompt must get a bigger window, in whole steps."""
+    big_prompt = "x" * 60_000  # ~20k tokens at the conservative estimate
+    window = _context_window("sys", big_prompt)
+    assert window > CONTEXT_TOKENS
+    assert window % 4096 == 0
+    assert window >= len(big_prompt) // 3 + MAX_OUTPUT_TOKENS
