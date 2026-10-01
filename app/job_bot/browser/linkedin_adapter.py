@@ -814,7 +814,7 @@ class LinkedInAdapter(JobBoardAdapter):
             answer = answer_question(label) if label else ""
             if answer:
                 field_type = (text_input.get_attribute("type") or "").casefold()
-                if field_type == "number":
+                if field_type == "number" or self._asks_for_a_number(label):
                     answer = self._numeric_value(answer) or answer
                 elif field_type == "tel":
                     answer = self._phone_value(answer) or answer
@@ -1010,6 +1010,26 @@ class LinkedInAdapter(JobBoardAdapter):
             if not deduped or deduped[-1] != line:
                 deduped.append(line)
         return "\n".join(deduped)
+
+    @staticmethod
+    def _asks_for_a_number(label: str) -> bool:
+        """True for a question whose answer LinkedIn validates as a bare
+        number even though the field is a plain input[type=text] - "How
+        many years of work experience do you have with Java?" and the like.
+
+        Real failure (2026-10-01, 5 of 5 postings in one cycle): the model
+        answered such a field "5+ years" (as qwen does - see
+        _numeric_value()), LinkedIn showed "Invalid input" under it and
+        refused to leave the step, and the bot clicked Review until its step
+        cap ("stuck ... buttons visible on this step: 'Back', 'Review'").
+        Confirmed on a live form: "5+ years" is rejected; "5" goes straight
+        to "Submit application". _numeric_value() was only applied to
+        input[type=number], which LinkedIn doesn't use for these.
+        """
+        return bool(
+            re.match(r"\s*how many\b", label, re.IGNORECASE)
+            or re.search(r"\byears of\b.*\bexperience\b", label, re.IGNORECASE)
+        )
 
     @staticmethod
     def _phone_value(answer: str) -> str | None:

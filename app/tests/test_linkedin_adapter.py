@@ -230,6 +230,40 @@ def test_phone_value(answer, expected):
     assert LinkedInAdapter._phone_value(answer) == expected
 
 
+def test_a_years_answer_with_a_qualifier_fills_just_the_number_into_a_text_field(playwright_page):
+    """Real failure (2026-10-01, 5 of 5 postings): "5+ years" typed into
+    LinkedIn's plain-text years-of-experience field shows "Invalid input"
+    and the step never advances; "5" goes through."""
+    posting = JobPosting(
+        job_id="1", title="X", company="Acme", url=f"file://{NATIVE_DIALOG_FIXTURE_PATH}", description=""
+    )
+
+    def answers(label: str) -> str:
+        return "5+ years" if "years" in label.casefold() else _answers(label)
+
+    LinkedInAdapter(playwright_page).fill_and_submit(
+        posting, answer_question=answers, resume_path=None, cover_letter_text=None, dry_run=True
+    )
+
+    assert playwright_page.locator("#years-python").input_value() == "5"
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("How many years of work experience do you have with Java?", True),
+        ("how many years of experience do you have with React?*", True),
+        ("How many direct reports have you managed?", True),
+        ("What is your desired salary?", False),
+        ("Describe how many projects you led", False),
+        ("Years of Python experience", True),
+        ("City", False),
+    ],
+)
+def test_asks_for_a_number(label, expected):
+    assert LinkedInAdapter._asks_for_a_number(label) is expected
+
+
 def test_email_value():
     assert LinkedInAdapter._email_value("Jane Doe\n+1 314 555 0100\njane.doe@example.com\nSt Louis") == "jane.doe@example.com"
     assert LinkedInAdapter._email_value("no address here") is None
