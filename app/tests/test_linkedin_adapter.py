@@ -27,6 +27,7 @@ from job_bot.browser.linkedin_adapter import (
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
 NATIVE_DIALOG_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_native_dialog.html"
+REDESIGNED_JOB_VIEW_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "job_view_redesigned.html"
 LINK_ENTRY_POINT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_link_entry_point.html"
 SEARCH_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results.html"
 VERIFIED_BADGE_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_verified_badge.html"
@@ -132,6 +133,33 @@ def test_goto_with_retry_raises_after_exhausting_retries_on_a_generic_playwright
     with pytest.raises(NavigationFailed, match="Failed to load") as exc_info:
         adapter._goto_with_retry("https://example.com/never-loads")
     assert isinstance(exc_info.value, RuntimeError)
+
+
+def test_load_description_reads_the_redesigned_job_page_and_expands_more(playwright_page, monkeypatch):
+    """Real breakage (2026-09-30): LinkedIn's redesign randomized every class
+    name, so the old div[class*="description"] matched nothing and every
+    posting was scored and written to from an EMPTY description - likely
+    also behind that run's Ollama "token repeat limit" aborts (a cover
+    letter with nothing to say degenerates into padding). Must read the
+    text under "About the job", expanded past "… more", without the heading
+    or the separate "About the company" section.
+    """
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(
+        playwright_page, "goto", lambda url, **kw: real_goto(f"file://{REDESIGNED_JOB_VIEW_FIXTURE_PATH}")
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    text = adapter.load_description(
+        JobPosting(job_id="1", title="X", company="Acme", url="https://www.linkedin.com/jobs/view/1/", description="")
+    )
+
+    assert "Platform Engineer to build our ledger" in text
+    assert "Benefits include medical insurance" in text  # only visible after expanding "… more"
+    assert not text.startswith("About the job")
+    # ends on the description itself - not the "… more"/"Show less" control
+    assert text.splitlines()[-1].strip() == "Benefits include medical insurance and a 401(k)."
+    assert "Acme builds finance software" not in text  # a different section
 
 
 def _answers(label: str) -> str:

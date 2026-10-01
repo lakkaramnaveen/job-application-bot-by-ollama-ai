@@ -191,6 +191,40 @@ _TEXT_FIELD_SELECTOR = (
 )
 
 
+# Both find the same container: the nearest ancestor of the exact "About
+# the job" heading whose text is longer than the heading alone (on the live
+# page the heading has its own small wrapper first).
+_ABOUT_THE_JOB_CONTAINER_JS = """
+  const heading = Array.from(document.querySelectorAll('h1,h2,h3'))
+    .find(h => h.innerText.trim().toLowerCase() === 'about the job');
+  let box = heading ? heading.parentElement : null;
+  while (box && box.innerText.trim().length <= heading.innerText.trim().length + 20) box = box.parentElement;
+"""
+_EXPAND_ABOUT_THE_JOB_JS = (
+    "() => {" + _ABOUT_THE_JOB_CONTAINER_JS + """
+  if (!box) return false;
+  const more = Array.from(box.querySelectorAll('button')).find(b => {
+    const t = b.innerText.trim().toLowerCase();
+    return t.endsWith('more') && t.length <= 12;
+  });
+  if (!more) return false;
+  more.click();
+  return true;
+}"""
+)
+_READ_ABOUT_THE_JOB_JS = (
+    "() => {" + _ABOUT_THE_JOB_CONTAINER_JS + """
+  if (!box) return '';
+  let text = box.innerText.trim();
+  if (text.toLowerCase().startsWith('about the job')) text = text.slice('about the job'.length);
+  const lines = text.split('\\n');
+  while (lines.length && ['', '… more', '...more', 'more', 'show more', 'show less', 'see more']
+         .includes(lines[lines.length - 1].trim().toLowerCase())) lines.pop();
+  return lines.join('\\n');
+}"""
+)
+
+
 class NavigationFailed(RuntimeError):
     """_goto_with_retry() exhausted its retries - a RuntimeError subclass so
     every existing `except RuntimeError`/message check is unaffected, but
@@ -389,7 +423,33 @@ class LinkedInAdapter(JobBoardAdapter):
         self._goto_with_retry(posting.url)
         self._page.wait_for_load_state("domcontentloaded")
         body = self._page.locator('div[class*="description"]').first
-        return body.inner_text() if body.count() else ""
+        if body.count():
+            text = body.inner_text()
+            if text.strip():
+                return text
+        return self._description_under_about_heading()
+
+    def _description_under_about_heading(self) -> str:
+        """The job description on LinkedIn's redesigned job page, or "".
+
+        Real breakage (2026-09-30): the redesign randomized every class
+        name, so div[class*="description"] above matched nothing and every
+        posting was scored, tailored, and cover-lettered against an empty
+        description. Confirmed live: the text now lives in the nearest
+        ancestor of an "About the job" <h2> that holds more than the heading
+        itself - and only the description, not "About the company" or the
+        job list - truncated behind a "… more" button until expanded.
+        Anchoring on the visible heading text, not class names, is what
+        survives the next restyle.
+        """
+        heading = self._page.get_by_role("heading", name="About the job", exact=True).first
+        try:
+            heading.wait_for(timeout=10000)  # the redesigned page renders client-side
+        except PlaywrightTimeoutError:
+            return ""
+        if self._page.evaluate(_EXPAND_ABOUT_THE_JOB_JS):
+            time.sleep(0.5)
+        return (self._page.evaluate(_READ_ABOUT_THE_JOB_JS) or "").strip()
 
     def open_external_application(self, posting: JobPosting) -> Page | None:
         """For an easy_apply=False posting: open its external application

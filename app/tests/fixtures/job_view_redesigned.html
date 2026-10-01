@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: redesigned job view</title></head>
+<body>
+  <!-- LinkedIn's redesigned job page (observed live 2026-09-30): randomized
+       class names, no "description" class anywhere. The description sits in
+       the nearest ancestor of an "About the job" <h2> that holds more than
+       the heading, truncated behind a "… more" button until expanded. -->
+  <h2>Use AI to assess how you fit</h2>
+  <div class="x8f2k">
+    <div class="q91za"><h2>About the job</h2></div>
+    <div class="m3b7c">
+      <p>We are hiring a Platform Engineer to build our ledger in Python and PostgreSQL.</p>
+      <p id="rest" hidden>Benefits include medical insurance and a 401(k).</p>
+    </div>
+    <button class="z0p1q" onclick="document.getElementById('rest').hidden = false; this.textContent = 'Show less'">… more</button>
+  </div>
+  <div class="k2j8d"><h2>About the company</h2><p>Acme builds finance software.</p></div>
+</body>
+</html>
