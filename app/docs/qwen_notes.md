@@ -131,6 +131,27 @@ resurfacing on every future occurrence of the same question until the
 prompt fix, since `FAQ_SAVE_CONFIDENCE`-gated caching doesn't itself
 validate the *shape* of what it caches. Commit: `ff992d6`.
 
+**Still recurring (2026-10-01), in fields that aren't `type="number"`:**
+the safety net above only covered `input[type="number"]`, and LinkedIn
+doesn't use that for these questions.
+- "How many years of work experience do you have with Java?" is a plain
+  text field (with a "0/20" character counter) that LinkedIn validates as
+  a whole number on Next/Review. "5+ years" shows "Invalid input" and the
+  step never advances; "5" goes through. Fix: `_asks_for_a_number()` (a
+  label starting "How many", or asking for "years of ... experience") gets
+  the same digit extraction. Commit: `9ace082`.
+- The cached answer for "Mobile phone number*" was a whole contact block
+  (name, phone, email, city). Typed into the `tel` field, LinkedIn refused
+  the contact step. Fix: `_phone_value()` / `_email_value()` pull just the
+  number or address for `tel` / `email` fields. Commit: `d364b88`.
+
+Both showed up only as "stuck on a step ... buttons visible: 'Next'" (or
+"'Back', 'Review'"), because the bot kept clicking a button whose step
+LinkedIn wouldn't leave. The stuck error now also names the fields LinkedIn
+rejected and its message ("Fields LinkedIn rejected: ...: Invalid input"),
+so the next variant of this is visible in `failed_applications.log`
+without a live probe. Commit: `6a9b019`.
+
 ## 4. Enable `think:false` for latency, but understand it doesn't stop in-band reasoning
 
 `generate_structured()` passes `think:false` to Ollama for every request.
@@ -202,6 +223,27 @@ exhausted; `_run_apply_cycle()` stops the cycle after
 `NAVIGATION_FAILURE_STREAK_LIMIT` (3) of them in a row (a successful load
 resets the count), and `--loop` then backs off `loop_interval_minutes` even if
 the cycle applied to something.
+
+## 8. A generation that never ends, and prompts far bigger than they need to be
+
+**Symptom:** a run sat at "Writing a tailored resume and cover letter..."
+for 17m52s (from Ollama's `~/.ollama/logs/server.log`), with the model
+server busy the whole time.
+
+**Why:** after responses were streamed (`d192b86`), httpx's timeout
+applies per chunk, so a generation that keeps producing tokens never
+times out. Separately, every form question answered by the model carried
+the entire FAQ cache: ~19,600 prompt tokens, against 2.8-5k for every other
+call. That forced a 32k context window, whose KV cache is reserved up front
+(~98 KB per token on qwen3:30b, ~3.2 GB).
+
+**Fix:** every request sends `num_predict` (`MAX_OUTPUT_TOKENS`) and is cut
+off after `MAX_GENERATION_SECONDS` (`270ea79`); only the relevant cached
+answers go in a Q&A prompt, ~3k tokens (`200a4b6`); `num_ctx` is 12,288 and
+grows only for an unusually large prompt (`6bb1f29`). Each `job-bot run`
+cycle ends with a "Model: N call(s), ... avg prompt ... tokens, ...
+tokens generated (N/s)" line (`c021235`) - check it first when a run feels
+slow.
 
 ## General guidance for a future session
 
