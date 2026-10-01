@@ -2460,3 +2460,30 @@ def test_job_id_with_loop_is_refused(tmp_path, capsys):
     with pytest.raises(SystemExit):
         cmd_run(make_settings(tmp_path), make_args(job_id=["j9"], loop=True))
     assert "--loop can't be combined with --job-id" in capsys.readouterr().err
+
+
+def test_ctrl_c_silences_asyncio_shutdown_noise_but_a_normal_run_does_not(tmp_path, monkeypatch, capsys):
+    """Seen live after Ctrl+C: "Stopped." followed by "ERROR asyncio: Task
+    was destroyed but it is pending! ... Page.goto()" and "Future exception
+    was never retrieved ... TargetClosedError" - Playwright's interrupted
+    calls, reported at exit. Silenced after an interrupt only."""
+    import logging
+
+    asyncio_logger = logging.getLogger("asyncio")
+    monkeypatch.setattr(asyncio_logger, "level", logging.NOTSET)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args(dry_run=True))
+    assert asyncio_logger.isEnabledFor(logging.ERROR)  # a normal run keeps asyncio errors visible
+
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("job_bot.cli._run_apply_cycle", interrupted)
+    cmd_run(settings, make_args(loop=True))
+
+    assert "Stopped." in capsys.readouterr().out
+    assert not asyncio_logger.isEnabledFor(logging.ERROR)

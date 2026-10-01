@@ -15,6 +15,7 @@ propagating out of a command is a real bug.
 
 import argparse
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -388,7 +389,24 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 else:
                     print("Applications remaining today - searching again immediately...")
         except KeyboardInterrupt:
+            _silence_asyncio_shutdown_noise()
             print("\nStopped.")
+
+
+def _silence_asyncio_shutdown_noise() -> None:
+    """After a Ctrl+C, stop asyncio logging errors about the browser work
+    the interrupt cut short.
+
+    Seen live, printed right after "Stopped.": "ERROR asyncio: Task was
+    destroyed but it is pending! ... coro=<Page.goto() ...>" and "Future
+    exception was never retrieved ... TargetClosedError", one pair per
+    in-flight Playwright call (a page load, the context close). Playwright's
+    sync API runs its own event loop; interrupting it leaves those tasks
+    pending, and asyncio reports them when they're garbage-collected at
+    exit. They're expected after an interrupt, and they read like a crash.
+    Only called on Ctrl+C, so asyncio errors in a normal run still show.
+    """
+    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
 
 def _print_cycle_summary(
@@ -3058,6 +3076,7 @@ def main() -> None:
         )
         sys.exit(1)
     except KeyboardInterrupt:
+        _silence_asyncio_shutdown_noise()
         # Without this, Ctrl+C during a real browser action (mid Easy Apply
         # form, waiting on Ollama, ...) propagated a raw traceback through
         # browser_session()'s own cleanup - confusing on its own, and it
