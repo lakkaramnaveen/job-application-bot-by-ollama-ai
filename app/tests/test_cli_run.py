@@ -17,7 +17,7 @@ import pytest
 
 from job_bot.browser.base_adapter import JobPosting
 from job_bot.browser.linkedin_adapter import LinkedInSignedOut, NavigationFailed, UnansweredRequiredQuestion
-from job_bot.cli import build_parser, cmd_run
+from job_bot.cli import _score_verdict, build_parser, cmd_run
 from job_bot.config import Settings
 from job_bot.llm.base import LLMProvider
 from job_bot.llm.claude_provider import ClaudeProviderError
@@ -840,6 +840,53 @@ def test_run_refuses_loop_combined_with_dry_run(tmp_path, monkeypatch, capsys):
     assert exc_info.value.code == 1
     assert "--loop can't be combined with --dry-run" in capsys.readouterr().err
     assert searched == []
+
+
+def test_run_prints_progress_for_each_posting_it_works_on(tmp_path, monkeypatch, capsys):
+    """A live run was stopped with Ctrl+C because it "seemed stuck": between
+    one "Applied:" and the next, a run printed nothing while it scored and
+    skipped postings. Each posting worked on now gets a progress line."""
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    cmd_run(make_settings(tmp_path), make_args())
+
+    out = capsys.readouterr().out
+    assert f"[1/1] {JOB.title} at {JOB.company}" in out
+    assert "Scored 90 - a fit." in out
+    assert "Writing a tailored resume and cover letter..." in out
+    assert "Filling in the application..." in out
+    assert out.index("[1/1]") < out.index("Scored 90") < out.index("Writing") < out.index("Filling")
+
+
+def test_run_says_why_it_skipped_a_posting(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    cmd_run(make_settings(tmp_path), make_args(min_score=95))
+
+    out = capsys.readouterr().out
+    assert "Skipped: scored 90 (below 95)." in out
+    assert "Writing a tailored resume" not in out
+
+
+@pytest.mark.parametrize(
+    ("eligibility", "note", "score", "should_apply", "expected"),
+    [
+        ("pass", "", 88, True, "Scored 88 - a fit."),
+        ("fail", "Requires an active TS/SCI clearance.", 85, False, "Skipped: not eligible: Requires an active TS/SCI clearance."),
+        ("pass", "", 60, False, "Skipped: scored 60 (below 75)."),
+        ("pass", "", 80, False, "Skipped: scored 80, but the model judged it not a fit."),
+    ],
+)
+def test_score_verdict_explains_each_outcome(eligibility, note, score, should_apply, expected):
+    match = JobMatchScore(
+        eligibility=eligibility, eligibility_note=note, technical_fit=score, experience_fit=score,
+        culture_fit=score, score=score, reasoning="r", should_apply=should_apply,
+    )
+    assert _score_verdict(match, should_apply, 75) == expected
 
 
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):

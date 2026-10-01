@@ -441,6 +441,19 @@ def _quit_ollama_if_configured(settings: Settings) -> None:
         print("Daily cap reached - could not quit Ollama (it may already be stopped).")
 
 
+def _score_verdict(match: JobMatchScore, should_apply: bool, min_score: int) -> str:
+    """One line on why a freshly scored posting is or isn't being applied to,
+    for the per-posting progress output in _run_apply_cycle()."""
+    if should_apply:
+        return f"Scored {match.score} - a fit."
+    if match.eligibility == "fail":
+        note = f": {match.eligibility_note}" if match.eligibility_note else ""
+        return f"Skipped: not eligible{note}"
+    if match.score < min_score:
+        return f"Skipped: scored {match.score} (below {min_score})."
+    return f"Skipped: scored {match.score}, but the model judged it not a fit."
+
+
 def _print_run_plan(settings: Settings, args: argparse.Namespace, rate_limiter: RateLimiter, min_score: int) -> None:
     """A few lines stating what this run is about to do, before the browser
     opens - the effective search, model, resume, and how many applications
@@ -587,8 +600,10 @@ def _run_apply_cycle(
             if existing["match_score"] < min_score:
                 tracker.update_status(posting.job_id, "skipped")
                 audit.log("skip_below_min_score", job_id=posting.job_id, score=existing["match_score"])
+                print(f"  Skipped: scored {existing['match_score']} earlier (below {min_score}).")
                 return False
             audit.log("reused_score", job_id=posting.job_id, score=existing["match_score"])
+            print(f"  Scored {existing['match_score']} earlier - still a fit.")
             return True
 
         match: JobMatchScore = score_job_match(
@@ -616,6 +631,7 @@ def _run_apply_cycle(
             missing_qualifications=match.missing_qualifications,
         )
         audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
+        print(f"  {_score_verdict(match, should_apply, min_score)}")
         return should_apply
 
     def generate_materials(posting: JobPosting, description: str) -> tuple[CoverLetter, str]:
@@ -768,7 +784,7 @@ def _run_apply_cycle(
     fatal_error = False
     throttled = False
     consecutive_navigation_failures = 0
-    for posting in postings:
+    for position, posting in enumerate(postings, start=1):
         if applied >= args.max_apps:
             break
         if rate_limiter.remaining_today() <= 0:
@@ -784,11 +800,17 @@ def _run_apply_cycle(
             # re-scoring it every run.
             continue
 
+        # One line per posting actually worked on, so a quiet stretch of
+        # LLM calls reads as progress rather than a hang - in a live run,
+        # skipped postings printed nothing at all and the run was stopped
+        # with Ctrl+C because it "seemed stuck".
+        print(f"[{position}/{len(postings)}] {posting.title} at {posting.company}")
         try:
             description = adapter.load_description(posting)
             consecutive_navigation_failures = 0
             if not clears_the_bar(posting, description, existing):
                 continue
+            print("  Writing a tailored resume and cover letter...")
             cover_letter, resume_path = generate_materials(posting, description)
         except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
             audit.log("prep_error", job_id=posting.job_id, error=str(e))
@@ -843,6 +865,7 @@ def _run_apply_cycle(
                     break
             continue
 
+        print("  Filling in the application..." if not args.dry_run else "  Filling in the application (dry run)...")
         try:
             submitted = apply_to(posting, cover_letter, resume_path)
         except Exception as e:  # noqa: BLE001 - surface and continue to the next job
