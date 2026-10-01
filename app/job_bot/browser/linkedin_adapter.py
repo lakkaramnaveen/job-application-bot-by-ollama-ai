@@ -50,7 +50,13 @@ SELECTORS = {
     # at all. Match both tags rather than assume which one LinkedIn uses for
     # any given account/job/rollout.
     "easy_apply_button": 'button:has-text("Easy Apply"), a:has-text("Easy Apply")',
-    "dialog": 'div[role="dialog"]',
+    # LinkedIn moved the Easy Apply modal to a native <dialog> (no role
+    # attribute, randomized class names) - confirmed live 2026-09-30, when
+    # every posting in a run failed with "Easy Apply dialog never appeared".
+    # The older div[role="dialog"] shape is kept too, for any surface or A/B
+    # bucket still serving it. dialog[open] only - a closed <dialog> in the
+    # DOM isn't on screen.
+    "dialog": 'div[role="dialog"], dialog[open]',
     "dismiss_safety_reminder": 'button[aria-label*="Dismiss" i]',
     "job_cards": "div[data-job-id]",
     "applied_badge": "text=/^\\s*Applied\\s*$/i",
@@ -174,6 +180,15 @@ _SIGNED_OUT_URL_MARKERS = ("/authwall", "linkedin.com/login", "/uas/login", "/ch
 
 def is_signed_out_url(url: str) -> bool:
     return any(marker in url for marker in _SIGNED_OUT_URL_MARKERS)
+
+
+# Free-text inputs the adapter fills and checks for unanswered required
+# values. tel/email included: the native <dialog> Easy Apply modal asks for
+# "Mobile phone number" as <input type="tel">, which text/number alone missed
+# entirely - never filled, and never reported when required.
+_TEXT_FIELD_SELECTOR = (
+    'input[type="text"], input[type="number"], input[type="tel"], input[type="email"], textarea'
+)
 
 
 class NavigationFailed(RuntimeError):
@@ -470,7 +485,8 @@ class LinkedInAdapter(JobBoardAdapter):
         (nothing fillable found yet) waits, and only up to the deadline.
         """
         fillable_selector = (
-            'input[type="text"], input[type="number"], input[type="file"], textarea, select, fieldset'
+            'input[type="text"], input[type="number"], input[type="tel"], input[type="email"], '
+            'input[type="file"], textarea, select, fieldset'
         )
         deadline = time.monotonic() + _DIALOG_POLL_TIMEOUT_SECONDS
         while True:
@@ -719,7 +735,7 @@ class LinkedInAdapter(JobBoardAdapter):
         answer_question: Callable[[str], str],
         cover_letter_text: str | None = None,
     ) -> None:
-        for text_input in dialog.locator('input[type="text"], input[type="number"], textarea').all():
+        for text_input in dialog.locator(_TEXT_FIELD_SELECTOR).all():
             if (text_input.input_value() or "").strip():
                 continue
             label = self._label_for(text_input)
@@ -789,7 +805,7 @@ class LinkedInAdapter(JobBoardAdapter):
         _raise_if_unanswered_required_field()'s docstring) - confirmed
         live before this fix.
         """
-        for text_input in dialog.locator('input[type="text"], input[type="number"], textarea').all():
+        for text_input in dialog.locator(_TEXT_FIELD_SELECTOR).all():
             if not self._is_marked_required(text_input):
                 continue
             if (text_input.input_value() or "").strip():

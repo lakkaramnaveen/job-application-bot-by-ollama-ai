@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply in a native dialog</title></head>
+<body>
+  <!-- LinkedIn's current markup (observed live 2026-09-30): the Easy Apply
+       modal is a native <dialog> with no role attribute, created/opened only
+       when the button is clicked, and its class names are randomized. -->
+  <button aria-label="Easy Apply to this job" onclick="document.getElementById('apply').showModal()">Easy Apply</button>
+
+  <dialog id="apply" aria-labelledby="dialog-header">
+    <h2 id="dialog-header">Apply to Acme</h2>
+
+    <label for="phone-country">Phone country code</label>
+    <select id="phone-country" required>
+      <option value="">Select an option</option>
+      <option value="us">United States (+1)</option>
+    </select>
+
+    <label for="mobile">Mobile phone number</label>
+    <input id="mobile" type="tel" required />
+
+    <label for="years-python">Years of Python experience</label>
+    <input id="years-python" type="text" />
+
+    <button aria-label="Dismiss">Dismiss</button>
+    <button aria-label="Submit application">Submit application</button>
+  </dialog>
+</body>
+</html>

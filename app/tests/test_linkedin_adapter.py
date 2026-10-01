@@ -21,10 +21,12 @@ from job_bot.browser.linkedin_adapter import (
     LinkedInAdapter,
     LinkedInSignedOut,
     NavigationFailed,
+    UnansweredRequiredQuestion,
     is_signed_out_url,
 )
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
+NATIVE_DIALOG_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_native_dialog.html"
 LINK_ENTRY_POINT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_link_entry_point.html"
 SEARCH_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results.html"
 VERIFIED_BADGE_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results_verified_badge.html"
@@ -130,6 +132,54 @@ def test_goto_with_retry_raises_after_exhausting_retries_on_a_generic_playwright
     with pytest.raises(NavigationFailed, match="Failed to load") as exc_info:
         adapter._goto_with_retry("https://example.com/never-loads")
     assert isinstance(exc_info.value, RuntimeError)
+
+
+def _answers(label: str) -> str:
+    if "phone country" in label.casefold():
+        return "United States (+1)"
+    if "mobile phone" in label.casefold():
+        return "5551234567"
+    return "5" if "Python" in label else ""
+
+
+def test_fill_and_submit_works_with_linkedins_native_dialog_modal(playwright_page):
+    """Real breakage (2026-09-30 run: 18 of 25 postings failed with "Easy
+    Apply dialog never appeared"): LinkedIn moved the Easy Apply modal from
+    div[role="dialog"] to a native <dialog> with no role attribute. Confirmed
+    live: after the click, zero div[role=dialog] and exactly one open
+    <dialog> holding the real fields (email/phone selects, a tel input) and
+    Dismiss/Next buttons.
+    """
+    posting = JobPosting(
+        job_id="1", title="X", company="Acme", url=f"file://{NATIVE_DIALOG_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    submitted = adapter.fill_and_submit(
+        posting, answer_question=_answers, resume_path=None, cover_letter_text=None, dry_run=True
+    )
+
+    assert submitted is False  # dry run stops right before the final click
+    assert playwright_page.locator("#years-python").input_value() == "5"
+    # the new modal's phone field is <input type="tel"> - it must be filled too
+    assert playwright_page.locator("#mobile").input_value() == "5551234567"
+    assert playwright_page.locator("#phone-country").input_value() == "us"
+
+
+def test_an_unanswerable_required_tel_field_is_reported_not_skipped(playwright_page):
+    """A required tel input the bot can't answer must surface as an
+    unanswered required question (recorded for review-answers), not be
+    silently ignored until the form gets stuck."""
+    posting = JobPosting(
+        job_id="1", title="X", company="Acme", url=f"file://{NATIVE_DIALOG_FIXTURE_PATH}", description=""
+    )
+    adapter = LinkedInAdapter(playwright_page)
+
+    def no_phone(label: str) -> str:
+        return "" if "mobile phone" in label.casefold() else _answers(label)
+
+    with pytest.raises(UnansweredRequiredQuestion, match="Mobile phone number"):
+        adapter.fill_and_submit(posting, answer_question=no_phone, resume_path=None, cover_letter_text=None, dry_run=True)
 
 
 def test_fill_and_submit_ignores_an_unrelated_dialog_ahead_of_the_real_one(playwright_page):
