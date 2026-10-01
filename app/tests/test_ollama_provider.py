@@ -6,6 +6,7 @@ import pytest
 import respx
 
 from job_bot.llm.ollama_provider import (
+    MAX_OUTPUT_TOKENS,
     OllamaProvider,
     OllamaProviderError,
     _repair_truncated_json_string,
@@ -427,3 +428,56 @@ def test_a_normal_multi_chunk_stream_is_joined():
     respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(200, text=body))
 
     assert provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter).body == "Dear Hiring Manager."
+
+
+@respx.mock
+def test_requests_cap_output_tokens():
+    """Server-side bound on a runaway generation (MAX_OUTPUT_TOKENS)."""
+    provider = make_provider()
+    route = respx.post(f"{BASE_URL}/api/chat").mock(
+        return_value=httpx.Response(200, text=_ndjson({"message": {"content": '{"body": "Hi."}'}}))
+    )
+    provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
+    assert json.loads(route.calls[0].request.content)["options"]["num_predict"] == MAX_OUTPUT_TOKENS
+
+
+@respx.mock
+def test_a_stream_that_never_ends_is_cut_off_at_the_deadline(monkeypatch):
+    """Real hang (2026-10-01): with streaming, the httpx timeout applies per
+    chunk, so a generation that keeps producing tokens never times out - a
+    run sat stuck for 28+ minutes. An endless stream must now stop at
+    MAX_GENERATION_SECONDS, and the letter received so far is repaired."""
+    import time as _time
+
+    monkeypatch.setattr("job_bot.llm.ollama_provider.MAX_GENERATION_SECONDS", 0.3)
+
+    def endless():
+        yield (json.dumps({"message": {"content": '{"body": "Dear Hiring Manager, I would love to join Acme.'}}) + "\n").encode()
+        while True:  # padding forever - never an error chunk, never done
+            _time.sleep(0.01)
+            yield (json.dumps({"message": {"content": "\\n"}}) + "\n").encode()
+
+    respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(200, content=endless()))
+
+    started = _time.monotonic()
+    letter = make_provider().generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
+
+    assert letter.body == "Dear Hiring Manager, I would love to join Acme."
+    assert _time.monotonic() - started < 5  # bounded, not stuck
+
+
+@respx.mock
+def test_an_unrepairable_timed_out_stream_reports_the_deadline(monkeypatch):
+    import time as _time
+
+    monkeypatch.setattr("job_bot.llm.ollama_provider.MAX_GENERATION_SECONDS", 0.2)
+
+    def endless_garbage():
+        while True:
+            _time.sleep(0.01)
+            yield (json.dumps({"message": {"content": "x"}}) + "\n").encode()
+
+    respx.post(f"{BASE_URL}/api/chat").mock(side_effect=lambda request: httpx.Response(200, content=endless_garbage()))
+
+    with pytest.raises(OllamaProviderError, match="exceeded"):
+        make_provider().generate_structured(system="sys", prompt="prompt", schema=CoverLetter)

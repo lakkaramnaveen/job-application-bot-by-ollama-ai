@@ -2,6 +2,7 @@ import json
 import platform
 import re
 import subprocess
+import time
 
 import httpx
 from pydantic import ValidationError
@@ -9,6 +10,17 @@ from pydantic import ValidationError
 from job_bot.llm.base import LLMProvider, SchemaT
 
 DEFAULT_TIMEOUT = 120.0
+
+# Two bounds on a single generation, added after a real hang: with
+# streaming (see _read_chat_stream()), DEFAULT_TIMEOUT applies per chunk,
+# not to the whole response - a generation that never stops never times
+# out. Seen live (2026-10-01): one cover-letter generation kept a run stuck
+# for 28+ minutes with the model server at full CPU. MAX_OUTPUT_TOKENS caps
+# it server-side (the longest real output - a cover letter - is ~600
+# tokens); MAX_GENERATION_SECONDS caps the wall-clock read of the stream,
+# after which the client disconnects, which makes Ollama stop generating.
+MAX_OUTPUT_TOKENS = 4096
+MAX_GENERATION_SECONDS = 240.0
 
 # A local model occasionally emits truncated/malformed JSON for no
 # structural reason (seen live: qwen3:30b cutting a CoverLetter response off
@@ -105,7 +117,7 @@ class _MalformedStream(ValueError):
     like any other bad completion."""
 
 
-def _read_chat_stream(resp: httpx.Response) -> tuple[str, str | None]:
+def _read_chat_stream(resp: httpx.Response, *, deadline: float | None = None) -> tuple[str, str | None]:
     """Accumulates a streamed /api/chat response: (content, error).
 
     Real failure this exists for (2026-09-30, Ollama 0.34): when qwen3:30b
@@ -121,10 +133,18 @@ def _read_chat_stream(resp: httpx.Response) -> tuple[str, str | None]:
 
     Every chunk must carry either message.content or an error; anything
     else raises _MalformedStream (an API change, or a garbled body).
+
+    Stops reading at `deadline` (time.monotonic()) and reports it as the
+    error, keeping what arrived so far - the same repair then gets its
+    chance, exactly as for an Ollama-side abort. Leaving the `with` block
+    closes the connection, which makes Ollama stop generating.
     """
     parts: list[str] = []
     error: str | None = None
     for line in resp.iter_lines():
+        if deadline is not None and time.monotonic() > deadline:
+            error = f"generation exceeded {MAX_GENERATION_SECONDS:.0f}s and was stopped"
+            break
         if not line.strip():
             continue
         try:
@@ -172,7 +192,7 @@ class OllamaProvider(LLMProvider):
             # yields the text produced before the abort - see
             # _read_chat_stream().
             "stream": True,
-            "options": {"temperature": 0.2},
+            "options": {"temperature": 0.2, "num_predict": MAX_OUTPUT_TOKENS},
             # We only ever want the structured answer, never a reasoning
             # trace - on a thinking model (e.g. qwen3) this skips the hidden
             # <think> pass entirely, which is most of the latency. Ollama
@@ -194,7 +214,9 @@ class OllamaProvider(LLMProvider):
                         resp.read()
                         last_error = OllamaProviderError(f"Ollama returned HTTP {resp.status_code}: {resp.text}")
                         continue
-                    content, stream_error = _read_chat_stream(resp)
+                    content, stream_error = _read_chat_stream(
+                        resp, deadline=time.monotonic() + MAX_GENERATION_SECONDS
+                    )
             except httpx.ConnectError as e:
                 raise OllamaProviderError(
                     f"Could not reach Ollama at {self._base_url}. Is it running? "
