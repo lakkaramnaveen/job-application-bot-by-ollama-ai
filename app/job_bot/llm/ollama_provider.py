@@ -7,7 +7,7 @@ import time
 import httpx
 from pydantic import ValidationError
 
-from job_bot.llm.base import LLMProvider, SchemaT
+from job_bot.llm.base import GenerationStats, LLMProvider, SchemaT
 
 DEFAULT_TIMEOUT = 120.0
 
@@ -139,7 +139,9 @@ class _MalformedStream(ValueError):
     like any other bad completion."""
 
 
-def _read_chat_stream(resp: httpx.Response, *, deadline: float | None = None) -> tuple[str, str | None]:
+def _read_chat_stream(
+    resp: httpx.Response, *, deadline: float | None = None, metrics: dict | None = None
+) -> tuple[str, str | None]:
     """Accumulates a streamed /api/chat response: (content, error).
 
     Real failure this exists for (2026-09-30, Ollama 0.34): when qwen3:30b
@@ -160,6 +162,10 @@ def _read_chat_stream(resp: httpx.Response, *, deadline: float | None = None) ->
     error, keeping what arrived so far - the same repair then gets its
     chance, exactly as for an Ollama-side abort. Leaving the `with` block
     closes the connection, which makes Ollama stop generating.
+
+    If `metrics` is given, it's filled from Ollama's final "done" chunk
+    (prompt_eval_count, eval_count, load_duration in ns, ...) - the numbers
+    behind the per-cycle performance line.
     """
     parts: list[str] = []
     error: str | None = None
@@ -175,6 +181,8 @@ def _read_chat_stream(resp: httpx.Response, *, deadline: float | None = None) ->
                 error = str(chunk["error"])
                 continue
             parts.append(chunk["message"]["content"])
+            if metrics is not None and chunk.get("done"):
+                metrics.update({k: v for k, v in chunk.items() if k.endswith(("_count", "_duration"))})
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             raise _MalformedStream(f"Unexpected Ollama response chunk: {line[:200]!r}") from e
     return "".join(parts), error
@@ -195,6 +203,9 @@ class OllamaProvider(LLMProvider):
     def __init__(self, model: str, base_url: str):
         self._model = model
         self._base_url = base_url.rstrip("/")
+        # Performance metrics for every request this provider makes - see
+        # GenerationStats and cli.py's per-cycle summary line.
+        self.stats = GenerationStats()
 
     def generate_structured(
         self,
@@ -240,9 +251,19 @@ class OllamaProvider(LLMProvider):
                         resp.read()
                         last_error = OllamaProviderError(f"Ollama returned HTTP {resp.status_code}: {resp.text}")
                         continue
-                    content, stream_error = _read_chat_stream(
-                        resp, deadline=time.monotonic() + MAX_GENERATION_SECONDS
-                    )
+                    started = time.monotonic()
+                    metrics: dict = {}
+                    try:
+                        content, stream_error = _read_chat_stream(
+                            resp, deadline=started + MAX_GENERATION_SECONDS, metrics=metrics
+                        )
+                    finally:
+                        self.stats.record(
+                            seconds=time.monotonic() - started,
+                            prompt_tokens=int(metrics.get("prompt_eval_count") or 0),
+                            output_tokens=int(metrics.get("eval_count") or 0),
+                            load_seconds=(metrics.get("load_duration") or 0) / 1e9,
+                        )
             except httpx.ConnectError as e:
                 raise OllamaProviderError(
                     f"Could not reach Ollama at {self._base_url}. Is it running? "

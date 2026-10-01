@@ -51,7 +51,7 @@ from job_bot.generation.qa_answerer import answer_question
 from job_bot.generation.resume_tailor import tailor_resume
 from job_bot.integrations.gmail_client import GmailClient, GmailClientError
 from job_bot.integrations.gmail_sync import sync_gmail
-from job_bot.llm.base import LLMProvider
+from job_bot.llm.base import GenerationStats, LLMProvider
 from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.factory import get_provider
 from job_bot.llm.ollama_provider import OllamaProviderError, quit_ollama
@@ -321,7 +321,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
 
         if not args.loop:
             applied, failed, _fatal_error, _throttled = run_one_cycle()
-            _print_cycle_summary(applied, failed, rate_limiter, settings)
+            _print_cycle_summary(applied, failed, rate_limiter, settings, provider)
             if rate_limiter.remaining_today() <= 0:
                 _quit_ollama_if_configured(settings)
             return
@@ -334,7 +334,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         try:
             while True:
                 applied, failed, fatal_error, throttled = run_one_cycle()
-                _print_cycle_summary(applied, failed, rate_limiter, settings)
+                _print_cycle_summary(applied, failed, rate_limiter, settings, provider)
                 if fatal_error:
                     # Same reasoning _is_ollama_unreachable()/
                     # _is_claude_misconfigured()/LinkedInSignedOut already
@@ -385,8 +385,16 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             print("\nStopped.")
 
 
-def _print_cycle_summary(applied: int, failed: int, rate_limiter: RateLimiter, settings: Settings) -> None:
+def _print_cycle_summary(
+    applied: int, failed: int, rate_limiter: RateLimiter, settings: Settings, provider: LLMProvider | None = None
+) -> None:
     print(f"Done. Applied to {applied} job(s). {rate_limiter.remaining_today()} remaining today.")
+    # Per-cycle performance line (see GenerationStats) - reset after printing
+    # so each --loop cycle reports its own numbers, not a running total.
+    stats = getattr(provider, "stats", None)
+    if isinstance(stats, GenerationStats) and stats.calls:
+        print(stats.summary())
+        stats.reset()
     if failed:
         print(
             f"{failed} posting(s) could not be completed - run `job-bot audit-log --failures` "

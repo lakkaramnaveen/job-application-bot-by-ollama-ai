@@ -941,6 +941,24 @@ def test_max_applications_per_company_zero_means_no_limit(tmp_path, monkeypatch)
     assert len(adapter.fill_and_submit_calls) == 3
 
 
+def test_cycle_summary_prints_and_resets_the_providers_performance_metrics(tmp_path, capsys):
+    from job_bot.cli import _print_cycle_summary
+    from job_bot.llm.base import GenerationStats
+    from job_bot.safety.rate_limiter import RateLimiter
+
+    class MeasuredProvider:
+        stats = GenerationStats()
+
+    provider = MeasuredProvider()
+    provider.stats.record(seconds=9.0, prompt_tokens=3000, output_tokens=450)
+    settings = make_settings(tmp_path)
+
+    _print_cycle_summary(1, 0, RateLimiter(settings.db_path, 20), settings, provider)
+
+    assert "Model: 1 call(s), 9.0s total" in capsys.readouterr().out
+    assert provider.stats.calls == 0  # reset - each --loop cycle reports its own numbers
+
+
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):
     """A fresh install has no blacklist file - that's not corruption."""
     adapter = FakeAdapter(page=None)

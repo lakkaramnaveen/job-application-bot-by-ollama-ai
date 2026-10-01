@@ -504,3 +504,42 @@ def test_context_window_grows_for_a_large_prompt_instead_of_truncating_it():
     assert window > CONTEXT_TOKENS
     assert window % 4096 == 0
     assert window >= len(big_prompt) // 3 + MAX_OUTPUT_TOKENS
+
+
+@respx.mock
+def test_each_call_records_ollamas_reported_metrics():
+    """The numbers behind `job-bot run`'s per-cycle performance line come
+    from Ollama's final "done" chunk."""
+    body = _ndjson(
+        {"message": {"content": '{"body": "Hi."}'}},
+        {
+            "message": {"content": ""},
+            "done": True,
+            "prompt_eval_count": 3100,
+            "eval_count": 420,
+            "load_duration": 2_500_000_000,
+            "total_duration": 9_000_000_000,
+        },
+    )
+    respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(200, text=body))
+    provider = make_provider()
+
+    provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
+
+    stats = provider.stats
+    assert (stats.calls, stats.prompt_tokens, stats.output_tokens) == (1, 3100, 420)
+    assert stats.load_seconds == 2.5
+    assert stats.seconds >= 0
+
+
+@respx.mock
+def test_a_failed_attempt_still_counts_as_a_call():
+    respx.post(f"{BASE_URL}/api/chat").mock(
+        side_effect=[
+            httpx.Response(200, text=_ndjson({"message": {"content": "not json"}})),
+            httpx.Response(200, text=_ndjson({"message": {"content": '{"body": "Hi."}'}})),
+        ]
+    )
+    provider = make_provider()
+    provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
+    assert provider.stats.calls == 2
