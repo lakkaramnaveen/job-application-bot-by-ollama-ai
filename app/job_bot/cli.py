@@ -481,6 +481,8 @@ def _print_run_plan(settings: Settings, args: argparse.Namespace, rate_limiter: 
             )
     if min_score > 0:
         print(f"Only applying to postings scored {min_score}+.")
+    if settings.max_applications_per_company > 0:
+        print(f"At most {settings.max_applications_per_company} application(s) per company.")
 
 
 def _run_apply_cycle(
@@ -576,6 +578,15 @@ def _run_apply_cycle(
             return True
         if blacklist.is_blocked(posting.company):
             audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
+            return True
+        limit = settings.max_applications_per_company
+        if limit > 0 and tracker.applications_at_company(posting.company) >= limit:
+            # Checked before any LLM call, like the blacklist. Printed (unlike
+            # the other cheap skips) since it's a deliberate user setting the
+            # user will want to see working - in a live run, two roles at
+            # one recruiter went out back to back.
+            audit.log("skip_company_limit", job_id=posting.job_id, company=posting.company, limit=limit)
+            print(f"Skipping {posting.title} at {posting.company}: already applied there (MAX_APPLICATIONS_PER_COMPANY={limit}).")
             return True
         if exclude_keywords and any(kw in posting.title.casefold() for kw in exclude_keywords):
             # Not persisted to the tracker (unlike a real score/skip

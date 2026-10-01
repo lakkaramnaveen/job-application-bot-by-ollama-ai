@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     blacklist_path: Path = APP_DIR / "data" / "company_blacklist.json"
 
     daily_application_cap: int = 20
+    # At most this many applications, ever, to the same company (matched
+    # case/spacing-insensitively, like the blacklist) - e.g. 1 to stop a
+    # run sending several roles to one employer or recruiter in a row.
+    # 0 (default) means no limit.
+    max_applications_per_company: int = 0
     require_confirm_before_submit: bool = True
     # `job-bot report`'s default for how long an application can sit in
     # "applied" with no reply before it's worth a manual follow-up nudge.

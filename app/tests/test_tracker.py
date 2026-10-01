@@ -1177,3 +1177,17 @@ def test_recent_qa_pairs_with_a_non_positive_limit_returns_nothing(tmp_path, lim
     tracker = make_tracker(tmp_path)
     tracker.record_qa("1", "Willing to relocate?", "No")
     assert tracker.recent_qa_pairs(limit=limit) == []
+
+
+def test_applications_at_company_counts_only_applied_jobs_matched_case_insensitively(tmp_path):
+    tracker = make_tracker(tmp_path)
+    tracker.upsert_job("1", "A", "Acme Corp", "https://x/1")
+    tracker.mark_applied("1")
+    tracker.upsert_job("2", "B", "acme  corp", "https://x/2")
+    tracker.mark_applied("2")
+    tracker.upsert_job("3", "C", "Acme Corp", "https://x/3")  # seen only, never applied
+    tracker.upsert_job("4", "D", "Globex", "https://x/4")
+    tracker.mark_applied("4")
+
+    assert tracker.applications_at_company("ACME CORP") == 2
+    assert tracker.applications_at_company("Initech") == 0

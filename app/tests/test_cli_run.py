@@ -889,6 +889,58 @@ def test_score_verdict_explains_each_outcome(eligibility, note, score, should_ap
     assert _score_verdict(match, should_apply, 75) == expected
 
 
+def test_max_applications_per_company_stops_a_second_role_at_the_same_company(tmp_path, monkeypatch, capsys):
+    """In a live run, two roles at one recruiter went out back to back. With
+    MAX_APPLICATIONS_PER_COMPANY=1, only the first of three same-company
+    postings is applied to; the others are skipped before any LLM call."""
+    provider = FakeProvider()
+    adapter = MultiJobAdapter(page=None)  # job1, job2, job3 - all at "Acme Corp"
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    settings = make_settings(tmp_path, max_applications_per_company=1)
+    cmd_run(settings, make_args(max_apps=10))
+
+    tracker = Tracker(settings.db_path)
+    assert tracker.has_applied("job1") is True
+    assert tracker.has_applied("job2") is False and tracker.has_applied("job3") is False
+    assert len(adapter.fill_and_submit_calls) == 1
+    out = capsys.readouterr().out
+    assert "Skipping Platform Engineer at Acme Corp: already applied there (MAX_APPLICATIONS_PER_COMPANY=1)." in out
+    assert "At most 1 application(s) per company." in out
+    # skipped before scoring: exactly one posting was scored
+    assert provider.schemas_requested.count(JobMatchScore) == 1
+
+
+def test_max_applications_per_company_counts_earlier_runs_and_normalizes_names(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, max_applications_per_company=1)
+    tracker = Tracker(settings.db_path)
+    tracker.upsert_job("old", "Engineer", "  acme   CORP ", "https://x/old")  # same company, different spelling
+    tracker.mark_applied("old")
+
+    cmd_run(settings, make_args())
+
+    assert tracker.has_applied("job1") is False
+    assert provider.schemas_requested == []
+
+
+def test_max_applications_per_company_zero_means_no_limit(tmp_path, monkeypatch):
+    adapter = MultiJobAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+
+    cmd_run(make_settings(tmp_path), make_args(max_apps=10))  # default 0
+
+    assert len(adapter.fill_and_submit_calls) == 3
+
+
 def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch):
     """A fresh install has no blacklist file - that's not corruption."""
     adapter = FakeAdapter(page=None)

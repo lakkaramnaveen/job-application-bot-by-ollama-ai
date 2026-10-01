@@ -60,7 +60,10 @@ links to the section with the full detail:
   any unattended run. There's also a hard daily cap (`DAILY_APPLICATION_CAP`
   in `.env`, capped in code at `HARD_DAILY_APPLICATION_CEILING` - currently
   100 - no matter what you set) so a bug or a bad match-score threshold
-  can't spam applications.
+  can't spam applications. `MAX_APPLICATIONS_PER_COMPANY` (e.g. `1`) also
+  stops a run from sending several roles to the same employer or recruiter;
+  it counts every application ever sent there, and `0` (the default) means
+  no limit.
 - **Selectors may need tuning.** LinkedIn's page structure isn't public and
   changes over time. If a run stops finding a button/field it used to find,
   check `job_bot/browser/linkedin_adapter.py`'s `SELECTORS` dict first, and use

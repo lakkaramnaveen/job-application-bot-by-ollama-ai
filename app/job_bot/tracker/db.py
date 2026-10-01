@@ -681,6 +681,18 @@ class Tracker:
                     break
         return pairs
 
+    def applications_at_company(self, company: str) -> int:
+        """How many jobs at `company` have ever been applied to (applied_at
+        set), matched with normalize_company_name() - the same rule the
+        blacklist uses. Backs MAX_APPLICATIONS_PER_COMPANY.
+        """
+        normalized = normalize_company_name(company)
+        return sum(
+            1
+            for job in self.list_jobs()
+            if job["applied_at"] and normalize_company_name(job["company"]) == normalized
+        )
+
     def in_progress_jobs_at_company(self, company: str) -> list[dict[str, Any]]:
         """Tracked jobs at `company` (matched the same normalize_company_name()
         way CompanyBlacklist.is_blocked() itself matches, so this agrees with
