@@ -55,7 +55,7 @@ from job_bot.integrations.gmail_sync import sync_gmail
 from job_bot.llm.base import GenerationStats, LLMProvider
 from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.factory import get_provider
-from job_bot.llm.ollama_provider import OllamaProviderError, quit_ollama
+from job_bot.llm.ollama_provider import OllamaProvider, OllamaProviderError, quit_ollama
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
@@ -238,6 +238,13 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             sys.exit(1)
 
     provider = get_provider(settings)
+    # Fail before opening a browser or touching LinkedIn when the local
+    # model can't serve the run at all - see readiness_problem().
+    if isinstance(provider, OllamaProvider):
+        problem = provider.readiness_problem()
+        if problem is not None:
+            print(f"Error: {problem}", file=sys.stderr)
+            sys.exit(1)
     resume_store = ResumeStore(settings.resume_path, settings.faq_path)
     rate_limiter = RateLimiter(settings.db_path, settings.effective_daily_cap())
     blacklist = CompanyBlacklist(settings.blacklist_path)

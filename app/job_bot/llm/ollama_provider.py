@@ -207,6 +207,30 @@ class OllamaProvider(LLMProvider):
         # GenerationStats and cli.py's per-cycle summary line.
         self.stats = GenerationStats()
 
+    def readiness_problem(self) -> str | None:
+        """Why this provider can't serve a run right now, or None if it can:
+        the server is unreachable, or OLLAMA_MODEL isn't pulled. One quick
+        GET /api/tags - cmd_run calls this before opening a browser.
+
+        Real case (2026-10-01): with the Ollama app closed, `job-bot run`
+        searched LinkedIn and loaded a posting before its first model call
+        failed with "Could not reach Ollama" - time spent and LinkedIn
+        traffic generated for a run that could never apply to anything.
+        """
+        try:
+            resp = httpx.get(f"{self._base_url}/api/tags", timeout=5.0)
+            resp.raise_for_status()
+            names = {m.get("name", "") for m in resp.json().get("models", [])}
+        except (httpx.HTTPError, ValueError) as e:
+            return (
+                f"Could not reach Ollama at {self._base_url} ({type(e).__name__}). Is it running? "
+                "Open the Ollama app, or run `ollama serve` in another terminal."
+            )
+        wanted = self._model if ":" in self._model else f"{self._model}:latest"
+        if wanted not in names:
+            return f"Ollama is running but model {self._model!r} isn't pulled - run `ollama pull {self._model}`."
+        return None
+
     def generate_structured(
         self,
         *,

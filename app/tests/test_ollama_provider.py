@@ -543,3 +543,28 @@ def test_a_failed_attempt_still_counts_as_a_call():
     provider = make_provider()
     provider.generate_structured(system="sys", prompt="prompt", schema=CoverLetter)
     assert provider.stats.calls == 2
+
+
+@respx.mock
+def test_readiness_problem_is_none_when_the_model_is_pulled():
+    respx.get(f"{BASE_URL}/api/tags").mock(
+        return_value=httpx.Response(200, json={"models": [{"name": "qwen3:30b"}, {"name": "llama3:latest"}]})
+    )
+    assert OllamaProvider(model="qwen3:30b", base_url=BASE_URL).readiness_problem() is None
+    assert OllamaProvider(model="llama3", base_url=BASE_URL).readiness_problem() is None
+
+
+@respx.mock
+def test_readiness_problem_reports_a_server_that_is_not_running():
+    """Real case: the Ollama app was closed and `job-bot run` searched
+    LinkedIn and loaded a posting before its first model call failed."""
+    respx.get(f"{BASE_URL}/api/tags").mock(side_effect=httpx.ConnectError("refused"))
+    problem = OllamaProvider(model="qwen3:30b", base_url=BASE_URL).readiness_problem()
+    assert problem is not None and "Could not reach Ollama" in problem and "ollama serve" in problem
+
+
+@respx.mock
+def test_readiness_problem_reports_a_model_that_is_not_pulled():
+    respx.get(f"{BASE_URL}/api/tags").mock(return_value=httpx.Response(200, json={"models": [{"name": "llama3:latest"}]}))
+    problem = OllamaProvider(model="qwen3:30b", base_url=BASE_URL).readiness_problem()
+    assert problem is not None and "ollama pull qwen3:30b" in problem

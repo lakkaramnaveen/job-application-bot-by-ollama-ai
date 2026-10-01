@@ -2487,3 +2487,22 @@ def test_ctrl_c_silences_asyncio_shutdown_noise_but_a_normal_run_does_not(tmp_pa
 
     assert "Stopped." in capsys.readouterr().out
     assert not asyncio_logger.isEnabledFor(logging.ERROR)
+
+
+def test_run_stops_before_opening_a_browser_when_ollama_is_not_ready(tmp_path, monkeypatch, capsys):
+    from job_bot.llm.ollama_provider import OllamaProvider
+
+    class DownOllama(OllamaProvider):
+        def readiness_problem(self):
+            return "Could not reach Ollama at http://localhost:11434 (ConnectError). Is it running?"
+
+    def no_browser(*args, **kwargs):
+        raise AssertionError("must not open a browser when Ollama is down")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: DownOllama(model="m", base_url="http://x"))
+    monkeypatch.setattr("job_bot.cli.browser_session", no_browser)
+
+    with pytest.raises(SystemExit):
+        cmd_run(make_settings(tmp_path), make_args())
+
+    assert "Error: Could not reach Ollama" in capsys.readouterr().err
