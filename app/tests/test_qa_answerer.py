@@ -1,4 +1,4 @@
-from job_bot.generation.qa_answerer import answer_question
+from job_bot.generation.qa_answerer import answer_question, relevant_faq_answers
 from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import ApplicationAnswer
 
@@ -80,3 +80,48 @@ def test_system_prompt_forbids_a_self_review_or_second_draft_after_the_answer():
     system = provider.calls[0]["system"].lower()
     assert "self-review" in system
     assert "second draft" in system
+
+
+def test_relevant_faq_answers_keeps_only_related_cached_questions():
+    faq = {
+        "Will you now or in the future require visa sponsorship?": "No",
+        "How many years of experience do you have with React?": "5",
+        "Are you willing to relocate?": "Yes",
+    }
+
+    picked = relevant_faq_answers(faq, "Do you require sponsorship for an employment visa?")
+
+    assert list(picked) == ["Will you now or in the future require visa sponsorship?"]
+
+
+def test_relevant_faq_answers_ranks_by_overlap_and_respects_the_limit():
+    faq = {f"Years of experience with tool{i}?": str(i) for i in range(30)}
+    faq["How many years of experience do you have with Python?"] = "7"
+
+    picked = relevant_faq_answers(faq, "How many years of Python experience do you have?", limit=5)
+
+    assert len(picked) == 5
+    assert next(iter(picked)) == "How many years of experience do you have with Python?"
+
+
+def test_relevant_faq_answers_is_empty_for_a_question_with_no_keywords():
+    assert relevant_faq_answers({"Are you willing to relocate?": "Yes"}, "Yes / No") == {}
+
+
+def test_the_prompt_carries_only_the_relevant_faq_answers():
+    """Sending all 280 cached answers made every answered question a ~19.6k
+    token prompt (vs 2.8-5k for every other call) and forced a 32k context.
+    Only relevant ones go in now."""
+    faq = {f"Unrelated question number {i} about tool{i}?": "x" for i in range(200)}
+    faq["Will you require visa sponsorship?"] = "No"
+    captured = {}
+
+    class Capture:
+        def generate_structured(self, *, system, prompt, schema):
+            captured["prompt"] = prompt
+            return ApplicationAnswer(answer="No", confidence=0.9, based_on_resume=True)
+
+    answer_question(Capture(), "Resume text", faq, "Do you need visa sponsorship?")
+
+    assert "Will you require visa sponsorship?" in captured["prompt"]
+    assert "Unrelated question number" not in captured["prompt"]
