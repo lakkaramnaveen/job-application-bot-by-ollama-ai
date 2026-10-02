@@ -32,7 +32,6 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from job_bot.browser import linkedin_adapter
 from job_bot.browser.base_adapter import JobPosting
 from job_bot.browser.external_apply_adapter import ExternalApplyAdapter
 from job_bot.browser.linkedin_adapter import (
@@ -70,6 +69,10 @@ from job_bot.llm.ollama_provider import (
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
+from job_bot.pipeline.answers import AnswerService
+from job_bot.pipeline.answers import (
+    cacheable_answer as _cacheable_answer,  # noqa: F401 - kept for callers/tests
+)
 from job_bot.pipeline.failures import BROWSER_GONE_MESSAGE, _browser_is_gone, classify_failure
 from job_bot.pipeline.skip import SkipPolicy, SkipReason
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
@@ -81,7 +84,6 @@ from job_bot.safety.confirm import SubmitConfirmer
 from job_bot.safety.rate_limiter import DailyCapReached, RateLimiter
 from job_bot.text_utils import (
     format_local_timestamp,
-    is_echoed_question,
     is_per_position_field,
     normalize_company_name,
 )
@@ -457,66 +459,6 @@ def _start_ollama_and_wait(provider: OllamaProvider) -> str | None:
     return problem
 
 
-def _learn_from_rejected_fields(
-    e: FieldsRejected, posting: JobPosting, resume_store: ResumeStore, answer_gaps: AnswerGapStore
-) -> None:
-    """LinkedIn refused these answers - don't replay them. Each rejected
-    question loses its cached FAQ answer (so the next posting asking it
-    gets a fresh answer instead of the same refused one) and is queued in
-    answer_gaps for `job-bot review-answers`, where answering it once
-    saves the right answer for every future posting.
-
-    Like UnansweredRequiredQuestion, this doesn't count toward
-    MAX_APPLY_ATTEMPTS: its fix is the answer, after which the posting
-    should be retried. Best effort - a data-file problem here only loses
-    the learning, never the run.
-    """
-    for question, error in e.rejected:
-        if not question:
-            continue
-        try:
-            removed = resume_store.remove_faq_answer(question)
-            answer_gaps.record(question, job_id=posting.job_id, company=posting.company, title=posting.title)
-        except CorruptDataFile as data_error:
-            print(f"Warning: couldn't record the rejected answer - {data_error}")
-            continue
-        dropped = " Dropped its cached answer." if removed else ""
-        print(
-            f"  LinkedIn rejected the answer to {question!r} ({error}).{dropped} "
-            "Answer it once with `job-bot review-answers` and it'll be reused."
-        )
-
-
-def _cacheable_answer(question: str, answer: str) -> str | None:
-    """What may be saved to FAQ_PATH for `question`: the answer reduced to
-    the shape the question asks for, or None to not cache it at all.
-
-    Real case (2026-10-01/02): the cached answer to "Mobile phone number*"
-    was a whole contact block - name, phone, email, city - saved once at
-    high confidence and replayed into every later application. The fill
-    step reduces a value to its field's type (LinkedInAdapter's
-    _phone_value() and friends), but a cached answer outlives the field it
-    was produced for, so it's checked here too:
-    - a phone question caches just the number, an email question just the
-      address, and a "how many"/years question just the number;
-    - an answer with no such value isn't cached (it's still used for this
-      application, just not reused).
-    Anything else is cached as written.
-    """
-    shapes = linkedin_adapter.LinkedInAdapter  # the module's class, not cli's (tests replace that)
-    q = question.casefold()
-    if "phone" in q and "email" not in q:
-        return shapes._phone_value(answer)
-    if "email" in q and "phone" not in q:
-        return shapes._email_value(answer)
-    if shapes._asks_for_a_number(question):
-        return shapes._numeric_value(answer)
-    return answer
-
-
-# How long one application form may take before it's abandoned - see
-# _form_time_limit(). A normal Easy Apply form, model-answered questions
-# included, takes 1-3 minutes.
 FORM_TIME_LIMIT_SECONDS = 600
 
 
@@ -890,56 +832,16 @@ def _run_apply_cycle(
         resume_path = str(tailored_resume_path) if tailored_resume_path is not None else str(settings.resume_path)
         return cover_letter, resume_path
 
-    def answer(question: str, job_id: str) -> str:
-        if is_per_position_field(question):
-            # No LLM call, nothing recorded or cached - see
-            # is_per_position_field(). "" leaves it to the adapter's normal
-            # unanswered-required-question handling.
-            return ""
-        faq_answers = resume_store.faq_answers()
-        # An exact-text match against FAQ_PATH is already a curated,
-        # confident, resume-grounded answer (see save_faq_answer() below and
-        # qa_answerer.py's SYSTEM_PROMPT, which tells the LLM the same
-        # thing) - asking the LLM to re-derive it is a guaranteed-redundant
-        # round trip on every posting that repeats a question this exact,
-        # near-universal on eligibility/sponsorship-style questions asked
-        # near-verbatim across many postings. Skipping it matters
-        # especially for a local model, where each such call can otherwise
-        # cost many seconds for an answer already known. A near-miss
-        # (different phrasing/whitespace) still falls through to the LLM
-        # unaffected - this only ever short-circuits a literal match.
-        cached = faq_answers.get(question)
-        # An echoed entry (is_echoed_question()) already in FAQ_PATH from
-        # before this check existed is ignored rather than replayed - the
-        # LLM gets a fresh attempt instead.
-        if cached is not None and not is_echoed_question(question, cached):
-            tracker.record_qa(job_id, question, cached)
-            return cached
-        result = answer_question(
-            provider,
-            resume_text,
-            faq_answers,
-            question,
-            recent_answers=tracker.recent_qa_pairs(),
-        )
-        if is_echoed_question(question, result.answer):
-            # No answer, not a bad one: "" leaves the field unfilled, which
-            # the adapter already reports as an unanswered required
-            # question (recorded to answer_gaps for `job-bot
-            # review-answers`) - never recorded or cached, so it can't be
-            # replayed from FAQ_PATH or reused as a few-shot example.
-            return ""
-        tracker.record_qa(job_id, question, result.answer)
-        cacheable = _cacheable_answer(question, result.answer)
-        if cacheable is not None and result.based_on_resume and result.confidence >= settings.faq_save_confidence:
-            try:
-                resume_store.save_faq_answer(question, cacheable)
-            except CorruptDataFile as e:
-                # Caching is an optimization - the answer itself is still
-                # good, so the application goes ahead uncached rather than
-                # failing over an unreadable FAQ file.
-                print(f"Warning: answer not cached - {e}")
-        return result.answer
+    answers = AnswerService(
+        provider=provider,
+        resume_text=resume_text,
+        resume_store=resume_store,
+        tracker=tracker,
+        answer_gaps=answer_gaps,
+        save_confidence=settings.faq_save_confidence,
+        answer_fn=answer_question,
+    )
+    answer = answers.answer
 
     def apply_to(posting: JobPosting, cover_letter: CoverLetter, resume_path: str) -> bool | None:
         """Confirms, then submits for real (or stops right before the
@@ -1082,7 +984,7 @@ def _run_apply_cycle(
                 except CorruptDataFile as gap_error:
                     print(f"Warning: unanswered question not recorded - {gap_error}")
             if isinstance(e, FieldsRejected):
-                _learn_from_rejected_fields(e, posting, resume_store, answer_gaps)
+                answers.learn_from_rejection(e, posting)
             if not isinstance(e, UnansweredRequiredQuestion | FieldsRejected):
                 attempts = tracker.record_apply_failure(posting.job_id)
                 if settings.max_apply_attempts > 0 and attempts >= settings.max_apply_attempts:

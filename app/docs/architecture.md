@@ -43,8 +43,8 @@ job_bot/pipeline/
                 is_dead_end() (search's silent filter), one set
                 of rules                                          [done]
   answers.py    AnswerService: FAQ lookup, model call, caching shape
-                (_cacheable_answer), learning from FieldsRejected [next]
-  context.py    RunContext: the shared dependencies (tracker,
+                (cacheable_answer), learning from FieldsRejected  [done]
+  context.py    RunContext: the shared dependencies (tracker,   [next]
                 rate_limiter, blacklist, audit, failure_log,
                 answer_gaps, settings, provider, resume_store) as one
                 frozen dataclass, replacing 20-parameter signatures
