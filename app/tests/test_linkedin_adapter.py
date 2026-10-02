@@ -205,7 +205,7 @@ def test_a_contact_block_answer_fills_only_the_phone_number_into_a_tel_field(pla
     posting = JobPosting(
         job_id="1", title="X", company="Acme", url=f"file://{NATIVE_DIALOG_FIXTURE_PATH}", description=""
     )
-    block = "Jane Doe\n+1 314 555 0100\njane.doe@example.com\nSt Louis, MO"
+    block = "Jane Doe\n+1 555 555 0100\njane.doe@example.com\nSpringfield, IL"
 
     def answers(label: str) -> str:
         return block if "mobile phone" in label.casefold() else _answers(label)
@@ -215,15 +215,15 @@ def test_a_contact_block_answer_fills_only_the_phone_number_into_a_tel_field(pla
     )
 
     assert submitted is False  # reached the final step (dry run)
-    assert playwright_page.locator("#mobile").input_value() == "3145550100"
+    assert playwright_page.locator("#mobile").input_value() == "5555550100"
 
 
 @pytest.mark.parametrize(
     ("answer", "expected"),
     [
-        ("Jane Doe\n+1 314 555 0100\njane@example.com", "3145550100"),
-        ("(314) 555-0100", "3145550100"),
-        ("314.555.0100", "3145550100"),
+        ("Jane Doe\n+1 555 555 0100\njane@example.com", "5555550100"),
+        ("(555) 555-0100", "5555550100"),
+        ("555.555.0100", "5555550100"),
         ("+44 20 7946 0958", "442079460958"),
         ("I'd rather not say", None),
         ("5 years", None),
@@ -319,7 +319,7 @@ def test_numeric_value_still_has_nothing_for_an_unrelated_word():
 
 
 def test_email_value():
-    assert LinkedInAdapter._email_value("Jane Doe\n+1 314 555 0100\njane.doe@example.com\nSt Louis") == "jane.doe@example.com"
+    assert LinkedInAdapter._email_value("Jane Doe\n+1 555 555 0100\njane.doe@example.com\nSpringfield") == "jane.doe@example.com"
     assert LinkedInAdapter._email_value("no address here") is None
 
 
@@ -1396,7 +1396,7 @@ def test_best_match_index_matches_a_short_option_named_by_a_long_explanatory_ans
     clearly knowing and stating the answer every time.
     """
     options = ["Yes", "No"]
-    answer = "No, I am currently located in St Louis, MO and would need to relocate."
+    answer = "No, I am currently located in Springfield, IL and would need to relocate."
     assert LinkedInAdapter._best_match_index(options, answer) == 1
 
 

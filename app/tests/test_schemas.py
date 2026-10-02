@@ -146,7 +146,7 @@ def test_application_answer_does_not_reject_a_long_but_genuine_answer():
     local model's own distinctive reasoning-trace phrasing.
     """
     genuine = (
-        "No, I am currently located in St Louis, MO and would need to relocate for this role, "
+        "No, I am currently located in Springfield, IL and would need to relocate for this role, "
         "though I am open to discussing relocation assistance."
     )
     answer = ApplicationAnswer(answer=genuine, confidence=0.8, based_on_resume=True)

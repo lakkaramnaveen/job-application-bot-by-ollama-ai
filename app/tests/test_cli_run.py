@@ -2592,14 +2592,14 @@ def test_an_ollama_that_never_comes_up_stops_the_run_after_the_timeout(tmp_path,
     ("question", "answer", "cached"),
     [
         # The real poisoned entry: a contact block cached for a phone question.
-        ("Mobile phone number*", "Jane Doe\n+1 314 555 0100\njane@example.com\nSt Louis, MO", "3145550100"),
+        ("Mobile phone number*", "Jane Doe\n+1 555 555 0100\njane@example.com\nSpringfield, IL", "5555550100"),
         ("Mobile phone number*", "I'd prefer to be contacted by email", None),
         ("Email address", "Jane Doe - jane@example.com", "jane@example.com"),
         ("How many years of work experience do you have with Java?", "5+ years", "5"),
         ("How many years of Advertising Services experience do you have?", "No", "0"),
         ("How many years of experience do you have with Rust?", "Some exposure", None),
-        ("What is the best phone number and email to reach you?", "314 555 0100, jane@example.com",
-         "314 555 0100, jane@example.com"),
+        ("What is the best phone number and email to reach you?", "555 555 0100, jane@example.com",
+         "555 555 0100, jane@example.com"),
         ("Are you authorized to work in the US?", "Yes", "Yes"),
     ],
 )
@@ -2620,7 +2620,7 @@ def test_a_contact_block_answer_to_a_phone_question_is_cached_as_just_the_number
 
     provider = FakeProvider(
         application_answer=ApplicationAnswer(
-            answer="Jane Doe\n+1 314 555 0100\njane@example.com\nSt Louis, MO", confidence=0.95, based_on_resume=True
+            answer="Jane Doe\n+1 555 555 0100\njane@example.com\nSpringfield, IL", confidence=0.95, based_on_resume=True
         )
     )
     monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
@@ -2630,7 +2630,7 @@ def test_a_contact_block_answer_to_a_phone_question_is_cached_as_just_the_number
 
     cmd_run(settings, make_args())
 
-    assert json.loads(settings.faq_path.read_text()) == {"Mobile phone number*": "3145550100"}
+    assert json.loads(settings.faq_path.read_text()) == {"Mobile phone number*": "5555550100"}
 
 
 def test_an_answer_linkedin_rejected_is_dropped_from_the_cache_and_queued_for_review(tmp_path, monkeypatch, capsys):

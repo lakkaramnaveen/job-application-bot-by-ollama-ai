@@ -192,7 +192,7 @@ def test_best_match_index_matches_a_short_option_named_by_a_long_explanatory_ans
     answer states its position.
     """
     options = ["Yes", "No"]
-    answer = "No, I am currently located in St Louis, MO and would need to relocate."
+    answer = "No, I am currently located in Springfield, IL and would need to relocate."
     assert ExternalApplyAdapter._best_match_index(options, answer) == 1
 
 
