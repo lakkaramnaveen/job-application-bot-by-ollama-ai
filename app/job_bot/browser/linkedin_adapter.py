@@ -317,8 +317,16 @@ class LinkedInAdapter(JobBoardAdapter):
         max_results: int = 25,
         experience_levels: list[str] | None = None,
         include_external: bool = False,
+        skip: Callable[[JobPosting], bool] | None = None,
     ) -> list[JobPosting]:
-        """Searches postings from the last 24 hours first, and only widens
+        """`skip`, if given, marks postings the caller would pass over
+        anyway (already applied, company limit reached, ...): they don't
+        count toward max_results, so the search keeps paging for ones it can
+        use. Real case (2026-10-02): 42 of one morning's results were
+        skipped for MAX_APPLICATIONS_PER_COMPANY alone - over half of each
+        25-posting pool, and largely the same postings every cycle.
+
+        Searches postings from the last 24 hours first, and only widens
         to the last 3 days if that isn't enough to fill max_results -
         never further back than 3 days, so a run is always looking at
         genuinely fresh postings rather than ones that have likely already
@@ -339,7 +347,14 @@ class LinkedInAdapter(JobBoardAdapter):
         easy_apply_filter = "" if include_external else "&f_AL=true"
 
         postings = self._search_one_window(
-            keywords, location, max_results, experience_filter, easy_apply_filter, include_external, DATE_POSTED_24H
+            keywords,
+            location,
+            max_results,
+            experience_filter,
+            easy_apply_filter,
+            include_external,
+            DATE_POSTED_24H,
+            skip,
         )
         if len(postings) >= max_results:
             return postings
@@ -354,6 +369,7 @@ class LinkedInAdapter(JobBoardAdapter):
             easy_apply_filter,
             include_external,
             DATE_POSTED_3_DAYS,
+            skip,
         )
 
     def _search_one_window(
@@ -365,6 +381,7 @@ class LinkedInAdapter(JobBoardAdapter):
         easy_apply_filter: str,
         include_external: bool,
         date_filter: str,
+        skip: Callable[[JobPosting], bool] | None = None,
     ) -> list[JobPosting]:
         postings: list[JobPosting] = []
         seen_ids: set[str] = set()
@@ -415,6 +432,8 @@ class LinkedInAdapter(JobBoardAdapter):
                 new_ids_on_this_page += 1
 
                 posting = self._parse_job_card(card, job_id, include_external)
+                if posting is not None and skip is not None and skip(posting):
+                    continue
                 if posting is not None:
                     postings.append(posting)
                     if len(postings) >= max_results:

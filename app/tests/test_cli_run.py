@@ -88,7 +88,7 @@ class FakeAdapter:
         self.page = page
         self.fill_and_submit_calls: list[dict] = []
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         return [JOB]
 
     def load_description(self, posting):
@@ -113,7 +113,7 @@ class MultiJobAdapter(FakeAdapter):
     tests that need to exercise more than one loop iteration of cmd_run.
     """
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         return [JOB, JOB2, JOB3]
 
 
@@ -128,7 +128,7 @@ class LoopFakeAdapter(FakeAdapter):
         super().__init__(page)
         self.search_calls = 0
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         self.search_calls += 1
         job_id = f"loop-job-{self.search_calls}"
         return [JobPosting(job_id=job_id, title="Backend Engineer", company="Acme Corp", url=f"https://x/{job_id}", description="")]
@@ -683,7 +683,7 @@ class ScriptedLoadAdapter(FakeAdapter):
         super().__init__(page)
         self._postings, self._failing, self.loads = postings, set(failing), []
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         return self._postings
 
     def load_description(self, posting):
@@ -756,7 +756,7 @@ class RecordingSearchAdapter(FakeAdapter):
         super().__init__(page)
         self.searches = []
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         self.searches.append((keywords, location))
         return [JOB]
 
@@ -1199,7 +1199,7 @@ class ExternalApplyFakeAdapter(FakeAdapter):
         self.external_page = FakeExternalPage()
         self.opened_for: list[str] = []
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         return [EXTERNAL_JOB]
 
     def open_external_application(self, posting):
@@ -1442,7 +1442,7 @@ class LoadDescriptionFailsForFirstJobAdapter(FakeAdapter):
     aborting on one bad posting.
     """
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         return [JOB, JOB2, JOB3]
 
     def load_description(self, posting):
@@ -1515,7 +1515,7 @@ class PrepClosesTheBrowserForFirstJobAdapter(FakeAdapter):
     must stop rather than churn through job2/job3 against a dead page.
     """
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         return [JOB, JOB2, JOB3]
 
     def load_description(self, posting):
@@ -1824,7 +1824,7 @@ class SearchFailsOnceAdapter(FakeAdapter):
         super().__init__(page)
         self.search_calls = 0
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         self.search_calls += 1
         if self.search_calls == 1:
             raise RuntimeError("Failed to load https://www.linkedin.com/jobs/search/... after 3 attempts")
@@ -1857,7 +1857,7 @@ class SignedOutAdapter(FakeAdapter):
         super().__init__(page)
         self.search_calls = 0
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         self.search_calls += 1
         raise LinkedInSignedOut("https://www.linkedin.com/authwall?trk=bf")
 
@@ -1916,7 +1916,7 @@ class ApplyClosesTheBrowserForFirstJobAdapter(FakeAdapter):
     is_closed() check.
     """
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         return [JOB, JOB2, JOB3]
 
     def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
@@ -2057,7 +2057,7 @@ class SleepThenReturnsAJobAdapter(FakeAdapter):
         super().__init__(page)
         self.search_calls = 0
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         self.search_calls += 1
         if self.search_calls == 1:
             return []
@@ -2224,7 +2224,7 @@ class AppliesOnceThenFindsNothingAdapter(FakeAdapter):
         super().__init__(page)
         self.search_calls = 0
 
-    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False):
+    def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         self.search_calls += 1
         if self.search_calls == 1:
             return [
@@ -2736,3 +2736,37 @@ def test_a_dead_browser_driver_during_search_stops_the_loop_instead_of_sleeping(
     cmd_run(make_settings(tmp_path), make_args(loop=True))
 
     assert "browser window was closed or crashed - stopping the run" in capsys.readouterr().out
+
+
+def test_run_tells_search_to_skip_postings_it_would_pass_over_anyway(tmp_path, monkeypatch):
+    """search() pages past dead ends (already applied, company limit,
+    blacklist, retry cap) so the pool is filled with usable postings."""
+    seen_skip = {}
+
+    class SkipRecordingAdapter(FakeAdapter):
+        def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
+            seen_skip["fn"] = skip
+            return []
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", SkipRecordingAdapter)
+    settings = make_settings(tmp_path, max_applications_per_company=1, max_apply_attempts=2)
+    tracker = Tracker(settings.db_path)
+    for job_id, company in (("applied", "Initech"), ("same-co", "Initech"), ("failing", "Globex"), ("fresh", "Umbrella")):
+        tracker.upsert_job(job_id, "Engineer", company, f"https://example.com/{job_id}")
+    tracker.mark_applied("applied")
+    tracker.record_apply_failure("failing")
+    tracker.record_apply_failure("failing")
+
+    cmd_run(settings, make_args())
+
+    skip = seen_skip["fn"]
+
+    def posting(job_id, company):
+        return JobPosting(job_id=job_id, title="Engineer", company=company, url="u", description="")
+
+    assert skip(posting("applied", "Initech"))
+    assert skip(posting("same-co", "Initech"))  # company limit reached
+    assert skip(posting("failing", "Globex"))  # retry cap reached
+    assert not skip(posting("fresh", "Umbrella"))

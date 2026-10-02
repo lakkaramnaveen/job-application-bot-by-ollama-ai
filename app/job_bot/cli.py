@@ -745,6 +745,21 @@ def _run_apply_cycle(
     normal cycle that just found no eligible postings.
     """
     requested_ids: list[str] = getattr(args, "job_id", None) or []
+
+    def is_dead_end(posting: JobPosting) -> bool:
+        """The cheap, silent subset of should_skip() below - postings this
+        run will certainly pass over - so search() keeps paging for ones it
+        can use instead of filling the pool with them. No logging or
+        printing: should_skip() still runs, and still reports, on whatever
+        search() returns. A blacklisted company is deliberately not
+        included: it's rare, and its skip_blacklisted audit entry is a
+        safety record that must still be written."""
+        if tracker.has_applied(posting.job_id):
+            return True
+        limit = settings.max_applications_per_company
+        if limit > 0 and tracker.applications_at_company(posting.company) >= limit:
+            return True
+        return settings.max_apply_attempts > 0 and tracker.apply_failures(posting.job_id) >= settings.max_apply_attempts
     if requested_ids:
         # `--job-id`: exactly these previously seen postings, instead of a
         # search - to retry one that failed (e.g. after a fix) or dry-run
@@ -769,6 +784,7 @@ def _run_apply_cycle(
                 max_results=args.search_pool,
                 experience_levels=experience_levels,
                 include_external=include_external,
+                skip=is_dead_end,
             )
         except Exception as e:  # noqa: BLE001 - a search failure should cost this cycle, not crash the whole run/loop
             # Real bug this guards against: search() itself (not yet a specific

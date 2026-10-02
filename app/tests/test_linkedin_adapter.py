@@ -1177,6 +1177,20 @@ def test_search_skips_already_applied_and_deduplicates_across_pages(playwright_p
     assert all(p.title and p.company for p in postings)
 
 
+def test_search_does_not_count_postings_the_caller_would_skip(playwright_page, monkeypatch):
+    """Real case: over half of each 25-posting pool was companies already
+    applied to (MAX_APPLICATIONS_PER_COMPANY). A skipped posting must not
+    fill a slot - with max_results=1, skipping 101 must yield 103, not
+    nothing."""
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(playwright_page, "goto", lambda url, **kw: real_goto(f"file://{SEARCH_FIXTURE_PATH}"))
+    adapter = LinkedInAdapter(playwright_page)
+
+    postings = adapter.search("python", "Remote", max_results=1, skip=lambda p: p.job_id == "101")
+
+    assert [p.job_id for p in postings] == ["103"]
+
+
 def test_search_strips_the_duplicate_verified_badge_line_from_the_title(playwright_page, monkeypatch):
     """Real bug this guards against: LinkedIn's "Verified" employer badge,
     when present, is nested inside the same title <a> and repeats the
