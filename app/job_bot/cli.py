@@ -28,6 +28,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from job_bot.browser import linkedin_adapter
 from job_bot.browser.base_adapter import JobPosting
 from job_bot.browser.external_apply_adapter import ExternalApplyAdapter
 from job_bot.browser.linkedin_adapter import (
@@ -437,6 +438,33 @@ def _start_ollama_and_wait(provider: OllamaProvider) -> str | None:
     return problem
 
 
+def _cacheable_answer(question: str, answer: str) -> str | None:
+    """What may be saved to FAQ_PATH for `question`: the answer reduced to
+    the shape the question asks for, or None to not cache it at all.
+
+    Real case (2026-10-01/02): the cached answer to "Mobile phone number*"
+    was a whole contact block - name, phone, email, city - saved once at
+    high confidence and replayed into every later application. The fill
+    step reduces a value to its field's type (LinkedInAdapter's
+    _phone_value() and friends), but a cached answer outlives the field it
+    was produced for, so it's checked here too:
+    - a phone question caches just the number, an email question just the
+      address, and a "how many"/years question just the number;
+    - an answer with no such value isn't cached (it's still used for this
+      application, just not reused).
+    Anything else is cached as written.
+    """
+    shapes = linkedin_adapter.LinkedInAdapter  # the module's class, not cli's (tests replace that)
+    q = question.casefold()
+    if "phone" in q and "email" not in q:
+        return shapes._phone_value(answer)
+    if "email" in q and "phone" not in q:
+        return shapes._email_value(answer)
+    if shapes._asks_for_a_number(question):
+        return shapes._numeric_value(answer)
+    return answer
+
+
 def _silence_asyncio_shutdown_noise() -> None:
     """After a Ctrl+C, stop asyncio logging errors about the browser work
     the interrupt cut short.
@@ -836,9 +864,10 @@ def _run_apply_cycle(
             # replayed from FAQ_PATH or reused as a few-shot example.
             return ""
         tracker.record_qa(job_id, question, result.answer)
-        if result.based_on_resume and result.confidence >= settings.faq_save_confidence:
+        cacheable = _cacheable_answer(question, result.answer)
+        if cacheable is not None and result.based_on_resume and result.confidence >= settings.faq_save_confidence:
             try:
-                resume_store.save_faq_answer(question, result.answer)
+                resume_store.save_faq_answer(question, cacheable)
             except CorruptDataFile as e:
                 # Caching is an optimization - the answer itself is still
                 # good, so the application goes ahead uncached rather than

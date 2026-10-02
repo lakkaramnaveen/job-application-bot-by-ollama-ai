@@ -490,7 +490,8 @@ def test_run_caches_high_confidence_answers_to_faq(tmp_path, monkeypatch):
     cmd_run(settings, make_args())
 
     faq = json.loads(settings.faq_path.read_text())
-    assert faq == {"Years of experience?": "5 years"}
+    # Cached as the number the question asks for - see _cacheable_answer().
+    assert faq == {"Years of experience?": "5"}
 
 
 def test_run_does_not_cache_low_confidence_answers_to_faq(tmp_path, monkeypatch):
@@ -2585,3 +2586,48 @@ def test_an_ollama_that_never_comes_up_stops_the_run_after_the_timeout(tmp_path,
         cmd_run(make_settings(tmp_path, start_ollama_if_needed=True), make_args())
 
     assert "Error: Could not reach Ollama" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("question", "answer", "cached"),
+    [
+        # The real poisoned entry: a contact block cached for a phone question.
+        ("Mobile phone number*", "Jane Doe\n+1 314 555 0100\njane@example.com\nSt Louis, MO", "3145550100"),
+        ("Mobile phone number*", "I'd prefer to be contacted by email", None),
+        ("Email address", "Jane Doe - jane@example.com", "jane@example.com"),
+        ("How many years of work experience do you have with Java?", "5+ years", "5"),
+        ("How many years of Advertising Services experience do you have?", "No", "0"),
+        ("How many years of experience do you have with Rust?", "Some exposure", None),
+        ("What is the best phone number and email to reach you?", "314 555 0100, jane@example.com",
+         "314 555 0100, jane@example.com"),
+        ("Are you authorized to work in the US?", "Yes", "Yes"),
+    ],
+)
+def test_cacheable_answer_saves_only_the_shape_the_question_asks_for(question, answer, cached):
+    from job_bot.cli import _cacheable_answer
+
+    assert _cacheable_answer(question, answer) == cached
+
+
+def test_a_contact_block_answer_to_a_phone_question_is_cached_as_just_the_number(tmp_path, monkeypatch):
+    """Real case: "Mobile phone number*" was cached as a whole contact block
+    and replayed into every later application."""
+
+    class PhoneAdapter(FakeAdapter):
+        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+            answer_question("Mobile phone number*")
+            return not dry_run
+
+    provider = FakeProvider(
+        application_answer=ApplicationAnswer(
+            answer="Jane Doe\n+1 314 555 0100\njane@example.com\nSt Louis, MO", confidence=0.95, based_on_resume=True
+        )
+    )
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", PhoneAdapter)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args())
+
+    assert json.loads(settings.faq_path.read_text()) == {"Mobile phone number*": "3145550100"}
