@@ -2901,3 +2901,40 @@ def test_a_failed_search_is_not_reported_as_a_failed_posting(tmp_path, monkeypat
     out = capsys.readouterr().out
     assert "could not be completed" not in out
     assert "The LinkedIn search itself failed, so no postings were tried" in out
+
+
+def _failure_log_entries(settings):
+    return [json.loads(line) for line in settings.failed_applications_log_path.read_text().splitlines() if line]
+
+
+def test_each_failure_is_logged_with_its_class(tmp_path, monkeypatch):
+    """docs/scaling.md: failures are data - each entry carries a FailureClass
+    so they can be counted and alerted on by class, not by error text."""
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", StuckFormAdapter)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args())
+
+    [entry] = _failure_log_entries(settings)
+    assert entry["action"] == "apply_error"
+    assert entry["details"]["failure_class"] == "posting"
+
+
+def test_a_refused_search_is_logged_as_throttled(tmp_path, monkeypatch):
+    from job_bot.browser.linkedin_adapter import NavigationFailed
+
+    class RefusedSearch(FakeAdapter):
+        def search(self, *args, **kwargs):
+            raise NavigationFailed("Failed to load https://www.linkedin.com/jobs/search/ after 3 attempts")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", RefusedSearch)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args())
+
+    [entry] = _failure_log_entries(settings)
+    assert (entry["action"], entry["details"]["failure_class"]) == ("search_error", "throttled")

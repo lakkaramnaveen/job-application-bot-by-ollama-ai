@@ -14,13 +14,32 @@ single answer to "after this exception, does the run continue?".
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from job_bot.browser.linkedin_adapter import NavigationFailed
+from job_bot.browser.linkedin_adapter import (
+    FieldsRejected,
+    LinkedInSignedOut,
+    NavigationFailed,
+    UnansweredRequiredQuestion,
+)
 from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.ollama_provider import OllamaProviderError
+
+
+class FailureClass(Enum):
+    """How a failure should be handled anywhere in the system - retry,
+    back off, move on, ask the user, or stop. See docs/scaling.md
+    ("Error handling as a system"); logged with every failure so failures
+    can be counted and alerted on by class rather than by error text."""
+
+    TRANSIENT = "transient"  # likely to succeed if retried soon
+    THROTTLED = "throttled"  # the other side is rate-limiting: back off
+    POSTING = "posting"  # this posting can't be done; move on
+    USER_ACTION = "user_action"  # only the user can fix it
+    FATAL = "fatal"  # the run can't continue
 
 
 @dataclass(frozen=True)
@@ -36,6 +55,7 @@ class FailureVerdict:
     fatal: bool = False
     message: str = ""
     navigation_refused: bool = False
+    failure_class: FailureClass = FailureClass.POSTING
 
 
 POSTING_ONLY = FailureVerdict()
@@ -64,23 +84,46 @@ def throttle_backoff_minutes(base_minutes: float, streak: int) -> float:
 def classify_failure(e: Exception, page: Page) -> FailureVerdict:
     """The verdict for an exception raised while preparing or applying to
     one posting. Order matters only for messages: each fatal condition is
-    independent and any one of them stops the run."""
+    independent and any one of them stops the run. Every verdict carries a
+    FailureClass; `fatal` and `navigation_refused` are what this run acts on."""
     if _is_ollama_unreachable(e):
         return FailureVerdict(
             fatal=True,
             message="Ollama is unreachable - stopping the run instead of repeating this for every posting.",
+            failure_class=FailureClass.FATAL,
         )
     if _is_claude_misconfigured(e):
         return FailureVerdict(
             fatal=True,
             message=f"Claude provider is misconfigured ({e}) - stopping the run instead of repeating this "
             "for every posting.",
+            failure_class=FailureClass.USER_ACTION,  # a bad key or model name - only the user can fix it
         )
     if _browser_is_gone(e, page):
-        return FailureVerdict(fatal=True, message=BROWSER_GONE_MESSAGE)
+        return FailureVerdict(fatal=True, message=BROWSER_GONE_MESSAGE, failure_class=FailureClass.FATAL)
     if isinstance(e, NavigationFailed):
-        return FailureVerdict(navigation_refused=True)
-    return POSTING_ONLY
+        return FailureVerdict(navigation_refused=True, failure_class=FailureClass.THROTTLED)
+    return FailureVerdict(failure_class=failure_class_of(e))
+
+
+def failure_class_of(e: Exception) -> FailureClass:
+    """The FailureClass of an exception that doesn't end the run on its own -
+    used for the per-posting verdict above, and for logging any failure."""
+    if isinstance(e, NavigationFailed):
+        return FailureClass.THROTTLED
+    if isinstance(e, LinkedInSignedOut | UnansweredRequiredQuestion | FieldsRejected):
+        # Signed out: `job-bot login`. A question the bot can't answer, or an
+        # answer LinkedIn refused: `job-bot review-answers`.
+        return FailureClass.USER_ACTION
+    if _is_ollama_unreachable(e):
+        return FailureClass.FATAL
+    if _is_claude_misconfigured(e):
+        return FailureClass.USER_ACTION
+    if isinstance(e, OllamaProviderError | ClaudeProviderError):
+        # Malformed JSON after retries, a generation stopped at its deadline,
+        # a model-side abort - or the provider rate-limiting us.
+        return FailureClass.THROTTLED if "rate limit" in str(e).casefold() else FailureClass.TRANSIENT
+    return FailureClass.POSTING
 
 
 def _browser_is_gone(e: Exception, page: Page) -> bool:

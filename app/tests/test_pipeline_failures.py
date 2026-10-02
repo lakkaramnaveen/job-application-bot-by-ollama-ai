@@ -4,10 +4,15 @@ the run continue?" - see job_bot/pipeline/failures.py."""
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 
-from job_bot.browser.linkedin_adapter import NavigationFailed
+from job_bot.browser.linkedin_adapter import (
+    FieldsRejected,
+    LinkedInSignedOut,
+    NavigationFailed,
+    UnansweredRequiredQuestion,
+)
 from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.ollama_provider import OllamaProviderError
-from job_bot.pipeline.failures import BROWSER_GONE_MESSAGE, POSTING_ONLY, classify_failure
+from job_bot.pipeline.failures import BROWSER_GONE_MESSAGE, POSTING_ONLY, FailureClass, classify_failure
 
 
 class Page:
@@ -47,15 +52,37 @@ def test_a_refused_page_load_counts_toward_the_throttling_streak_but_is_not_fata
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "failure_class"),
     [
-        RuntimeError("Could not complete the Easy Apply form for job 1 (stuck on a step ...)"),
-        OllamaProviderError("Model 'm' did not return schema-valid JSON after 3 attempts"),
-        ClaudeProviderError("Rate limited, try again later"),
+        (RuntimeError("Could not complete the Easy Apply form for job 1 (stuck on a step ...)"), FailureClass.POSTING),
+        (OllamaProviderError("Model 'm' did not return schema-valid JSON after 3 attempts"), FailureClass.TRANSIENT),
+        (ClaudeProviderError("Rate limited, try again later"), FailureClass.THROTTLED),
+        (UnansweredRequiredQuestion("1", "Security clearance level?", "No answer"), FailureClass.USER_ACTION),
+        (FieldsRejected("1", [("Q?", "Invalid input")], "stuck"), FailureClass.USER_ACTION),
+        (LinkedInSignedOut("signed out"), FailureClass.USER_ACTION),
     ],
 )
-def test_everything_else_costs_only_this_posting(error):
-    assert classify_failure(error, Page()) == POSTING_ONLY
+def test_everything_else_costs_only_this_posting_with_its_class(error, failure_class):
+    verdict = classify_failure(error, Page())
+    assert not verdict.fatal and not verdict.navigation_refused  # the run carries on
+    assert verdict.failure_class is failure_class
+
+
+@pytest.mark.parametrize(
+    ("error", "failure_class"),
+    [
+        (OllamaProviderError("Could not reach Ollama at http://localhost:11434."), FailureClass.FATAL),
+        (ClaudeProviderError("Invalid ANTHROPIC_API_KEY."), FailureClass.USER_ACTION),
+        (PlaywrightError("Page.goto: Target page, context or browser has been closed"), FailureClass.FATAL),
+        (NavigationFailed("Failed to load https://x/jobs/view/1/ after 3 attempts"), FailureClass.THROTTLED),
+    ],
+)
+def test_run_level_failures_carry_their_class(error, failure_class):
+    assert classify_failure(error, Page()).failure_class is failure_class
+
+
+def test_posting_only_is_the_plain_posting_class():
+    assert POSTING_ONLY.failure_class is FailureClass.POSTING
 
 
 @pytest.mark.parametrize(

@@ -37,7 +37,13 @@ from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
 from job_bot.pipeline.answers import AnswerService
 from job_bot.pipeline.context import RunContext
-from job_bot.pipeline.failures import BROWSER_GONE_MESSAGE, _browser_is_gone, classify_failure
+from job_bot.pipeline.failures import (
+    BROWSER_GONE_MESSAGE,
+    FailureClass,
+    _browser_is_gone,
+    classify_failure,
+    failure_class_of,
+)
 from job_bot.pipeline.skip import SkipPolicy, SkipReason
 from job_bot.safety.rate_limiter import DailyCapReached
 
@@ -217,12 +223,10 @@ def run_cycle(
             # signed_out is what doctor and the dashboard key off (AuditLogger.last_search_signed_out_at())
             # - a structured flag, not a match on the error message's wording.
             signed_out = isinstance(e, LinkedInSignedOut)
-            audit.log(
-                "search_error", keywords=args.keywords, location=args.location, error=str(e), signed_out=signed_out
-            )
-            failure_log.log(
-                "search_error", keywords=args.keywords, location=args.location, error=str(e), signed_out=signed_out
-            )
+            failure_class = (FailureClass.FATAL if _browser_is_gone(e, page) else failure_class_of(e)).value
+            details = dict(keywords=args.keywords, location=args.location, error=str(e), signed_out=signed_out)
+            audit.log("search_error", **details, failure_class=failure_class)
+            failure_log.log("search_error", **details, failure_class=failure_class)
             print(f"Error searching for postings: {e}")
             if _browser_is_gone(e, page):
                 print(BROWSER_GONE_MESSAGE)
@@ -467,7 +471,9 @@ def run_cycle(
             print("  Writing a tailored resume and cover letter...")
             cover_letter, resume_path = generate_materials(posting, description)
         except Exception as e:  # noqa: BLE001 - one bad posting shouldn't abort the whole run
-            audit.log("prep_error", job_id=posting.job_id, error=str(e))
+            verdict = classify_failure(e, page)
+            failure_class = verdict.failure_class.value
+            audit.log("prep_error", job_id=posting.job_id, error=str(e), failure_class=failure_class)
             failure_log.log(
                 "prep_error",
                 job_id=posting.job_id,
@@ -475,10 +481,10 @@ def run_cycle(
                 company=posting.company,
                 url=posting.url,
                 error=str(e),
+                failure_class=failure_class,
             )
             print(f"Error preparing application for {posting.title} at {posting.company}: {e}")
             failed += 1
-            verdict = classify_failure(e, page)
             if verdict.fatal:
                 print(verdict.message)
                 fatal_error = True
@@ -528,7 +534,9 @@ def run_cycle(
                         f"  Giving up on this posting after {attempts} failed attempts "
                         f"(MAX_APPLY_ATTEMPTS={settings.max_apply_attempts})."
                     )
-            audit.log("apply_error", job_id=posting.job_id, error=str(e))
+            verdict = classify_failure(e, page)
+            failure_class = verdict.failure_class.value
+            audit.log("apply_error", job_id=posting.job_id, error=str(e), failure_class=failure_class)
             failure_log.log(
                 "apply_error",
                 job_id=posting.job_id,
@@ -536,10 +544,10 @@ def run_cycle(
                 company=posting.company,
                 url=posting.url,
                 error=str(e),
+                failure_class=failure_class,
             )
             print(f"Error applying to {posting.title} at {posting.company}: {e}")
             failed += 1
-            verdict = classify_failure(e, page)
             if verdict.fatal:
                 print(verdict.message)
                 fatal_error = True
