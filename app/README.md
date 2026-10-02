@@ -77,6 +77,10 @@ links to the section with the full detail:
   LinkedIn URL, as shown by `job-bot audit-log --failures`. It must be one a
   search has already found, skips the search, and ignores
   `MAX_APPLY_ATTEMPTS`.
+  After a fix, `job-bot run --retry-failed` retries every posting whose
+  application failed in the last 2 days (`--retry-failed 5` for 5 days)
+  that's still undecided and scored at or above the bar - no search, usual
+  skip rules. Add `--max-apps N` to allow more than the default 5.
 - **Selectors may need tuning.** LinkedIn's page structure isn't public and
   changes over time. If a run stops finding a button/field it used to find,
   check `job_bot/browser/linkedin_adapter.py`'s `SELECTORS` dict first, and use

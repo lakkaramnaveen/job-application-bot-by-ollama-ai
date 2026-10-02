@@ -210,6 +210,7 @@ def make_args(**overrides) -> argparse.Namespace:
         loop_interval_minutes=20,
         include_external_apply=False,
         job_id=None,
+        retry_failed=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -2803,3 +2804,46 @@ def test_loop_pauses_min_cycle_gap_after_a_cycle_that_applied(tmp_path, monkeypa
     out = capsys.readouterr().out
     assert "pausing 5 minute(s) before searching again" in out
     assert "pausing 5 minute(s) after a cycle that applied" in out
+
+
+def test_retry_failed_reruns_recent_failures_without_searching(tmp_path, monkeypatch, capsys):
+    """`job-bot run --retry-failed`: postings that failed recently on a
+    since-fixed bug are applied to again, through the --job-id path."""
+    from datetime import UTC, datetime, timedelta
+
+    adapter = SearchMustNotRunAdapter(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    settings = make_settings(tmp_path, max_apply_attempts=1)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score("j1", "Platform Engineer", "Acme Corp", "https://example.com/jobs/view/j1/", 90, True)
+    tracker.record_apply_failure("j1")  # at the retry cap - an explicit retry bypasses it
+    recent = (datetime.now(UTC) - timedelta(hours=3)).isoformat()
+    settings.failed_applications_log_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.failed_applications_log_path.write_text(
+        json.dumps({"timestamp": recent, "action": "apply_error", "details": {"job_id": "j1", "error": "stuck"}}) + "\n"
+    )
+
+    cmd_run(settings, make_args(retry_failed=2.0, dry_run=True))
+
+    assert [c["posting"].job_id for c in adapter.fill_and_submit_calls] == ["j1"]
+    assert "Retrying 1 posting(s) that failed in the last 2 day(s)." in capsys.readouterr().out
+
+
+def test_retry_failed_with_nothing_to_retry_says_so(tmp_path, monkeypatch, capsys):
+    def no_browser(*args, **kwargs):
+        raise AssertionError("nothing to retry - no browser needed")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", no_browser)
+
+    cmd_run(make_settings(tmp_path), make_args(retry_failed=2.0))
+
+    assert "No postings that failed in the last 2 day(s) are left to retry." in capsys.readouterr().out
+
+
+def test_retry_failed_with_loop_is_refused(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        cmd_run(make_settings(tmp_path), make_args(retry_failed=2.0, loop=True))
+    assert "--retry-failed can't be combined with --loop or --job-id" in capsys.readouterr().err

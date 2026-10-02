@@ -75,6 +75,7 @@ from job_bot.pipeline.answers import (
 )
 from job_bot.pipeline.context import RunContext
 from job_bot.pipeline.failures import BROWSER_GONE_MESSAGE, _browser_is_gone, classify_failure
+from job_bot.pipeline.retry import recent_failures_to_retry, since_days_ago
 from job_bot.pipeline.skip import SkipPolicy, SkipReason
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 from job_bot.resume.store import ResumeStore, unusable_faq_reason
@@ -213,6 +214,14 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    retry_days = getattr(args, "retry_failed", None)
+    if retry_days is not None and (args.loop or getattr(args, "job_id", None)):
+        print(
+            "Error: --retry-failed can't be combined with --loop or --job-id - it picks the postings "
+            "itself and runs them once.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if args.loop and getattr(args, "job_id", None):
         print(
             "Error: --loop can't be combined with --job-id - --job-id runs the given posting(s) once.",
@@ -296,6 +305,21 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     if args.location is None:
         args.location = settings.search_location
     min_score = args.min_score if args.min_score is not None else settings.min_match_score
+    if retry_days is not None:
+        # --retry-failed: postings that failed recently (most often on a bug
+        # since fixed) and are still undecided - run through the --job-id
+        # path below, so every usual skip rule still applies.
+        retry_ids = recent_failures_to_retry(
+            AuditLogger(settings.failed_applications_log_path).read_entries(),
+            Tracker(settings.db_path),
+            since=since_days_ago(retry_days, now=datetime.now(UTC)),
+            min_score=min_score,
+        )
+        if not retry_ids:
+            print(f"No postings that failed in the last {retry_days:g} day(s) are left to retry.")
+            return
+        print(f"Retrying {len(retry_ids)} posting(s) that failed in the last {retry_days:g} day(s).")
+        args.job_id = retry_ids
     raw_exclude = (
         args.exclude_title_keywords
         if args.exclude_title_keywords is not None
@@ -2586,6 +2610,17 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="ID",
         help="Run just this previously seen posting instead of searching (repeatable) - e.g. to retry "
         "one that failed, or with --dry-run to watch its form. Ignores MAX_APPLY_ATTEMPTS.",
+    )
+    run_p.add_argument(
+        "--retry-failed",
+        nargs="?",
+        type=float,
+        const=2.0,
+        default=None,
+        metavar="DAYS",
+        help="Instead of searching, retry postings whose application failed in the last DAYS days "
+        "(default 2) and that are still undecided and scored at or above the bar - e.g. after a fix. "
+        "Usual skip rules apply; use --max-apps to allow more than the default per run.",
     )
     run_p.add_argument("--dry-run", action="store_true", help="Stop right before the final Submit click.")
     run_p.add_argument("--headless", action="store_true", help="Run the browser without a visible window.")
