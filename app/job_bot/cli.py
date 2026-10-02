@@ -71,6 +71,7 @@ from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
 from job_bot.pipeline.failures import BROWSER_GONE_MESSAGE, _browser_is_gone, classify_failure
+from job_bot.pipeline.skip import SkipPolicy, SkipReason
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 from job_bot.resume.store import ResumeStore, unusable_faq_reason
 from job_bot.safety.answer_gaps import AnswerGapStore
@@ -701,27 +702,16 @@ def _run_apply_cycle(
     """
     requested_ids: list[str] = getattr(args, "job_id", None) or []
 
-    def is_dead_end(posting: JobPosting) -> bool:
-        """The cheap, silent subset of should_skip() below - postings this
-        run will certainly pass over - so search() keeps paging for ones it
-        can use instead of filling the pool with them. No logging or
-        printing: should_skip() still runs, and still reports, on whatever
-        search() returns. A blacklisted company is deliberately not
-        included: it's rare, and its skip_blacklisted audit entry is a
-        safety record that must still be written."""
-        if tracker.has_applied(posting.job_id):
-            return True
-        # Already decided against in an earlier run (scored below the bar,
-        # ineligible, or set to a final status by hand) - the posting loop
-        # below passes these over silently, so without this they took pool
-        # slots for nothing: 8 of 25 in one live cycle (2026-10-02).
-        existing = tracker.get_job(posting.job_id)
-        if existing is not None and existing["status"] != "seen":
-            return True
-        limit = settings.max_applications_per_company
-        if limit > 0 and tracker.applications_at_company(posting.company) >= limit:
-            return True
-        return settings.max_apply_attempts > 0 and tracker.apply_failures(posting.job_id) >= settings.max_apply_attempts
+    skip_policy = SkipPolicy(
+        tracker,
+        blacklist,
+        max_applications_per_company=settings.max_applications_per_company,
+        max_apply_attempts=settings.max_apply_attempts,
+        exclude_keywords=exclude_keywords,
+        requested_ids=requested_ids,
+    )
+    is_dead_end = skip_policy.is_dead_end
+
     if requested_ids:
         # `--job-id`: exactly these previously seen postings, instead of a
         # search - to retry one that failed (e.g. after a fix) or dry-run
@@ -777,41 +767,35 @@ def _run_apply_cycle(
 
     def should_skip(posting: JobPosting) -> bool:
         """Cheap, deterministic reasons to pass over this posting before
-        spending an LLM call on it. Doesn't cover the cap/--max-apps
-        checks - those stop the whole cycle, not just this one posting,
-        so the main loop below handles them directly.
+        spending an LLM call on it - SkipPolicy decides, this records it.
+        Doesn't cover the cap/--max-apps checks - those stop the whole
+        cycle, not just this one posting, so the main loop below handles
+        them directly.
         """
-        if tracker.has_applied(posting.job_id):
+        reason = skip_policy.reason(posting)
+        if reason is None:
+            return False
+        if reason is SkipReason.ALREADY_APPLIED:
             if posting.job_id in requested_ids:
                 print(f"Skipping {posting.title} at {posting.company}: already applied.")
-            return True
-        if (
-            settings.max_apply_attempts > 0
-            and posting.job_id not in requested_ids  # an explicit --job-id is a deliberate retry
-            and tracker.apply_failures(posting.job_id) >= settings.max_apply_attempts
-        ):
-            audit.log("skip_too_many_failures", job_id=posting.job_id, limit=settings.max_apply_attempts)
-            return True
-        if blacklist.is_blocked(posting.company):
+        elif reason is SkipReason.TOO_MANY_FAILURES:
+            audit.log("skip_too_many_failures", job_id=posting.job_id, limit=skip_policy.max_attempts)
+        elif reason is SkipReason.BLACKLISTED:
             audit.log("skip_blacklisted", job_id=posting.job_id, company=posting.company)
-            return True
-        limit = settings.max_applications_per_company
-        if limit > 0 and tracker.applications_at_company(posting.company) >= limit:
-            # Checked before any LLM call, like the blacklist. Printed (unlike
-            # the other cheap skips) since it's a deliberate user setting the
-            # user will want to see working - in a live run, two roles at
-            # one recruiter went out back to back.
+        elif reason is SkipReason.COMPANY_LIMIT:
+            # Printed (unlike the other cheap skips) since it's a deliberate
+            # user setting the user will want to see working - in a live
+            # run, two roles at one recruiter went out back to back.
+            limit = skip_policy.company_limit
             audit.log("skip_company_limit", job_id=posting.job_id, company=posting.company, limit=limit)
             print(f"Skipping {posting.title} at {posting.company}: already applied there (MAX_APPLICATIONS_PER_COMPANY={limit}).")
-            return True
-        if exclude_keywords and any(kw in posting.title.casefold() for kw in exclude_keywords):
+        elif reason is SkipReason.EXCLUDED_KEYWORD:
             # Not persisted to the tracker (unlike a real score/skip
             # decision), since the exclude list is expected to change
             # between runs and a posting excluded today should still be
             # re-evaluated normally if it's removed later.
             audit.log("skip_excluded_keyword", job_id=posting.job_id, title=posting.title)
-            return True
-        return False
+        return True
 
     def clears_the_bar(posting: JobPosting, description: str, existing: dict[str, Any] | None) -> bool:
         """Scores this posting fresh, or - if an earlier run already did -

@@ -39,10 +39,11 @@ Target shape:
 ```
 job_bot/pipeline/
   failures.py   classify_failure(e, page) -> FailureVerdict      [done]
-  skip.py       SkipPolicy: is_dead_end() (silent, used by search)
-                and should_skip() (audited)                       [next]
+  skip.py       SkipPolicy: reason() (audited skip) and
+                is_dead_end() (search's silent filter), one set
+                of rules                                          [done]
   answers.py    AnswerService: FAQ lookup, model call, caching shape
-                (_cacheable_answer), learning from FieldsRejected
+                (_cacheable_answer), learning from FieldsRejected [next]
   context.py    RunContext: the shared dependencies (tracker,
                 rate_limiter, blacklist, audit, failure_log,
                 answer_gaps, settings, provider, resume_store) as one
