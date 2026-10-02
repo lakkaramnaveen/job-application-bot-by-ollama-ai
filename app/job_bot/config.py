@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     # bot couldn't answer don't count (answering them via `job-bot
     # review-answers` is their fix). 0 means retry forever.
     max_apply_attempts: int = 3
+    # `job-bot run --loop`: minutes to pause after a cycle that applied to
+    # something, before searching again. Back-to-back cycles kept LinkedIn
+    # loading job pages nonstop, and on 2026-10-02 it started refusing
+    # every page load (search included) after a few hours of that. 0 means
+    # search again immediately. (A cycle that applied to nothing still
+    # pauses --loop-interval-minutes, as before.)
+    min_cycle_gap_minutes: int = 5
     require_confirm_before_submit: bool = True
     # `job-bot report`'s default for how long an application can sit in
     # "applied" with no reply before it's worth a manual follow-up nudge.

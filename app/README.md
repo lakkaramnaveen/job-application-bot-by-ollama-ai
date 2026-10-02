@@ -68,6 +68,10 @@ links to the section with the full detail:
   Apply form has failed that many times, since every retry regenerates
   the resume and cover letter; unanswered required questions don't count
   toward it. `0` retries forever.
+  In `--loop` mode, `MIN_CYCLE_GAP_MINUTES` (default `5`) pauses after a
+  cycle that applied to something before searching again - back-to-back
+  cycles for hours led LinkedIn to refuse every page load. `0` searches
+  again immediately.
   To retry one posting yourself (e.g. after a fix), or watch its form with
   `--dry-run`, run `job-bot run --job-id <id>` - the id is the number in its
   LinkedIn URL, as shown by `job-bot audit-log --failures`. It must be one a

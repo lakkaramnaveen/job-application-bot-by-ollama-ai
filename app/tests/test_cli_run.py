@@ -2029,7 +2029,9 @@ def test_loop_runs_multiple_cycles_and_stops_once_the_daily_cap_is_reached(tmp_p
     monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
     monkeypatch.setattr("job_bot.cli.time.sleep", lambda seconds: sleep_calls.append(seconds))
 
-    settings = make_settings(tmp_path, daily_application_cap=2)
+    # Back-to-back mode (MIN_CYCLE_GAP_MINUTES=0); the default pause is
+    # tested in test_loop_pauses_min_cycle_gap_after_a_cycle_that_applied.
+    settings = make_settings(tmp_path, daily_application_cap=2, min_cycle_gap_minutes=0)
     cmd_run(settings, make_args(loop=True, loop_interval_minutes=7, max_apps=1))
 
     tracker = Tracker(settings.db_path)
@@ -2262,7 +2264,7 @@ def test_loop_stops_cleanly_on_keyboard_interrupt(tmp_path, monkeypatch, capsys)
     monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
     monkeypatch.setattr("job_bot.cli.time.sleep", raise_interrupt)
 
-    settings = make_settings(tmp_path, daily_application_cap=100)
+    settings = make_settings(tmp_path, daily_application_cap=100, min_cycle_gap_minutes=0)
     # Must not raise - a Ctrl+C mid-loop is a normal, expected way to stop.
     cmd_run(settings, make_args(loop=True, max_apps=1))
 
@@ -2770,3 +2772,26 @@ def test_run_tells_search_to_skip_postings_it_would_pass_over_anyway(tmp_path, m
     assert skip(posting("same-co", "Initech"))  # company limit reached
     assert skip(posting("failing", "Globex"))  # retry cap reached
     assert not skip(posting("fresh", "Umbrella"))
+
+
+
+def test_loop_pauses_min_cycle_gap_after_a_cycle_that_applied(tmp_path, monkeypatch, capsys):
+    """Real case (2026-10-02): hours of back-to-back cycles, then LinkedIn
+    refused every page load. A cycle that applied now pauses
+    MIN_CYCLE_GAP_MINUTES before the next search, not 0 and not the full
+    --loop-interval-minutes."""
+    adapter = LoopFakeAdapter(page=None)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", lambda seconds: sleep_calls.append(seconds))
+
+    settings = make_settings(tmp_path, daily_application_cap=2, min_cycle_gap_minutes=5)
+    cmd_run(settings, make_args(loop=True, loop_interval_minutes=20, max_apps=1))
+
+    assert adapter.search_calls == 2
+    assert sleep_calls == [5 * 60]  # after cycle 1; the cap ends the loop after cycle 2
+    out = capsys.readouterr().out
+    assert "pausing 5 minute(s) before searching again" in out
+    assert "pausing 5 minute(s) after a cycle that applied" in out

@@ -361,10 +361,12 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 _quit_ollama_if_configured(settings)
             return
 
+        gap = settings.min_cycle_gap_minutes
+        between = f"{gap} minute(s) after a cycle that applied, " if gap > 0 else "no pause after a cycle that applied, "
         print(
-            "Loop mode: searching and applying back-to-back until today's application cap is "
-            f"reached, pausing {args.loop_interval_minutes} minute(s) between cycles only when a "
-            "cycle applies to nothing, or you stop it (Ctrl+C)."
+            "Loop mode: searching and applying until today's application cap is reached, pausing "
+            f"{between}{args.loop_interval_minutes} minute(s) after one that applied to nothing, "
+            "or until you stop it (Ctrl+C)."
         )
         try:
             while True:
@@ -414,6 +416,17 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                     # of idling for loop_interval_minutes for no reason.
                     print(f"Nothing to apply to this cycle - sleeping {args.loop_interval_minutes} minute(s)...")
                     time.sleep(args.loop_interval_minutes * 60)
+                elif settings.min_cycle_gap_minutes > 0:
+                    # A cycle that applied to something used to search again
+                    # immediately; after a few hours of that LinkedIn began
+                    # refusing every page load (2026-10-02). A short pause
+                    # keeps the session's traffic from being one continuous
+                    # burst - see Settings.min_cycle_gap_minutes.
+                    print(
+                        f"Applications remaining today - pausing {settings.min_cycle_gap_minutes} minute(s) "
+                        "before searching again..."
+                    )
+                    time.sleep(settings.min_cycle_gap_minutes * 60)
                 else:
                     print("Applications remaining today - searching again immediately...")
         except KeyboardInterrupt:
