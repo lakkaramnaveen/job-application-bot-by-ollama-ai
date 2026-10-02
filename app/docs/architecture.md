@@ -48,7 +48,7 @@ job_bot/pipeline/
                 rate_limiter, blacklist, audit, failure_log,
                 answer_gaps, settings, provider, resume_store) as one
                 frozen dataclass, replacing 20-parameter signatures
-  cycle.py      run_cycle(ctx, adapter, ...) -> CycleResult, the loop [next]
+  cycle.py      run_cycle(ctx, adapter, ...) -> CycleResult, the loop [done]
                 body now in _run_apply_cycle()
 ```
 
@@ -70,6 +70,23 @@ job_bot/pipeline/
 5. **Data-driven priorities.** The order of the remaining steps follows where
    live failures come from (`data/failed_applications.log`, `job-bot report
    --by-failure`), not size alone.
+
+## Progress (2026-10-02)
+
+All five steps landed with the full suite passing unchanged at each one:
+`cli.py` went from 3,304 to 2,669 lines, and the pipeline now lives in
+`job_bot/pipeline/` (cycle 547, answers 151, failures 121, skip 115, retry
+78, context 49 lines). The policies have their own tests
+(`tests/test_pipeline_*.py`), with no browser or model needed.
+
+Next, in priority order:
+1. **Return a `CycleResult` dataclass** from `run_cycle()` instead of the
+   positional `(applied, failed, fatal_error, throttled)` tuple. Unpacking it
+   by position is fragile.
+2. **Split `run_cycle()`'s per-posting body** (`prepare` → `submit` →
+   `record`) into named steps. It's still ~450 lines, but now it's one
+   module with explicit inputs, so each step can be extracted on its own.
+3. **Then revisit the deferred parse → decide → apply form model** below.
 
 ## Consequences
 
