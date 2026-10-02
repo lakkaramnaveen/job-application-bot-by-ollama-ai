@@ -12,6 +12,7 @@ time limit) as arguments rather than this module importing them.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import signal
 import threading
 from collections.abc import Callable, Iterator
@@ -99,6 +100,22 @@ def _score_verdict(match: JobMatchScore, should_apply: bool, min_score: int) -> 
     return f"Skipped: scored {match.score}, but the model judged it not a fit."
 
 
+@dataclasses.dataclass(frozen=True)
+class CycleResult:
+    """What one cycle did, for the caller's summary and --loop decisions.
+
+    fatal: every later cycle would fail the same way (provider down, the
+        browser gone, signed out) - stop the loop.
+    throttled: LinkedIn was refusing page loads - back off before the next
+        search, even if something was applied.
+    """
+
+    applied: int
+    failed: int
+    fatal: bool = False
+    throttled: bool = False
+
+
 def run_cycle(
     ctx: RunContext,
     *,
@@ -107,21 +124,21 @@ def run_cycle(
     resume_text: str,
     external_adapter_factory: Callable[[Page], Any],
     form_time_limit_seconds: float = FORM_TIME_LIMIT_SECONDS,
-) -> tuple[int, int, bool, bool]:
+) -> CycleResult:
     """One search -> score -> tailor -> apply pass over a fresh batch of
     postings. Called once for a plain `job-bot run`, or repeatedly for
     `--loop` (back-to-back with no sleep as long as each cycle keeps
     applying to something; only a cycle that applies to nothing pauses
     before the next one) - re-running search() each cycle is what lets loop
     mode pick up postings that appeared after the previous cycle, not just
-    the ones visible at process start. Returns (applied, failed,
-    fatal_error, throttled) for that cycle only, not a running total
-    across cycles. throttled is True when the cycle stopped because
-    LinkedIn refused NAVIGATION_FAILURE_STREAK_LIMIT job-page loads in a
-    row - --loop then backs off loop_interval_minutes even if the cycle
-    applied to something, instead of searching again immediately.
+    the ones visible at process start. Returns a CycleResult for that
+    cycle only, not a running total across cycles. Its `throttled` is True
+    when LinkedIn refused the search page, or NAVIGATION_FAILURE_STREAK_LIMIT
+    job-page loads in a row - --loop then backs off (see
+    throttle_backoff_minutes()) even if the cycle applied to something,
+    instead of searching again immediately.
 
-    fatal_error is True when this cycle stopped early because the
+    Its `fatal` is True when this cycle stopped early because the
     LLM provider itself was unreachable/misconfigured (Ollama down, Claude
     misconfigured, the browser gone - see pipeline/failures.py's
     classify_failure()) or LinkedIn's session had expired (LinkedInSignedOut), not just
@@ -205,7 +222,7 @@ def run_cycle(
             print(f"Error searching for postings: {e}")
             if _browser_is_gone(e, page):
                 print(BROWSER_GONE_MESSAGE)
-                return 0, 1, True, False
+                return CycleResult(applied=0, failed=1, fatal=True)
             # A signed-out session fails every search identically until the
             # user runs `job-bot login` - fatal the same way a down provider is.
             # A refused search page (NavigationFailed, after its retries) is
@@ -213,7 +230,7 @@ def run_cycle(
             # refused job pages - report it as throttled so --loop backs off
             # progressively instead of probing every interval (2026-10-02:
             # searches kept being refused for hours).
-            return 0, 1, signed_out, isinstance(e, NavigationFailed)
+            return CycleResult(applied=0, failed=1, fatal=signed_out, throttled=isinstance(e, NavigationFailed))
         audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
     def should_skip(posting: JobPosting) -> bool:
@@ -550,4 +567,4 @@ def run_cycle(
             audit.log("dry_run_stopped", job_id=posting.job_id)
             print(f"[dry-run] Would apply to {posting.title} at {posting.company}")
 
-    return applied, failed, fatal_error, throttled
+    return CycleResult(applied=applied, failed=failed, fatal=fatal_error, throttled=throttled)

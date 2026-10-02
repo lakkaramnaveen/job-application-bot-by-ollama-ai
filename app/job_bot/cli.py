@@ -358,7 +358,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             include_external=include_external,
         )
 
-        def run_one_cycle() -> tuple[int, int, bool, bool]:
+        def run_one_cycle() -> cycle.CycleResult:
             # Re-fetched every cycle, not captured once before the loop:
             # --loop can run for many hours, and ResumeStore.resume_text()
             # re-parses only if the file's mtime actually changed since the
@@ -369,7 +369,8 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             )
 
         if not args.loop:
-            applied, failed, _fatal_error, _throttled = run_one_cycle()
+            result = run_one_cycle()
+            applied, failed = result.applied, result.failed
             _print_cycle_summary(applied, failed, rate_limiter, settings, provider)
             if rate_limiter.remaining_today() <= 0:
                 _quit_ollama_if_configured(settings)
@@ -385,7 +386,9 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         try:
             throttle_streak = 0
             while True:
-                applied, failed, fatal_error, throttled = run_one_cycle()
+                result = run_one_cycle()
+                applied, failed = result.applied, result.failed
+                fatal_error, throttled = result.fatal, result.throttled
                 throttle_streak = throttle_streak + 1 if throttled else 0
                 _print_cycle_summary(applied, failed, rate_limiter, settings, provider)
                 if fatal_error:
@@ -491,7 +494,7 @@ def _run_apply_cycle(
     adapter: LinkedInAdapter,
     page: Page,
     resume_text: str,
-) -> tuple[int, int, bool, bool]:
+) -> cycle.CycleResult:
     """One search -> score -> tailor -> apply pass - see
     pipeline/cycle.py's run_cycle(). This wrapper is where cli.py injects
     the two dependencies it owns: the external-site adapter class and the

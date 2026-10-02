@@ -80,9 +80,8 @@ All five steps landed with the full suite passing unchanged at each one:
 (`tests/test_pipeline_*.py`), with no browser or model needed.
 
 Next, in priority order:
-1. **Return a `CycleResult` dataclass** from `run_cycle()` instead of the
-   positional `(applied, failed, fatal_error, throttled)` tuple. Unpacking it
-   by position is fragile.
+1. ~~Return a `CycleResult` dataclass from `run_cycle()` instead of the
+   positional tuple~~ - done.
 2. **Split `run_cycle()`'s per-posting body** (`prepare` → `submit` →
    `record`) into named steps. It's still ~450 lines, but now it's one
    module with explicit inputs, so each step can be extracted on its own.
