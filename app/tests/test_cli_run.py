@@ -2506,3 +2506,82 @@ def test_run_stops_before_opening_a_browser_when_ollama_is_not_ready(tmp_path, m
         cmd_run(make_settings(tmp_path), make_args())
 
     assert "Error: Could not reach Ollama" in capsys.readouterr().err
+
+
+class _ReachedBrowser(Exception):
+    pass
+
+
+def _browser_reached(*args, **kwargs):
+    raise _ReachedBrowser
+
+
+def _ollama_that_comes_up_after(calls_until_up):
+    from job_bot.llm.ollama_provider import OllamaProvider
+
+    class StartingOllama(OllamaProvider):
+        checks = 0
+
+        def readiness_problem(self):
+            type(self).checks += 1
+            if type(self).checks > calls_until_up:
+                return None
+            return "Could not reach Ollama at http://localhost:11434 (ConnectError). Is it running?"
+
+    return StartingOllama(model="m", base_url="http://localhost:11434")
+
+
+def test_start_ollama_if_needed_starts_it_and_waits_until_it_answers(tmp_path, monkeypatch, capsys):
+    """Twice on 2026-10-01 a run stopped at "Could not reach Ollama" because
+    the app had been closed. With START_OLLAMA_IF_NEEDED the run starts it
+    and carries on once it answers."""
+    started = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: _ollama_that_comes_up_after(3))
+    monkeypatch.setattr("job_bot.cli.start_ollama", lambda: started.append(True) or True)
+    monkeypatch.setattr("job_bot.cli.time.sleep", lambda s: None)
+    monkeypatch.setattr("job_bot.cli.browser_session", _browser_reached)
+
+    with pytest.raises(_ReachedBrowser):
+        cmd_run(make_settings(tmp_path, start_ollama_if_needed=True), make_args())
+
+    assert started == [True]
+    out = capsys.readouterr().out
+    assert "Ollama isn't running - starting it..." in out and "Ollama is up." in out
+
+
+def test_without_the_setting_ollama_is_not_started_and_the_error_says_how(tmp_path, monkeypatch, capsys):
+    started = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: _ollama_that_comes_up_after(99))
+    monkeypatch.setattr("job_bot.cli.start_ollama", lambda: started.append(True) or True)
+    monkeypatch.setattr("job_bot.cli.browser_session", _browser_reached)
+
+    with pytest.raises(SystemExit):
+        cmd_run(make_settings(tmp_path), make_args())
+
+    assert started == []
+    assert "START_OLLAMA_IF_NEEDED=true" in capsys.readouterr().err
+
+
+def test_a_remote_ollama_is_never_started(tmp_path, monkeypatch):
+    started = []
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: _ollama_that_comes_up_after(99))
+    monkeypatch.setattr("job_bot.cli.start_ollama", lambda: started.append(True) or True)
+    settings = make_settings(tmp_path, start_ollama_if_needed=True, ollama_base_url="http://gpu-box:11434")
+
+    with pytest.raises(SystemExit):
+        cmd_run(settings, make_args())
+
+    assert started == []
+
+
+def test_an_ollama_that_never_comes_up_stops_the_run_after_the_timeout(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: _ollama_that_comes_up_after(10**6))
+    monkeypatch.setattr("job_bot.cli.start_ollama", lambda: True)
+    monkeypatch.setattr("job_bot.cli.time.sleep", lambda s: None)
+    monkeypatch.setattr("job_bot.cli.OLLAMA_START_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("job_bot.cli.browser_session", _browser_reached)
+
+    with pytest.raises(SystemExit):
+        cmd_run(make_settings(tmp_path, start_ollama_if_needed=True), make_args())
+
+    assert "Error: Could not reach Ollama" in capsys.readouterr().err

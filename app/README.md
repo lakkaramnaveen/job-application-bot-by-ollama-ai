@@ -156,6 +156,10 @@ Edit `.env`:
   (or the loop otherwise stops), so it stops holding the model in memory
   for the rest of the day. Off by default, and has no effect with
   `LLM_PROVIDER=claude`.
+- Optionally set `START_OLLAMA_IF_NEEDED=true` to have `job-bot run` start
+  Ollama itself (the Ollama app on macOS, `ollama serve` elsewhere) when it
+  finds it not running, instead of stopping with "Could not reach Ollama".
+  Off by default; only applies to a local `OLLAMA_BASE_URL`.
 - **Put your resume at the path `RESUME_PATH` points to** - default
   `./data/resume.pdf` relative to `app/` (i.e. `app/data/resume.pdf`), or
   point `RESUME_PATH` at a file anywhere else on disk. PDF, DOCX, or TXT.

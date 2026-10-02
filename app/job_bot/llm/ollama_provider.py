@@ -318,6 +318,41 @@ class OllamaProvider(LLMProvider):
         ) from last_error
 
 
+def is_local_url(base_url: str) -> bool:
+    """True when OLLAMA_BASE_URL points at this machine - the only case
+    start_ollama() can do anything about."""
+    host = httpx.URL(base_url).host
+    return host in ("localhost", "127.0.0.1", "::1")
+
+
+def start_ollama() -> bool:
+    """Best-effort start of the local Ollama server - see
+    Settings.start_ollama_if_needed. The counterpart of quit_ollama(): on
+    macOS opens the menu-bar app (the common install, which starts the
+    server itself), falling back to a detached `ollama serve`; elsewhere
+    just the latter. Returns whether a launch command was started - not
+    whether the server is up yet; the caller polls readiness for that.
+    Never raises.
+    """
+    if platform.system() == "Darwin":
+        try:
+            if subprocess.run(["open", "-a", "Ollama"], capture_output=True, timeout=15, check=False).returncode == 0:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,  # keep serving after job-bot exits, like the app would
+        )
+        return True
+    except OSError:
+        return False
+
+
 def quit_ollama() -> bool:
     """Best-effort shutdown of the locally running Ollama server/app - see
     Settings.quit_ollama_when_done, which cli.py checks before calling this

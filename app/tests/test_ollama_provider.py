@@ -12,7 +12,9 @@ from job_bot.llm.ollama_provider import (
     OllamaProviderError,
     _context_window,
     _repair_truncated_json_string,
+    is_local_url,
     quit_ollama,
+    start_ollama,
 )
 from job_bot.models.schemas import CoverLetter, JobMatchScore
 
@@ -568,3 +570,57 @@ def test_readiness_problem_reports_a_model_that_is_not_pulled():
     respx.get(f"{BASE_URL}/api/tags").mock(return_value=httpx.Response(200, json={"models": [{"name": "llama3:latest"}]}))
     problem = OllamaProvider(model="qwen3:30b", base_url=BASE_URL).readiness_problem()
     assert problem is not None and "ollama pull qwen3:30b" in problem
+
+
+@pytest.mark.parametrize(
+    ("url", "local"),
+    [
+        ("http://localhost:11434", True),
+        ("http://127.0.0.1:11434/", True),
+        ("http://gpu-box:11434", False),
+        ("https://ollama.example.com", False),
+    ],
+)
+def test_is_local_url(url, local):
+    assert is_local_url(url) is local
+
+
+def test_start_ollama_opens_the_mac_app(monkeypatch):
+    import subprocess
+
+    ran = []
+    monkeypatch.setattr("job_bot.llm.ollama_provider.platform.system", lambda: "Darwin")
+    monkeypatch.setattr(
+        "job_bot.llm.ollama_provider.subprocess.run",
+        lambda cmd, **kw: ran.append(cmd) or subprocess.CompletedProcess(cmd, 0),
+    )
+    monkeypatch.setattr(
+        "job_bot.llm.ollama_provider.subprocess.Popen",
+        lambda *a, **kw: pytest.fail("must not fall back when the app opened"),
+    )
+    assert start_ollama() is True
+    assert ran == [["open", "-a", "Ollama"]]
+
+
+def test_start_ollama_falls_back_to_a_detached_ollama_serve(monkeypatch):
+    import subprocess
+
+    spawned = []
+    monkeypatch.setattr("job_bot.llm.ollama_provider.platform.system", lambda: "Darwin")
+    monkeypatch.setattr(
+        "job_bot.llm.ollama_provider.subprocess.run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1)
+    )
+    monkeypatch.setattr(
+        "job_bot.llm.ollama_provider.subprocess.Popen", lambda cmd, **kw: spawned.append((cmd, kw)) or object()
+    )
+    assert start_ollama() is True
+    assert spawned[0][0] == ["ollama", "serve"] and spawned[0][1]["start_new_session"] is True
+
+
+def test_start_ollama_reports_failure_when_ollama_is_not_installed(monkeypatch):
+    def missing(*a, **kw):
+        raise FileNotFoundError("ollama")
+
+    monkeypatch.setattr("job_bot.llm.ollama_provider.platform.system", lambda: "Linux")
+    monkeypatch.setattr("job_bot.llm.ollama_provider.subprocess.Popen", missing)
+    assert start_ollama() is False

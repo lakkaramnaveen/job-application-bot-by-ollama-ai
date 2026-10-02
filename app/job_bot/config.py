@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # project assumes. False (default) leaves Ollama running, matching the
     # rest of this section's off-by-default convention.
     quit_ollama_when_done: bool = False
+    # When `job-bot run` finds the local Ollama server not running, start it
+    # (the Ollama app on macOS, `ollama serve` elsewhere) and wait for it,
+    # instead of stopping with "Could not reach Ollama". Only for a server on
+    # this machine (localhost/127.0.0.1). False (default) just reports it.
+    start_ollama_if_needed: bool = False
 
     resume_path: Path = APP_DIR / "data" / "resume.pdf"
     faq_path: Path = APP_DIR / "data" / "faq_answers.json"

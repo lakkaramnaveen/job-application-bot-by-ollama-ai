@@ -55,7 +55,13 @@ from job_bot.integrations.gmail_sync import sync_gmail
 from job_bot.llm.base import GenerationStats, LLMProvider
 from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.factory import get_provider
-from job_bot.llm.ollama_provider import OllamaProvider, OllamaProviderError, quit_ollama
+from job_bot.llm.ollama_provider import (
+    OllamaProvider,
+    OllamaProviderError,
+    is_local_url,
+    quit_ollama,
+    start_ollama,
+)
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
@@ -242,7 +248,16 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     # model can't serve the run at all - see readiness_problem().
     if isinstance(provider, OllamaProvider):
         problem = provider.readiness_problem()
+        if (
+            problem is not None
+            and problem.startswith("Could not reach Ollama")
+            and settings.start_ollama_if_needed
+            and is_local_url(settings.ollama_base_url)
+        ):
+            problem = _start_ollama_and_wait(provider)
         if problem is not None:
+            if problem.startswith("Could not reach Ollama") and not settings.start_ollama_if_needed:
+                problem += " (Or set START_OLLAMA_IF_NEEDED=true in .env to have job-bot start it.)"
             print(f"Error: {problem}", file=sys.stderr)
             sys.exit(1)
     resume_store = ResumeStore(settings.resume_path, settings.faq_path)
@@ -398,6 +413,28 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         except KeyboardInterrupt:
             _silence_asyncio_shutdown_noise()
             print("\nStopped.")
+
+
+# How long _start_ollama_and_wait() gives a freshly launched server to answer
+# - the app takes a few seconds on a typical Mac; loading the model itself
+# happens later, on the first request, and isn't waited for here.
+OLLAMA_START_TIMEOUT_SECONDS = 30.0
+
+
+def _start_ollama_and_wait(provider: OllamaProvider) -> str | None:
+    """START_OLLAMA_IF_NEEDED: launch the local server, then poll until it
+    answers. Returns the remaining readiness problem, or None once ready."""
+    print("Ollama isn't running - starting it...")
+    if not start_ollama():
+        return "Could not reach Ollama, and couldn't start it either (is it installed?)."
+    deadline = time.monotonic() + OLLAMA_START_TIMEOUT_SECONDS
+    problem = provider.readiness_problem()
+    while problem is not None and problem.startswith("Could not reach Ollama") and time.monotonic() < deadline:
+        time.sleep(1.0)
+        problem = provider.readiness_problem()
+    if problem is None:
+        print("Ollama is up.")
+    return problem
 
 
 def _silence_asyncio_shutdown_noise() -> None:
