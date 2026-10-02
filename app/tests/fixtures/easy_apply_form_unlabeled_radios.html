@@ -1,6 +1,11 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Fixture: yes/no questions with no legend or label text</title></head>
+<head><meta charset="utf-8"><title>Fixture: yes/no questions with no legend or label text</title>
+<!-- Like LinkedIn (2026-10-02 live run): the native radio inputs are moved
+     off-screen behind custom styling, so Playwright's check() - even with
+     force=True - fails with "Element is outside of the viewport". -->
+<style>input[type=radio] { position: absolute; left: -10000px; }</style>
+</head>
 <body>
   <!-- LinkedIn's markup observed live 2026-10-02 (classes/data attributes
        stripped): the question is only in each radio's aria-label and a

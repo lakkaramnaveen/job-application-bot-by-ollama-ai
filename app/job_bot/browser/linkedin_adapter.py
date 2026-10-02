@@ -21,6 +21,7 @@ own custom screening questions to it too, free-text and no less able to
 ask for one of these than an arbitrary external site's form can.
 """
 
+import contextlib
 import logging
 import re
 import time
@@ -1220,14 +1221,28 @@ class LinkedInAdapter(JobBoardAdapter):
             try:
                 label.first.click(timeout=RADIO_LABEL_CLICK_TIMEOUT_MS)
             except PlaywrightError:
-                radio.check(force=True)
+                LinkedInAdapter._check_hidden_radio(radio)
             if not radio.is_checked():
-                radio.check(force=True)
+                LinkedInAdapter._check_hidden_radio(radio)
         else:
-            # No label, or LinkedIn's 2026-10 markup's empty one (no text,
-            # possibly no clickable area) - check the input itself; force,
-            # since it may be visually hidden behind custom styling.
-            radio.check(force=True)
+            # No label, or LinkedIn's 2026-10 markup's empty one.
+            LinkedInAdapter._check_hidden_radio(radio)
+
+    @staticmethod
+    def _check_hidden_radio(radio: Locator) -> None:
+        """Select a radio whose native input may be hidden off-screen.
+
+        Real failure (2026-10-02 live run, 8 attempts): LinkedIn's yes/no
+        radios are moved outside the viewport behind custom styling, and
+        Playwright's check() - even with force=True - fails with "Element
+        is outside of the viewport". Clicking the input from the page's own
+        JavaScript selects it and fires the click/change events LinkedIn's
+        form listens for, the same as a user clicking the styled control.
+        """
+        with contextlib.suppress(PlaywrightError):
+            radio.check(force=True, timeout=RADIO_LABEL_CLICK_TIMEOUT_MS)
+        if not radio.is_checked():
+            radio.evaluate("el => el.click()")
 
     @staticmethod
     def _select_best_option(select: Locator, options: list[str], answer: str) -> None:
