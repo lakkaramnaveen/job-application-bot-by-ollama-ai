@@ -1,0 +1,58 @@
+"""classify_failure(): the single answer to "after this exception, does
+the run continue?" - see job_bot/pipeline/failures.py."""
+
+import pytest
+from playwright.sync_api import Error as PlaywrightError
+
+from job_bot.browser.linkedin_adapter import NavigationFailed
+from job_bot.llm.claude_provider import ClaudeProviderError
+from job_bot.llm.ollama_provider import OllamaProviderError
+from job_bot.pipeline.failures import BROWSER_GONE_MESSAGE, POSTING_ONLY, classify_failure
+
+
+class Page:
+    def __init__(self, closed=False, broken=False):
+        self._closed = closed
+        self._broken = broken
+
+    def is_closed(self):
+        if self._broken:
+            raise RuntimeError("driver gone")
+        return self._closed
+
+
+@pytest.mark.parametrize(
+    ("error", "message_start"),
+    [
+        (OllamaProviderError("Could not reach Ollama at http://localhost:11434."), "Ollama is unreachable"),
+        (ClaudeProviderError("Invalid ANTHROPIC_API_KEY."), "Claude provider is misconfigured"),
+        (PlaywrightError("Page.goto: Target page, context or browser has been closed"), BROWSER_GONE_MESSAGE),
+        (Exception("Page.title: Connection closed while reading from the driver"), BROWSER_GONE_MESSAGE),
+    ],
+)
+def test_run_ending_failures_are_fatal_with_their_message(error, message_start):
+    verdict = classify_failure(error, Page())
+    assert verdict.fatal
+    assert verdict.message.startswith(message_start)
+
+
+def test_a_closed_or_unreachable_page_is_fatal_whatever_the_error():
+    assert classify_failure(RuntimeError("anything"), Page(closed=True)).fatal
+    assert classify_failure(RuntimeError("anything"), Page(broken=True)).fatal
+
+
+def test_a_refused_page_load_counts_toward_the_throttling_streak_but_is_not_fatal():
+    verdict = classify_failure(NavigationFailed("Failed to load https://x/jobs/view/1/ after 3 attempts"), Page())
+    assert verdict.navigation_refused and not verdict.fatal
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("Could not complete the Easy Apply form for job 1 (stuck on a step ...)"),
+        OllamaProviderError("Model 'm' did not return schema-valid JSON after 3 attempts"),
+        ClaudeProviderError("Rate limited, try again later"),
+    ],
+)
+def test_everything_else_costs_only_this_posting(error):
+    assert classify_failure(error, Page()) == POSTING_ONLY

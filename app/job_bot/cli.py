@@ -40,7 +40,6 @@ from job_bot.browser.linkedin_adapter import (
     FieldsRejected,
     LinkedInAdapter,
     LinkedInSignedOut,
-    NavigationFailed,
     UnansweredRequiredQuestion,
 )
 from job_bot.browser.session import BrowserSessionError, browser_session
@@ -71,6 +70,7 @@ from job_bot.llm.ollama_provider import (
 from job_bot.logging_setup import configure_logging
 from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
+from job_bot.pipeline.failures import BROWSER_GONE_MESSAGE, _browser_is_gone, classify_failure
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 from job_bot.resume.store import ResumeStore, unusable_faq_reason
 from job_bot.safety.answer_gaps import AnswerGapStore
@@ -373,9 +373,9 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 applied, failed, fatal_error, throttled = run_one_cycle()
                 _print_cycle_summary(applied, failed, rate_limiter, settings, provider)
                 if fatal_error:
-                    # Same reasoning _is_ollama_unreachable()/
-                    # _is_claude_misconfigured()/LinkedInSignedOut already
-                    # apply within one cycle, one level up: retrying every
+                    # Same reasoning classify_failure() (pipeline/failures.py)
+                    # and LinkedInSignedOut already apply within one cycle,
+                    # one level up: retrying every
                     # loop_interval_minutes against a provider that's still
                     # down (or a signed-out LinkedIn session) won't fix
                     # itself, and looked identical to an ordinary quiet
@@ -555,30 +555,6 @@ def _form_time_limit(seconds: float) -> Iterator[None]:
         signal.signal(signal.SIGALRM, previous)
 
 
-def _browser_is_gone(e: Exception, page: Page) -> bool:
-    """True when the bot's own browser can't be used any more - its window
-    was closed, it crashed, or the Playwright driver behind it died. Every
-    remaining posting (and every later --loop search) would fail the same
-    way, so the run stops instead.
-    """
-    if isinstance(e, PlaywrightError) and (
-        "Target page, context or browser has been closed" in str(e)
-        or "Connection closed while reading from the driver" in str(e)
-    ):
-        return True
-    if "Connection closed while reading from the driver" in str(e):
-        return True  # raised as a bare Exception by Playwright's sync layer
-    try:
-        return page.is_closed()
-    except Exception:  # noqa: BLE001 - a page we can't even ask is gone
-        return True
-
-
-BROWSER_GONE_MESSAGE = (
-    "The bot's browser window was closed or crashed - stopping the run. Start it again with `job-bot run`."
-)
-
-
 def _silence_asyncio_shutdown_noise() -> None:
     """After a Ctrl+C, stop asyncio logging errors about the browser work
     the interrupt cut short.
@@ -610,40 +586,6 @@ def _print_cycle_summary(
             f"{failed} posting(s) could not be completed - run `job-bot audit-log --failures` "
             f"(or see {settings.failed_applications_log_path} directly) for what happened and why."
         )
-
-
-def _is_ollama_unreachable(e: Exception) -> bool:
-    """True for the specific OllamaProviderError raised when the local
-    server can't be connected to at all (see ollama_provider.py's
-    httpx.ConnectError handling) - deliberately narrower than "any
-    OllamaProviderError", since the other two cases it covers (a malformed
-    JSON response after retries, a 404 for an unpulled model) aren't
-    necessarily going to fail identically on every remaining posting the
-    way a fully unreachable server is. Checked by message rather than a
-    dedicated exception subclass since that string is this project's own
-    and unlikely to drift without both sides being updated together.
-    """
-    return isinstance(e, OllamaProviderError) and "Could not reach Ollama" in str(e)
-
-
-# The three claude_provider.py ClaudeProviderError messages that mean the
-# provider is fundamentally misconfigured - not a one-off request failure
-# (rate limit, network blip) - and will therefore raise the exact same
-# error on every remaining posting in the batch too. Same reasoning as
-# _is_ollama_unreachable() above, and the same fix: recognize it after the
-# first failure instead of repeating an identical, guaranteed-to-fail LLM
-# call (and an identical printed error) once per remaining posting.
-_CLAUDE_CONFIG_ERROR_MARKERS = (
-    "Invalid ANTHROPIC_API_KEY",
-    "API key lacks permission",
-    "not found.",  # ClaudeProviderError(f"Model '{model}' not found.")
-)
-
-
-def _is_claude_misconfigured(e: Exception) -> bool:
-    return isinstance(e, ClaudeProviderError) and any(
-        marker in str(e) for marker in _CLAUDE_CONFIG_ERROR_MARKERS
-    )
 
 
 def _quit_ollama_if_configured(settings: Settings) -> None:
@@ -745,8 +687,8 @@ def _run_apply_cycle(
 
     fatal_error is True when this cycle stopped early because the
     LLM provider itself was unreachable/misconfigured (Ollama down, Claude
-    misconfigured - see _is_ollama_unreachable()/_is_claude_misconfigured()
-    below) or LinkedIn's session had expired (LinkedInSignedOut), not just
+    misconfigured, the browser gone - see pipeline/failures.py's
+    classify_failure()) or LinkedIn's session had expired (LinkedInSignedOut), not just
     "nothing worth applying to this cycle". --loop mode's
     caller uses this to stop the loop entirely instead of treating it like
     an ordinary quiet cycle and sleeping loop_interval_minutes before
@@ -1107,27 +1049,12 @@ def _run_apply_cycle(
             )
             print(f"Error preparing application for {posting.title} at {posting.company}: {e}")
             failed += 1
-            if _is_ollama_unreachable(e):
-                # Same reasoning as the page.is_closed() check below: every
-                # remaining posting draws on the same unreachable Ollama
-                # server and would fail identically on it - stop here
-                # instead of burning a full LLM-call attempt (and an
-                # identical error message) once per remaining posting.
-                # Confirmed live: a run with Ollama down logged this same
-                # "Could not reach Ollama" prep_error 6 times in a row
-                # before this fix.
-                print("Ollama is unreachable - stopping the run instead of repeating this for every posting.")
+            verdict = classify_failure(e, page)
+            if verdict.fatal:
+                print(verdict.message)
                 fatal_error = True
                 break
-            if _is_claude_misconfigured(e):
-                print(f"Claude provider is misconfigured ({e}) - stopping the run instead of repeating this for every posting.")
-                fatal_error = True
-                break
-            if _browser_is_gone(e, page):
-                print(BROWSER_GONE_MESSAGE)
-                fatal_error = True
-                break
-            if isinstance(e, NavigationFailed):
+            if verdict.navigation_refused:
                 consecutive_navigation_failures += 1
                 if consecutive_navigation_failures >= NAVIGATION_FAILURE_STREAK_LIMIT:
                     # Confirmed in data/failed_applications.log: once LinkedIn
@@ -1183,16 +1110,9 @@ def _run_apply_cycle(
             )
             print(f"Error applying to {posting.title} at {posting.company}: {e}")
             failed += 1
-            if _is_ollama_unreachable(e):
-                print("Ollama is unreachable - stopping the run instead of repeating this for every posting.")
-                fatal_error = True
-                break
-            if _is_claude_misconfigured(e):
-                print(f"Claude provider is misconfigured ({e}) - stopping the run instead of repeating this for every posting.")
-                fatal_error = True
-                break
-            if _browser_is_gone(e, page):
-                print(BROWSER_GONE_MESSAGE)
+            verdict = classify_failure(e, page)
+            if verdict.fatal:
+                print(verdict.message)
                 fatal_error = True
                 break
             continue
