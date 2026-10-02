@@ -1708,3 +1708,35 @@ def test_open_external_application_returns_none_when_theres_no_external_button(p
     )
 
     assert adapter.open_external_application(posting) is None
+
+
+def test_navigation_failures_are_reported_without_tracking_parameters_or_call_logs(playwright_page, monkeypatch, caplog):
+    """Live output (2026-10-02): each refused page load printed the full job
+    URL - its eBP= tracking token alone was 800+ characters - plus
+    Playwright's multi-line call log, three times per posting. The path and
+    the first line of the error say everything useful."""
+    from playwright.sync_api import Error as PlaywrightError
+
+    from job_bot.browser.linkedin_adapter import NavigationFailed
+
+    long_url = "https://www.linkedin.com/jobs/view/4474527019/?eBP=" + "x" * 800 + "&trk=flagship3_search_srp_jobs"
+
+    def refuse(url, **kwargs):
+        raise PlaywrightError(
+            f"Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at {url}\nCall log:\n  - navigating to '{url}'"
+        )
+
+    monkeypatch.setattr(playwright_page, "goto", refuse)
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.time.sleep", lambda s: None)
+
+    with caplog.at_level("WARNING"), pytest.raises(NavigationFailed) as excinfo:
+        LinkedInAdapter(playwright_page)._goto_with_retry(long_url)
+
+    message = str(excinfo.value)
+    assert message.startswith("Failed to load https://www.linkedin.com/jobs/view/4474527019/ after")
+    assert "net::ERR_HTTP_RESPONSE_CODE_FAILURE" in message
+    assert "eBP" not in message and "Call log" not in message
+    assert caplog.records and all(
+        "eBP" not in r.getMessage() and "Call log" not in r.getMessage() for r in caplog.records
+    )
+    assert all(len(r.getMessage()) < 300 for r in caplog.records)

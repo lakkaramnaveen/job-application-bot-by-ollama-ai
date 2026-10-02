@@ -191,6 +191,23 @@ DATE_POSTED_24H = "r86400"
 DATE_POSTED_3_DAYS = "r259200"
 
 
+def _short_url(url: str) -> str:
+    """`url` without its query string, for log lines and errors. LinkedIn's
+    job links carry tracking parameters - one live `eBP=` token was over
+    800 characters - which made every navigation warning several screens
+    long while saying nothing the path (/jobs/view/<id>/) doesn't."""
+    return url.split("?", 1)[0]
+
+
+def _first_line(e: BaseException) -> str:
+    """The first line of an exception's message. Playwright appends a
+    multi-line "Call log:" that repeats the URL; the first line already
+    says what failed (e.g. net::ERR_HTTP_RESPONSE_CODE_FAILURE), and
+    "at <url>" there gets the same query-string trimming."""
+    first = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+    return re.sub(r"(https?://\S+?)\?\S*", r"\1", first)
+
+
 class FieldsRejected(RuntimeError):
     """The form stuck on a step where LinkedIn flagged specific fields
     (e.g. "Invalid input" under a years field) - see _field_errors().
@@ -808,9 +825,14 @@ class LinkedInAdapter(JobBoardAdapter):
                 return
             except PlaywrightError as e:
                 last_error = e
-                logger.warning("Navigation to %s failed (attempt %d): %s - retrying", url, attempt + 1, e)
+                logger.warning(
+                    "Navigation to %s failed (attempt %d): %s - retrying", _short_url(url), attempt + 1, _first_line(e)
+                )
                 time.sleep(ACTION_DELAY_SECONDS)
-        raise NavigationFailed(f"Failed to load {url} after {NAVIGATION_RETRIES + 1} attempts") from last_error
+        raise NavigationFailed(
+            f"Failed to load {_short_url(url)} after {NAVIGATION_RETRIES + 1} attempts "
+            f"({_first_line(last_error) if last_error else 'no error'})"
+        ) from last_error
 
     def _upload_resume_if_requested(self, dialog: Locator, resume_path: str | None) -> None:
         if not resume_path:
