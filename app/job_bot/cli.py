@@ -14,12 +14,16 @@ propagating out of a command is a real bug.
 """
 
 import argparse
+import contextlib
 import json
 import logging
 import os
+import signal
 import sqlite3
 import sys
+import threading
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -496,6 +500,72 @@ def _cacheable_answer(question: str, answer: str) -> str | None:
     return answer
 
 
+# How long one application form may take before it's abandoned - see
+# _form_time_limit(). A normal Easy Apply form, model-answered questions
+# included, takes 1-3 minutes.
+FORM_TIME_LIMIT_SECONDS = 600
+
+
+class FormTimedOut(RuntimeError):
+    pass
+
+
+@contextlib.contextmanager
+def _form_time_limit(seconds: float) -> Iterator[None]:
+    """Abandon the application form (FormTimedOut) if it runs past
+    `seconds`.
+
+    Real case (2026-10-02): a --loop run sat at 99% CPU for over an hour
+    after "Writing a tailored resume and cover letter..." - its own browser
+    and Playwright driver were gone, nothing was logged, and it never moved
+    on. SIGALRM interrupts Python code wherever it's spinning, so the
+    posting fails with a clear error and the run carries on (or stops, if
+    the browser is gone - see _browser_is_gone()).
+
+    A no-op where SIGALRM can't be used (Windows, or off the main thread),
+    or for seconds <= 0.
+    """
+    usable = seconds > 0 and hasattr(signal, "SIGALRM") and threading.current_thread() is threading.main_thread()
+    if not usable:
+        yield
+        return
+
+    def expired(signum: int, frame: object) -> None:
+        raise FormTimedOut(f"Gave up on the application form after {seconds:.0f}s - it stopped making progress.")
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _browser_is_gone(e: Exception, page: Page) -> bool:
+    """True when the bot's own browser can't be used any more - its window
+    was closed, it crashed, or the Playwright driver behind it died. Every
+    remaining posting (and every later --loop search) would fail the same
+    way, so the run stops instead.
+    """
+    if isinstance(e, PlaywrightError) and (
+        "Target page, context or browser has been closed" in str(e)
+        or "Connection closed while reading from the driver" in str(e)
+    ):
+        return True
+    if "Connection closed while reading from the driver" in str(e):
+        return True  # raised as a bare Exception by Playwright's sync layer
+    try:
+        return page.is_closed()
+    except Exception:  # noqa: BLE001 - a page we can't even ask is gone
+        return True
+
+
+BROWSER_GONE_MESSAGE = (
+    "The bot's browser window was closed or crashed - stopping the run. Start it again with `job-bot run`."
+)
+
+
 def _silence_asyncio_shutdown_noise() -> None:
     """After a Ctrl+C, stop asyncio logging errors about the browser work
     the interrupt cut short.
@@ -719,6 +789,9 @@ def _run_apply_cycle(
                 "search_error", keywords=args.keywords, location=args.location, error=str(e), signed_out=signed_out
             )
             print(f"Error searching for postings: {e}")
+            if _browser_is_gone(e, page):
+                print(BROWSER_GONE_MESSAGE)
+                return 0, 1, True, False
             # A signed-out session fails every search identically until the
             # user runs `job-bot login` - fatal the same way a down provider is.
             return 0, 1, signed_out, False
@@ -930,15 +1003,19 @@ def _run_apply_cycle(
             return answer(question, posting.job_id)
 
         external_page = None
+        # Only the form itself is timed - the confirmation prompt above is
+        # already answered, however long that took.
+        limit = FORM_TIME_LIMIT_SECONDS
         try:
             if posting.easy_apply:
-                return adapter.fill_and_submit(
-                    posting,
-                    answer_question=answer_for_this_posting,
-                    resume_path=resume_path,
-                    cover_letter_text=cover_letter.body,
-                    dry_run=args.dry_run,
-                )
+                with _form_time_limit(limit):
+                    return adapter.fill_and_submit(
+                        posting,
+                        answer_question=answer_for_this_posting,
+                        resume_path=resume_path,
+                        cover_letter_text=cover_letter.body,
+                        dry_run=args.dry_run,
+                    )
             external_page = adapter.open_external_application(posting)
             if external_page is None:
                 raise RuntimeError(
@@ -1017,12 +1094,9 @@ def _run_apply_cycle(
                 print(f"Claude provider is misconfigured ({e}) - stopping the run instead of repeating this for every posting.")
                 fatal_error = True
                 break
-            if page.is_closed():
-                # The browser itself is gone (closed, crashed, killed) -
-                # every remaining posting shares this one page and would
-                # fail identically on it, so stop here instead of
-                # repeating the same failure once per remaining posting.
-                print("Browser window was closed - stopping the run.")
+            if _browser_is_gone(e, page):
+                print(BROWSER_GONE_MESSAGE)
+                fatal_error = True
                 break
             if isinstance(e, NavigationFailed):
                 consecutive_navigation_failures += 1
@@ -1088,8 +1162,9 @@ def _run_apply_cycle(
                 print(f"Claude provider is misconfigured ({e}) - stopping the run instead of repeating this for every posting.")
                 fatal_error = True
                 break
-            if page.is_closed():
-                print("Browser window was closed - stopping the run.")
+            if _browser_is_gone(e, page):
+                print(BROWSER_GONE_MESSAGE)
+                fatal_error = True
                 break
             continue
 

@@ -1541,7 +1541,7 @@ def test_run_stops_the_whole_run_when_the_browser_closes_during_prep(tmp_path, m
     # failure for the rest of the search pool.
     assert tracker.get_job("job2") is None
     assert tracker.get_job("job3") is None
-    assert "Browser window was closed" in capsys.readouterr().out
+    assert "browser window was closed or crashed - stopping the run" in capsys.readouterr().out
 
 
 class OllamaUnreachableProvider(LLMProvider):
@@ -1947,7 +1947,7 @@ def test_run_stops_the_whole_run_when_the_browser_closes_during_apply(tmp_path, 
     assert tracker.has_applied("job1") is False
     assert tracker.get_job("job2") is None
     assert tracker.get_job("job3") is None
-    assert "Browser window was closed" in capsys.readouterr().out
+    assert "browser window was closed or crashed - stopping the run" in capsys.readouterr().out
 
 
 def test_run_reuses_an_earlier_runs_score_instead_of_rescoring(tmp_path, monkeypatch):
@@ -2662,3 +2662,77 @@ def test_an_answer_linkedin_rejected_is_dropped_from_the_cache_and_queued_for_re
     assert Tracker(settings.db_path).apply_failures(JOB.job_id) == 0
     out = capsys.readouterr().out
     assert f"LinkedIn rejected the answer to {question!r} (Invalid input). Dropped its cached answer." in out
+
+
+def test_form_time_limit_interrupts_a_spinning_loop():
+    """Real case: a run sat at 99% CPU for over an hour in the form step
+    with its browser gone. Python code that never returns is interrupted."""
+    import time as _time
+
+    from job_bot.cli import FormTimedOut, _form_time_limit
+
+    started = _time.monotonic()
+    with pytest.raises(FormTimedOut, match="Gave up on the application form after 0s"), _form_time_limit(0.2):
+        while True:
+            pass
+    assert _time.monotonic() - started < 2
+
+
+def test_form_time_limit_is_a_no_op_when_disabled_and_restores_the_alarm():
+    import signal as _signal
+
+    from job_bot.cli import _form_time_limit
+
+    previous = _signal.getsignal(_signal.SIGALRM)
+    with _form_time_limit(0):
+        pass
+    with _form_time_limit(5):
+        pass
+    assert _signal.getitimer(_signal.ITIMER_REAL) == (0.0, 0.0)
+    assert _signal.getsignal(_signal.SIGALRM) == previous
+
+
+def test_a_form_that_never_finishes_is_abandoned_and_the_run_moves_on(tmp_path, monkeypatch, capsys):
+    class OneStuckForm(FakeAdapter):
+        def search(self, *args, **kwargs):
+            return [JOB, JOB2]
+
+        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+            self.fill_and_submit_calls.append({"posting": posting})
+            while posting.job_id == JOB.job_id:
+                pass
+            return not dry_run
+
+    adapter = OneStuckForm(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    monkeypatch.setattr("job_bot.cli.FORM_TIME_LIMIT_SECONDS", 0.3)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args(max_apps=5))
+
+    assert [c["posting"].job_id for c in adapter.fill_and_submit_calls] == [JOB.job_id, JOB2.job_id]
+    assert Tracker(settings.db_path).has_applied(JOB2.job_id)
+    assert "Gave up on the application form" in capsys.readouterr().out
+
+
+def test_a_dead_browser_driver_during_search_stops_the_loop_instead_of_sleeping(tmp_path, monkeypatch, capsys):
+    """Playwright raises a bare Exception when its driver is gone; --loop
+    used to log a search_error, sleep 20 minutes, and try again forever."""
+
+    class DeadDriverAdapter(FakeAdapter):
+        def search(self, *args, **kwargs):
+            raise Exception("Page.goto: Connection closed while reading from the driver")
+
+    def no_sleep(seconds):
+        raise AssertionError(f"must not sleep {seconds}s waiting on a dead browser")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", DeadDriverAdapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", no_sleep)
+
+    cmd_run(make_settings(tmp_path), make_args(loop=True))
+
+    assert "browser window was closed or crashed - stopping the run" in capsys.readouterr().out
