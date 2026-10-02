@@ -711,6 +711,13 @@ def _run_apply_cycle(
         safety record that must still be written."""
         if tracker.has_applied(posting.job_id):
             return True
+        # Already decided against in an earlier run (scored below the bar,
+        # ineligible, or set to a final status by hand) - the posting loop
+        # below passes these over silently, so without this they took pool
+        # slots for nothing: 8 of 25 in one live cycle (2026-10-02).
+        existing = tracker.get_job(posting.job_id)
+        if existing is not None and existing["status"] != "seen":
+            return True
         limit = settings.max_applications_per_company
         if limit > 0 and tracker.applications_at_company(posting.company) >= limit:
             return True

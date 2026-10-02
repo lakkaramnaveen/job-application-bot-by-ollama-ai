@@ -2755,9 +2755,16 @@ def test_run_tells_search_to_skip_postings_it_would_pass_over_anyway(tmp_path, m
     monkeypatch.setattr("job_bot.cli.LinkedInAdapter", SkipRecordingAdapter)
     settings = make_settings(tmp_path, max_applications_per_company=1, max_apply_attempts=2)
     tracker = Tracker(settings.db_path)
-    for job_id, company in (("applied", "Initech"), ("same-co", "Initech"), ("failing", "Globex"), ("fresh", "Umbrella")):
+    for job_id, company in (
+        ("applied", "Initech"),
+        ("same-co", "Initech"),
+        ("failing", "Globex"),
+        ("decided", "Hooli"),
+        ("fresh", "Umbrella"),
+    ):
         tracker.upsert_job(job_id, "Engineer", company, f"https://example.com/{job_id}")
     tracker.mark_applied("applied")
+    tracker.mark_skipped("decided")  # e.g. scored below the bar in an earlier run
     tracker.record_apply_failure("failing")
     tracker.record_apply_failure("failing")
 
@@ -2771,6 +2778,7 @@ def test_run_tells_search_to_skip_postings_it_would_pass_over_anyway(tmp_path, m
     assert skip(posting("applied", "Initech"))
     assert skip(posting("same-co", "Initech"))  # company limit reached
     assert skip(posting("failing", "Globex"))  # retry cap reached
+    assert skip(posting("decided", "Hooli"))  # already decided against - took 8 of 25 slots live
     assert not skip(posting("fresh", "Umbrella"))
 
 
