@@ -73,6 +73,7 @@ from job_bot.pipeline.answers import AnswerService
 from job_bot.pipeline.answers import (
     cacheable_answer as _cacheable_answer,  # noqa: F401 - kept for callers/tests
 )
+from job_bot.pipeline.context import RunContext
 from job_bot.pipeline.failures import BROWSER_GONE_MESSAGE, _browser_is_gone, classify_failure
 from job_bot.pipeline.skip import SkipPolicy, SkipReason
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
@@ -327,6 +328,27 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         page = context.new_page()
         adapter = LinkedInAdapter(page)
 
+        run_context = RunContext(
+            settings=settings,
+            args=args,
+            provider=provider,
+            resume_store=resume_store,
+            tracker=tracker,
+            rate_limiter=rate_limiter,
+            blacklist=blacklist,
+            confirmer=confirmer,
+            external_confirmer=external_confirmer,
+            audit=audit,
+            failure_log=failure_log,
+            answer_gaps=answer_gaps,
+            min_score=min_score,
+            exclude_keywords=tuple(exclude_keywords),
+            experience_levels=experience_levels,
+            max_years_experience=max_years_experience,
+            require_w2=require_w2,
+            include_external=include_external,
+        )
+
         def run_one_cycle() -> tuple[int, int, bool, bool]:
             # Re-fetched every cycle, not captured once before the loop:
             # --loop can run for many hours, and ResumeStore.resume_text()
@@ -334,27 +356,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             # last cycle, so this stays cheap while still picking up a
             # resume edited/re-exported mid-loop on the very next cycle.
             return _run_apply_cycle(
-                adapter=adapter,
-                page=page,
-                provider=provider,
-                resume_store=resume_store,
-                resume_text=resume_store.resume_text(),
-                tracker=tracker,
-                rate_limiter=rate_limiter,
-                blacklist=blacklist,
-                confirmer=confirmer,
-                external_confirmer=external_confirmer,
-                audit=audit,
-                failure_log=failure_log,
-                answer_gaps=answer_gaps,
-                settings=settings,
-                args=args,
-                min_score=min_score,
-                exclude_keywords=exclude_keywords,
-                experience_levels=experience_levels,
-                max_years_experience=max_years_experience,
-                require_w2=require_w2,
-                include_external=include_external,
+                run_context, adapter=adapter, page=page, resume_text=resume_store.resume_text()
             )
 
         if not args.loop:
@@ -592,28 +594,11 @@ def _print_run_plan(settings: Settings, args: argparse.Namespace, rate_limiter: 
 
 
 def _run_apply_cycle(
+    ctx: RunContext,
     *,
     adapter: LinkedInAdapter,
     page: Page,
-    provider: LLMProvider,
-    resume_store: ResumeStore,
     resume_text: str,
-    tracker: Tracker,
-    rate_limiter: RateLimiter,
-    blacklist: CompanyBlacklist,
-    confirmer: SubmitConfirmer,
-    external_confirmer: SubmitConfirmer,
-    audit: AuditLogger,
-    failure_log: AuditLogger,
-    answer_gaps: AnswerGapStore,
-    settings: Settings,
-    args: argparse.Namespace,
-    min_score: int,
-    exclude_keywords: list[str],
-    experience_levels: list[str] | None,
-    max_years_experience: int | None,
-    require_w2: bool,
-    include_external: bool,
 ) -> tuple[int, int, bool, bool]:
     """One search -> score -> tailor -> apply pass over a fresh batch of
     postings. Called once for a plain `job-bot run`, or repeatedly for
@@ -642,6 +627,17 @@ def _run_apply_cycle(
     every 20 minutes until manually interrupted, indistinguishable from a
     normal cycle that just found no eligible postings.
     """
+    # Local names for the run's shared context, so the body below reads
+    # the same as before RunContext existed (docs/architecture.md, step 4);
+    # step 5 (pipeline/cycle.py) consumes ctx directly.
+    settings, args, provider = ctx.settings, ctx.args, ctx.provider
+    resume_store, tracker, rate_limiter = ctx.resume_store, ctx.tracker, ctx.rate_limiter
+    blacklist, confirmer, external_confirmer = ctx.blacklist, ctx.confirmer, ctx.external_confirmer
+    audit, failure_log, answer_gaps = ctx.audit, ctx.failure_log, ctx.answer_gaps
+    min_score, exclude_keywords = ctx.min_score, ctx.exclude_keywords
+    experience_levels, max_years_experience = ctx.experience_levels, ctx.max_years_experience
+    require_w2, include_external = ctx.require_w2, ctx.include_external
+
     requested_ids: list[str] = getattr(args, "job_id", None) or []
 
     skip_policy = SkipPolicy(

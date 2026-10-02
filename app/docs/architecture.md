@@ -44,11 +44,11 @@ job_bot/pipeline/
                 of rules                                          [done]
   answers.py    AnswerService: FAQ lookup, model call, caching shape
                 (cacheable_answer), learning from FieldsRejected  [done]
-  context.py    RunContext: the shared dependencies (tracker,   [next]
+  context.py    RunContext: the shared dependencies (tracker,   [done]
                 rate_limiter, blacklist, audit, failure_log,
                 answer_gaps, settings, provider, resume_store) as one
                 frozen dataclass, replacing 20-parameter signatures
-  cycle.py      run_cycle(ctx, adapter, ...) -> CycleResult, the loop
+  cycle.py      run_cycle(ctx, adapter, ...) -> CycleResult, the loop [next]
                 body now in _run_apply_cycle()
 ```
 
