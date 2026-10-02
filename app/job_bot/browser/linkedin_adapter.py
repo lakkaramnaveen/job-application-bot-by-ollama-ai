@@ -101,6 +101,9 @@ SUBMIT_BUTTON_SELECTORS = (
     'button:has-text("Submit")',
 )
 
+# Answers that mean zero when a field wants a number - see _numeric_value().
+_ZERO_ANSWERS = frozenset({"no", "none", "n/a", "na", "zero", "0 years"})
+
 # See LinkedInAdapter._field_errors().
 _FIELD_ERRORS_JS = """(dialog) => {
   const counter = /\\d+\\s*\\/\\s*\\d+|\\d+ of \\d+ characters/gi;
@@ -833,12 +836,12 @@ class LinkedInAdapter(JobBoardAdapter):
             answer = answer_question(label) if label else ""
             if answer:
                 field_type = (text_input.get_attribute("type") or "").casefold()
-                if field_type == "number" or self._asks_for_a_number(label):
-                    answer = self._numeric_value(answer) or answer
-                elif field_type == "tel":
+                if field_type == "tel":
                     answer = self._phone_value(answer) or answer
                 elif field_type == "email":
                     answer = self._email_value(answer) or answer
+                elif field_type == "number" or self._asks_for_a_number(label) or self._is_a_year_count(answer):
+                    answer = self._numeric_value(answer) or answer
                 text_input.fill(answer)
 
         for group in dialog.locator("fieldset").all():
@@ -1123,7 +1126,29 @@ class LinkedInAdapter(JobBoardAdapter):
         swapped for something the LLM never said.
         """
         match = re.search(r"\d+(?:\.\d+)?", answer)
-        return match.group() if match else None
+        if match:
+            return match.group()
+        # "No" / "None" to a how-many question means zero - in the failure
+        # log, "How many years of Advertising Services experience do you
+        # currently have?" was answered "No", which LinkedIn's number-only
+        # field rejects ("Invalid input"), leaving the form stuck.
+        if answer.strip().rstrip(".").casefold() in _ZERO_ANSWERS:
+            return "0"
+        return None
+
+    @staticmethod
+    def _is_a_year_count(answer: str) -> bool:
+        """True when the whole answer is just a number of years - "5+
+        years", "3 yrs", "7" - whatever the field's label says.
+
+        In the failure log, years fields labeled only with the skill ("Model
+        Context Protocol (MCP)", "LLM / Generative AI") were answered "N+
+        years" and rejected like the "How many years..." ones
+        (_asks_for_a_number()), but their labels don't say they want a
+        number. An answer that is nothing but a year count loses nothing by
+        becoming the bare number, so the answer decides here, not the label.
+        """
+        return bool(re.fullmatch(r"\s*\d+(?:\.\d+)?\s*\+?\s*(?:years?|yrs?)?\.?\s*", answer, re.IGNORECASE))
 
     @staticmethod
     def _select_best_radio(group: Locator, answer: str) -> None:

@@ -249,6 +249,30 @@ def test_a_years_answer_with_a_qualifier_fills_just_the_number_into_a_text_field
     assert playwright_page.locator("#years-python").input_value() == "5"
 
 
+def test_a_skill_only_label_answered_with_a_year_count_gets_the_number(playwright_page, monkeypatch):
+    """Failure log: years fields labeled only "Model Context Protocol (MCP)"
+    or "LLM / Generative AI" were answered "N+ years" and the step stuck at
+    'Back', 'Next'. The label doesn't ask for a number; the answer decides.
+    A free-text answer in another field is left alone."""
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.ACTION_DELAY_SECONDS", 0)
+    posting = JobPosting(
+        job_id="1", title="X", company="Acme", url=f"file://{REJECTED_FIELD_FIXTURE_PATH}", description=""
+    )
+    answers = {"llm / generative ai": "4+ years", "city": "Springfield, 2 hours from here"}
+
+    with pytest.raises(RuntimeError):  # this fixture never reaches Submit
+        LinkedInAdapter(playwright_page).fill_and_submit(
+            posting,
+            answer_question=lambda label: answers.get(label.casefold(), "5"),
+            resume_path=None,
+            cover_letter_text=None,
+            dry_run=True,
+        )
+
+    assert playwright_page.locator("#llm").input_value() == "4"
+    assert playwright_page.locator("#city").input_value() == "Springfield, 2 hours from here"
+
+
 @pytest.mark.parametrize(
     ("label", "expected"),
     [
@@ -263,6 +287,33 @@ def test_a_years_answer_with_a_qualifier_fills_just_the_number_into_a_text_field
 )
 def test_asks_for_a_number(label, expected):
     assert LinkedInAdapter._asks_for_a_number(label) is expected
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ("5+ years", True),
+        ("3 yrs", True),
+        ("7", True),
+        ("2.5 years.", True),
+        ("5 years of React and Node", False),
+        ("No", False),
+        ("Senior", False),
+    ],
+)
+def test_is_a_year_count(answer, expected):
+    assert LinkedInAdapter._is_a_year_count(answer) is expected
+
+
+@pytest.mark.parametrize("answer", ["No", "None.", "n/a", "Zero"])
+def test_numeric_value_reads_a_no_as_zero(answer):
+    """Failure log: "How many years of Advertising Services experience do
+    you currently have?" answered "No" - rejected by the number-only field."""
+    assert LinkedInAdapter._numeric_value(answer) == "0"
+
+
+def test_numeric_value_still_has_nothing_for_an_unrelated_word():
+    assert LinkedInAdapter._numeric_value("Yes") is None
 
 
 def test_email_value():
