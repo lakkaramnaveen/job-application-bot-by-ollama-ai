@@ -371,7 +371,9 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         if not args.loop:
             result = run_one_cycle()
             applied, failed = result.applied, result.failed
-            _print_cycle_summary(applied, failed, rate_limiter, settings, provider)
+            _print_cycle_summary(
+                applied, failed, rate_limiter, settings, provider, search_failed=result.search_failed
+            )
             if rate_limiter.remaining_today() <= 0:
                 _quit_ollama_if_configured(settings)
             return
@@ -390,7 +392,9 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 applied, failed = result.applied, result.failed
                 fatal_error, throttled = result.fatal, result.throttled
                 throttle_streak = throttle_streak + 1 if throttled else 0
-                _print_cycle_summary(applied, failed, rate_limiter, settings, provider)
+                _print_cycle_summary(
+                    applied, failed, rate_limiter, settings, provider, search_failed=result.search_failed
+                )
                 if fatal_error:
                     # Same reasoning classify_failure() (pipeline/failures.py)
                     # and LinkedInSignedOut already apply within one cycle,
@@ -526,7 +530,13 @@ def _silence_asyncio_shutdown_noise() -> None:
 
 
 def _print_cycle_summary(
-    applied: int, failed: int, rate_limiter: RateLimiter, settings: Settings, provider: LLMProvider | None = None
+    applied: int,
+    failed: int,
+    rate_limiter: RateLimiter,
+    settings: Settings,
+    provider: LLMProvider | None = None,
+    *,
+    search_failed: bool = False,
 ) -> None:
     print(f"Done. Applied to {applied} job(s). {rate_limiter.remaining_today()} remaining today.")
     # Per-cycle performance line (see GenerationStats) - reset after printing
@@ -539,6 +549,11 @@ def _print_cycle_summary(
         print(
             f"{failed} posting(s) could not be completed - run `job-bot audit-log --failures` "
             f"(or see {settings.failed_applications_log_path} directly) for what happened and why."
+        )
+    if search_failed:
+        print(
+            "The LinkedIn search itself failed, so no postings were tried - `job-bot audit-log "
+            "--failures` has the error."
         )
 
 

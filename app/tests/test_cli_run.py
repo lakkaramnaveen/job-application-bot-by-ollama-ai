@@ -2881,3 +2881,23 @@ def test_refused_searches_back_off_exponentially_and_reset_after_a_good_cycle(tm
     # refused x3 (20, 40, 80), ok-but-empty (the ordinary 20), refused again (streak reset: 20)
     assert sleeps == [20, 40, 80, 20, 20]
     assert "since LinkedIn was refusing page loads (3 cycles in a row)" in capsys.readouterr().out
+
+
+def test_a_failed_search_is_not_reported_as_a_failed_posting(tmp_path, monkeypatch, capsys):
+    """Live (2026-10-02): a refused search page printed "1 posting(s) could
+    not be completed" - no posting was involved."""
+    from job_bot.browser.linkedin_adapter import NavigationFailed
+
+    class RefusedSearch(FakeAdapter):
+        def search(self, *args, **kwargs):
+            raise NavigationFailed("Failed to load https://www.linkedin.com/jobs/search/ after 3 attempts")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", RefusedSearch)
+
+    cmd_run(make_settings(tmp_path), make_args())
+
+    out = capsys.readouterr().out
+    assert "could not be completed" not in out
+    assert "The LinkedIn search itself failed, so no postings were tried" in out

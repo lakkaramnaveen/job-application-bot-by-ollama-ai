@@ -111,9 +111,13 @@ class CycleResult:
     """
 
     applied: int
-    failed: int
+    failed: int  # postings that could not be completed
     fatal: bool = False
     throttled: bool = False
+    # The search itself failed, so no posting was attempted at all. Kept
+    # apart from `failed`: counting it there printed "1 posting(s) could
+    # not be completed" when no posting was involved (live, 2026-10-02).
+    search_failed: bool = False
 
 
 def run_cycle(
@@ -222,7 +226,7 @@ def run_cycle(
             print(f"Error searching for postings: {e}")
             if _browser_is_gone(e, page):
                 print(BROWSER_GONE_MESSAGE)
-                return CycleResult(applied=0, failed=1, fatal=True)
+                return CycleResult(applied=0, failed=0, fatal=True, search_failed=True)
             # A signed-out session fails every search identically until the
             # user runs `job-bot login` - fatal the same way a down provider is.
             # A refused search page (NavigationFailed, after its retries) is
@@ -230,7 +234,13 @@ def run_cycle(
             # refused job pages - report it as throttled so --loop backs off
             # progressively instead of probing every interval (2026-10-02:
             # searches kept being refused for hours).
-            return CycleResult(applied=0, failed=1, fatal=signed_out, throttled=isinstance(e, NavigationFailed))
+            return CycleResult(
+                applied=0,
+                failed=0,
+                fatal=signed_out,
+                throttled=isinstance(e, NavigationFailed),
+                search_failed=True,
+            )
         audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
     def should_skip(posting: JobPosting) -> bool:
