@@ -104,6 +104,19 @@ SUBMIT_BUTTON_SELECTORS = (
 # Answers that mean zero when a field wants a number - see _numeric_value().
 _ZERO_ANSWERS = frozenset({"no", "none", "n/a", "na", "zero", "0 years"})
 
+# See LinkedInAdapter._radio_option_text().
+_RADIO_OPTION_TEXT_JS = """(radio) => {
+  let el = radio;
+  while (el.parentElement && el.parentElement.querySelectorAll('input[type=radio]').length === 1) {
+    el = el.parentElement;
+  }
+  return el === radio ? '' : el.innerText;
+}"""
+
+# A radio's <label> click is tried this long before checking the input
+# directly - see _select_best_radio().
+RADIO_LABEL_CLICK_TIMEOUT_MS = 3000
+
 # See LinkedInAdapter._field_errors().
 _FIELD_ERRORS_JS = """(dialog) => {
   const counter = /\\d+\\s*\\/\\s*\\d+|\\d+ of \\d+ characters/gi;
@@ -850,7 +863,7 @@ class LinkedInAdapter(JobBoardAdapter):
                 continue
             if any(radios.nth(i).is_checked() for i in range(radios.count())):
                 continue
-            label = self._label_for(group)
+            label = self._radio_group_question(group, radios)
             answer = answer_question(label) if label else ""
             self._select_best_radio(group, answer)
 
@@ -921,7 +934,7 @@ class LinkedInAdapter(JobBoardAdapter):
                 continue
             if not self._is_marked_required(radios.first):
                 continue
-            return self._label_for(group) or "(unlabeled required choice)"
+            return self._radio_group_question(group, radios) or "(unlabeled required choice)"
 
         for select in dialog.locator("select").all():
             if not self._is_marked_required(select):
@@ -1153,7 +1166,7 @@ class LinkedInAdapter(JobBoardAdapter):
     @staticmethod
     def _select_best_radio(group: Locator, answer: str) -> None:
         radios = group.locator('input[type="radio"]')
-        labels = [LinkedInAdapter._label_for_id(group.page, radios.nth(i)) for i in range(radios.count())]
+        labels = [LinkedInAdapter._radio_option_text(radios.nth(i)) for i in range(radios.count())]
         idx = LinkedInAdapter._best_match_index(labels, answer)
         if idx is None:
             # Leave unselected rather than guess on a field that may be
@@ -1165,22 +1178,59 @@ class LinkedInAdapter(JobBoardAdapter):
         radio = radios.nth(idx)
         radio_id = radio.get_attribute("id")
         label = group.page.locator(f'label[for="{radio_id}"]') if radio_id else None
-        if label is not None and label.count() > 0:
+        if label is not None and label.count() > 0 and label.first.inner_text().strip():
             # LinkedIn commonly styles these as custom pill/card radios with
             # the native <input> visually hidden behind its own <label> -
             # checking the input directly then fails Playwright's
             # actionability check ("label intercepts pointer events"),
             # observed live timing out after ~30s on a real application.
             # Click the label instead, exactly like a real user does.
-            label.first.click()
+            try:
+                label.first.click(timeout=RADIO_LABEL_CLICK_TIMEOUT_MS)
+            except PlaywrightError:
+                radio.check(force=True)
+            if not radio.is_checked():
+                radio.check(force=True)
         else:
-            radio.check()
+            # No label, or LinkedIn's 2026-10 markup's empty one (no text,
+            # possibly no clickable area) - check the input itself; force,
+            # since it may be visually hidden behind custom styling.
+            radio.check(force=True)
 
     @staticmethod
     def _select_best_option(select: Locator, options: list[str], answer: str) -> None:
         idx = LinkedInAdapter._best_match_index(options, answer)
         if idx is not None:
             select.select_option(index=idx)
+
+    @staticmethod
+    def _radio_group_question(group: Locator, radios: Locator) -> str:
+        """The question a radio group asks: its label/legend/aria-label
+        (_label_for()), or - LinkedIn's 2026-10 markup, which has no
+        <legend> - the aria-label every radio in the group carries.
+
+        Real failure (2026-10-02): "Are you comfortable working in a hybrid
+        setting?" and similar yes/no questions were never asked at all -
+        _label_for() found nothing, so the group was left unanswered and
+        the form stuck at "buttons visible on this step: 'Back', 'Next'",
+        with no answer recorded for the step.
+        """
+        question = LinkedInAdapter._label_for(group)
+        if question:
+            return question
+        aria = radios.first.get_attribute("aria-label")
+        return aria.strip() if aria else ""
+
+    @staticmethod
+    def _radio_option_text(radio: Locator) -> str:
+        """One radio's option text: its <label>'s, or - when that label is
+        empty, as in LinkedIn's 2026-10 markup, where "Yes"/"No" is a <p>
+        next to the radio - the text of the largest element around the
+        radio that contains no other radio of the group."""
+        text = LinkedInAdapter._label_for_id(radio.page, radio)
+        if text:
+            return text
+        return str(radio.evaluate(_RADIO_OPTION_TEXT_JS)).strip()
 
     @staticmethod
     def _label_for_id(page: Page, input_el: Locator) -> str:

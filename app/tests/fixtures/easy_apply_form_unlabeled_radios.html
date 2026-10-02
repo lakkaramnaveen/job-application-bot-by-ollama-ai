@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: yes/no questions with no legend or label text</title></head>
+<body>
+  <!-- LinkedIn's markup observed live 2026-10-02 (classes/data attributes
+       stripped): the question is only in each radio's aria-label and a
+       sibling text line, there is no <legend>, every <label> is empty, and
+       the option text ("Yes"/"No") is a <p> next to the radio. -->
+  <button aria-label="Easy Apply to this job" onclick="document.getElementById('apply').showModal()">Easy Apply</button>
+
+  <dialog id="apply">
+    <h2>Apply to Acme</h2>
+    <div>
+      <span>Are you comfortable working in a hybrid setting?*</span>
+      <fieldset aria-describedby="error-message-q1" role="radiogroup"><div><div><div><div><input id="q1-yes" aria-label="Are you comfortable working in a hybrid setting?" tabindex="0" type="radio" name="radio-group-q1"><label for="q1-yes"></label></div><div><p>Yes</p></div></div></div><div><div><div><input id="q1-no" aria-label="Are you comfortable working in a hybrid setting?" tabindex="0" type="radio" name="radio-group-q1"><label for="q1-no"></label></div><div><p>No</p></div></div></div></div></fieldset>
+    </div>
+    <div>
+      <span>Will you now or in the future require visa sponsorship?*</span>
+      <fieldset aria-describedby="error-message-q2" role="radiogroup"><div><div><div><div><input id="q2-yes" aria-label="Will you now or in the future require visa sponsorship?" tabindex="0" type="radio" name="radio-group-q2"><label for="q2-yes"></label></div><div><p>Yes</p></div></div></div><div><div><div><input id="q2-no" aria-label="Will you now or in the future require visa sponsorship?" tabindex="0" type="radio" name="radio-group-q2"><label for="q2-no"></label></div><div><p>No</p></div></div></div></div></fieldset>
+    </div>
+    <button aria-label="Submit application">Submit application</button>
+  </dialog>
+</body>
+</html>

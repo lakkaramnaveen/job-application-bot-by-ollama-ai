@@ -28,6 +28,7 @@ from job_bot.browser.linkedin_adapter import (
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form.html"
 NATIVE_DIALOG_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_native_dialog.html"
 REJECTED_FIELD_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_rejected_field.html"
+UNLABELED_RADIOS_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_unlabeled_radios.html"
 REDESIGNED_JOB_VIEW_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "job_view_redesigned.html"
 LINK_ENTRY_POINT_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_link_entry_point.html"
 SEARCH_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "search_results.html"
@@ -809,6 +810,35 @@ def test_stuck_error_names_the_field_linkedin_rejected_and_why(playwright_page, 
         in message
     )
     assert "City" not in message and "0/20" not in message
+
+
+def test_yes_no_questions_in_linkedins_unlabeled_radio_markup_are_asked_and_answered(playwright_page):
+    """Real failure (2026-10-02): LinkedIn's yes/no questions now have no
+    <legend> and empty <label>s - the question is only in each radio's
+    aria-label, "Yes"/"No" in a <p> beside it. None of them were asked,
+    and the form stuck at 'Back', 'Next' with no answers recorded."""
+    posting = JobPosting(
+        job_id="1", title="X", company="Acme", url=f"file://{UNLABELED_RADIOS_FIXTURE_PATH}", description=""
+    )
+    asked = []
+
+    def answers(label: str) -> str:
+        asked.append(label)
+        return "No" if "sponsorship" in label else "Yes"
+
+    submitted = LinkedInAdapter(playwright_page).fill_and_submit(
+        posting, answer_question=answers, resume_path=None, cover_letter_text=None, dry_run=True
+    )
+
+    assert submitted is False  # reached Submit (dry run)
+    assert asked == [
+        "Are you comfortable working in a hybrid setting?",
+        "Will you now or in the future require visa sponsorship?",
+    ]
+    assert playwright_page.locator("#q1-yes").is_checked()
+    assert playwright_page.locator("#q2-no").is_checked()
+    assert not playwright_page.locator("#q1-no").is_checked()
+    assert not playwright_page.locator("#q2-yes").is_checked()
 
 
 def test_unanswered_required_radio_group_fails_fast_with_a_specific_message(playwright_page):
