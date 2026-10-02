@@ -19,6 +19,15 @@
     <label for="llm">LLM / Generative AI</label>
     <input id="llm" type="text" />
 
+    <!-- A required yes/no group LinkedIn has flagged, in its 2026-10 markup:
+         the error is referenced from the <fieldset>, the question only in
+         the radios' aria-label. -->
+    <fieldset aria-describedby="relocate-error" role="radiogroup">
+      <div><input id="relocate-yes" aria-label="Are you willing to relocate?" type="radio" name="relocate"><label for="relocate-yes"></label><p>Yes</p></div>
+      <div><input id="relocate-no" aria-label="Are you willing to relocate?" type="radio" name="relocate"><label for="relocate-no"></label><p>No</p></div>
+    </fieldset>
+    <div id="relocate-error">Please make a selection</div>
+
     <label for="city">City</label>
     <input id="city" type="text" aria-describedby="city-counter" />
     <div id="city-counter">0/20</div>

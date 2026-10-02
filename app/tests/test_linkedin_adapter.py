@@ -18,6 +18,7 @@ from job_bot.browser.linkedin_adapter import (
     DATE_POSTED_3_DAYS,
     DATE_POSTED_24H,
     RESULTS_PER_PAGE,
+    FieldsRejected,
     LinkedInAdapter,
     LinkedInSignedOut,
     NavigationFailed,
@@ -805,11 +806,15 @@ def test_stuck_error_names_the_field_linkedin_rejected_and_why(playwright_page, 
 
     message = str(excinfo.value)
     assert "'Back', 'Review'" in message
-    assert (
-        "Fields LinkedIn rejected: How many years of work experience do you have with Java?: Invalid input."
-        in message
-    )
+    assert "Fields LinkedIn rejected: How many years of work experience do you have with Java?: Invalid input" in message
     assert "City" not in message and "0/20" not in message
+    # Structured, for cli.py to learn from - including a radio group's
+    # error, which LinkedIn attaches to the <fieldset>.
+    assert isinstance(excinfo.value, FieldsRejected)
+    assert excinfo.value.rejected == [
+        ("How many years of work experience do you have with Java?", "Invalid input"),
+        ("Are you willing to relocate?", "Please make a selection"),
+    ]
 
 
 def test_yes_no_questions_in_linkedins_unlabeled_radio_markup_are_asked_and_answered(playwright_page):

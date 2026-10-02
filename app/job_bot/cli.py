@@ -33,6 +33,7 @@ from job_bot.browser.base_adapter import JobPosting
 from job_bot.browser.external_apply_adapter import ExternalApplyAdapter
 from job_bot.browser.linkedin_adapter import (
     EXPERIENCE_LEVEL_CODES,
+    FieldsRejected,
     LinkedInAdapter,
     LinkedInSignedOut,
     NavigationFailed,
@@ -436,6 +437,36 @@ def _start_ollama_and_wait(provider: OllamaProvider) -> str | None:
     if problem is None:
         print("Ollama is up.")
     return problem
+
+
+def _learn_from_rejected_fields(
+    e: FieldsRejected, posting: JobPosting, resume_store: ResumeStore, answer_gaps: AnswerGapStore
+) -> None:
+    """LinkedIn refused these answers - don't replay them. Each rejected
+    question loses its cached FAQ answer (so the next posting asking it
+    gets a fresh answer instead of the same refused one) and is queued in
+    answer_gaps for `job-bot review-answers`, where answering it once
+    saves the right answer for every future posting.
+
+    Like UnansweredRequiredQuestion, this doesn't count toward
+    MAX_APPLY_ATTEMPTS: its fix is the answer, after which the posting
+    should be retried. Best effort - a data-file problem here only loses
+    the learning, never the run.
+    """
+    for question, error in e.rejected:
+        if not question:
+            continue
+        try:
+            removed = resume_store.remove_faq_answer(question)
+            answer_gaps.record(question, job_id=posting.job_id, company=posting.company, title=posting.title)
+        except CorruptDataFile as data_error:
+            print(f"Warning: couldn't record the rejected answer - {data_error}")
+            continue
+        dropped = " Dropped its cached answer." if removed else ""
+        print(
+            f"  LinkedIn rejected the answer to {question!r} ({error}).{dropped} "
+            "Answer it once with `job-bot review-answers` and it'll be reused."
+        )
 
 
 def _cacheable_answer(question: str, answer: str) -> str | None:
@@ -1029,7 +1060,9 @@ def _run_apply_cycle(
                     )
                 except CorruptDataFile as gap_error:
                     print(f"Warning: unanswered question not recorded - {gap_error}")
-            if not isinstance(e, UnansweredRequiredQuestion):
+            if isinstance(e, FieldsRejected):
+                _learn_from_rejected_fields(e, posting, resume_store, answer_gaps)
+            if not isinstance(e, UnansweredRequiredQuestion | FieldsRejected):
                 attempts = tracker.record_apply_failure(posting.job_id)
                 if settings.max_apply_attempts > 0 and attempts >= settings.max_apply_attempts:
                     print(

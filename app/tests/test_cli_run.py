@@ -2631,3 +2631,34 @@ def test_a_contact_block_answer_to_a_phone_question_is_cached_as_just_the_number
     cmd_run(settings, make_args())
 
     assert json.loads(settings.faq_path.read_text()) == {"Mobile phone number*": "3145550100"}
+
+
+def test_an_answer_linkedin_rejected_is_dropped_from_the_cache_and_queued_for_review(tmp_path, monkeypatch, capsys):
+    """The bot learning from LinkedIn's refusals: a cached answer LinkedIn
+    flagged ("Invalid input") is removed, so it isn't replayed on the next
+    posting, and the question goes to `job-bot review-answers`. Like an
+    unanswered question, it doesn't count toward MAX_APPLY_ATTEMPTS."""
+    from job_bot.browser.linkedin_adapter import FieldsRejected
+    from job_bot.safety.answer_gaps import AnswerGapStore
+
+    question = "How many years of work experience do you have with Java?"
+
+    class RejectingAdapter(FakeAdapter):
+        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+            answer_question(question)
+            raise FieldsRejected(posting.job_id, [(question, "Invalid input")], "stuck - Fields LinkedIn rejected: ...")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", RejectingAdapter)
+    settings = make_settings(tmp_path, max_apply_attempts=1)
+    settings.faq_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.faq_path.write_text(json.dumps({question: "5+ years", "Are you authorized to work in the US?": "Yes"}))
+
+    cmd_run(settings, make_args())
+
+    assert json.loads(settings.faq_path.read_text()) == {"Are you authorized to work in the US?": "Yes"}
+    assert question in AnswerGapStore(settings.answer_gaps_path).list_unanswered()
+    assert Tracker(settings.db_path).apply_failures(JOB.job_id) == 0
+    out = capsys.readouterr().out
+    assert f"LinkedIn rejected the answer to {question!r} (Invalid input). Dropped its cached answer." in out

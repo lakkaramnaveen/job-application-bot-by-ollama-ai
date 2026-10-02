@@ -121,18 +121,27 @@ RADIO_LABEL_CLICK_TIMEOUT_MS = 3000
 _FIELD_ERRORS_JS = """(dialog) => {
   const counter = /\\d+\\s*\\/\\s*\\d+|\\d+ of \\d+ characters/gi;
   const out = [];
-  for (const el of dialog.querySelectorAll('input:not([type=hidden]), select, textarea')) {
+  const fields = dialog.querySelectorAll('input:not([type=hidden]):not([type=radio]), select, textarea, fieldset');
+  for (const el of fields) {
     const ids = (el.getAttribute('aria-describedby') || '').split(/\\s+/).filter(Boolean);
     const lines = ids
       .map(id => (document.getElementById(id) || {}).innerText || '')
       .join('\\n').split('\\n').map(t => t.replace(counter, '').trim()).filter(Boolean);
     if (!lines.length && el.getAttribute('aria-invalid') === 'true') lines.push('invalid');
     if (!lines.length) continue;
-    const label = ((el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.name || el.id || '?').trim();
-    out.push(label.slice(0, 80) + ': ' + Array.from(new Set(lines)).join(' / ').slice(0, 120));
+    let label = '';
+    if (el.tagName === 'FIELDSET') {
+      const legend = el.querySelector('legend');
+      const radio = el.querySelector('input[type=radio]');
+      label = (legend && legend.innerText) || (radio && radio.getAttribute('aria-label')) || el.getAttribute('aria-label') || '';
+    } else {
+      label = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.name || el.id || '';
+    }
+    out.push({label: label.trim(), message: Array.from(new Set(lines)).join(' / ').slice(0, 120)});
   }
   return out;
 }"""
+
 
 # Small, human-scale pauses between UI actions - not an attempt to evade
 # detection, just to let LinkedIn's client-side rendering keep up so we don't
@@ -179,6 +188,21 @@ EXPERIENCE_LEVEL_CODES = {
 # rounded up to the nearest UI bucket - see search()'s docstring.
 DATE_POSTED_24H = "r86400"
 DATE_POSTED_3_DAYS = "r259200"
+
+
+class FieldsRejected(RuntimeError):
+    """The form stuck on a step where LinkedIn flagged specific fields
+    (e.g. "Invalid input" under a years field) - see _field_errors().
+    `rejected` holds (question, LinkedIn's message) pairs, so cli.py can
+    drop a cached answer LinkedIn refused and queue the question for
+    `job-bot review-answers` instead of replaying the same answer on every
+    future posting that asks it.
+    """
+
+    def __init__(self, job_id: str, rejected: list[tuple[str, str]], message: str):
+        self.job_id = job_id
+        self.rejected = rejected
+        super().__init__(message)
 
 
 class UnansweredRequiredQuestion(RuntimeError):
@@ -672,12 +696,15 @@ class LinkedInAdapter(JobBoardAdapter):
         # adapter doesn't fill at all).
         visible_button_texts = [t.strip() for t in dialog.locator("button:visible").all_inner_texts()]
         buttons_seen = ", ".join(repr(t) for t in visible_button_texts if t) or "none"
-        field_errors = self._field_errors(dialog)
-        rejected = f" Fields LinkedIn rejected: {'; '.join(field_errors)}." if field_errors else ""
-        raise RuntimeError(
+        message = (
             f"Could not complete the Easy Apply form for job {posting.job_id} (stuck on a step with "
-            f"no Next/Review/Submit button found - buttons visible on this step: {buttons_seen}).{rejected}"
+            f"no Next/Review/Submit button found - buttons visible on this step: {buttons_seen})."
         )
+        field_errors = self._field_errors(dialog)
+        if field_errors:
+            listed = "; ".join(f"{label[:80] or '?'}: {error}" for label, error in field_errors)
+            raise FieldsRejected(posting.job_id, field_errors, f"{message} Fields LinkedIn rejected: {listed}.")
+        raise RuntimeError(message)
 
     def _raise_if_unanswered_required_field(self, dialog: Locator, posting: JobPosting) -> None:
         """Fails fast, naming the specific question, if a required field
@@ -1047,10 +1074,12 @@ class LinkedInAdapter(JobBoardAdapter):
         return "\n".join(deduped)
 
     @staticmethod
-    def _field_errors(dialog: Locator) -> list[str]:
-        """'label: message' for each field on this step showing a validation
-        error, e.g. "How many years of work experience do you have with
-        Java?: Invalid input" - for the stuck error above.
+    def _field_errors(dialog: Locator) -> list[tuple[str, str]]:
+        """(question, message) for each field on this step showing a
+        validation error, e.g. ("How many years of work experience do you
+        have with Java?", "Invalid input") - for the stuck error above and
+        FieldsRejected. A radio group's error sits on its <fieldset>, with the
+        question from its legend or its radios' aria-label.
 
         Both of 2026-10-01's stuck-form bugs (a contact block in the phone
         field, "5+ years" in a years field) logged only "buttons visible:
@@ -1065,7 +1094,10 @@ class LinkedInAdapter(JobBoardAdapter):
             found = dialog.evaluate(_FIELD_ERRORS_JS)
         except PlaywrightError:
             return []
-        return [str(item) for item in found][:5]
+        return [
+            (LinkedInAdapter._dedupe_repeated_lines(str(item.get("label", ""))), str(item.get("message", "")))
+            for item in found
+        ][:5]
 
     @staticmethod
     def _asks_for_a_number(label: str) -> bool:
