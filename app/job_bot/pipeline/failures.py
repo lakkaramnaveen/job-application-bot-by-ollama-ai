@@ -40,6 +40,26 @@ class FailureVerdict:
 
 POSTING_ONLY = FailureVerdict()
 
+# Longest wait between --loop cycles while LinkedIn keeps refusing page
+# loads - see throttle_backoff_minutes().
+MAX_THROTTLE_BACKOFF_MINUTES = 120
+
+
+def throttle_backoff_minutes(base_minutes: float, streak: int) -> float:
+    """How long --loop waits after `streak` throttled cycles in a row:
+    base, then doubling each time (20 -> 40 -> 80 -> 120 with the default
+    20-minute interval), capped at MAX_THROTTLE_BACKOFF_MINUTES (or `base`,
+    if that's already longer).
+
+    Real case (2026-10-02): once LinkedIn started refusing page loads it
+    kept refusing for hours, and a fixed 20-minute retry meant three probes
+    an hour against a session already being rate-limited - the request
+    pattern most likely to get an automated account restricted.
+    """
+    if streak <= 1:
+        return base_minutes
+    return min(base_minutes * 2 ** (streak - 1), max(MAX_THROTTLE_BACKOFF_MINUTES, base_minutes))
+
 
 def classify_failure(e: Exception, page: Page) -> FailureVerdict:
     """The verdict for an exception raised while preparing or applying to

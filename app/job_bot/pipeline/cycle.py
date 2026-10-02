@@ -24,6 +24,7 @@ from job_bot.browser.linkedin_adapter import (
     FieldsRejected,
     LinkedInAdapter,
     LinkedInSignedOut,
+    NavigationFailed,
     UnansweredRequiredQuestion,
 )
 from job_bot.data_files import CorruptDataFile
@@ -207,7 +208,12 @@ def run_cycle(
                 return 0, 1, True, False
             # A signed-out session fails every search identically until the
             # user runs `job-bot login` - fatal the same way a down provider is.
-            return 0, 1, signed_out, False
+            # A refused search page (NavigationFailed, after its retries) is
+            # LinkedIn rate-limiting the session, the same as a streak of
+            # refused job pages - report it as throttled so --loop backs off
+            # progressively instead of probing every interval (2026-10-02:
+            # searches kept being refused for hours).
+            return 0, 1, signed_out, isinstance(e, NavigationFailed)
         audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
 
     def should_skip(posting: JobPosting) -> bool:

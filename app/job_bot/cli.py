@@ -65,6 +65,7 @@ from job_bot.pipeline.cycle import (  # noqa: F401 - re-exported for callers/tes
     _form_time_limit,
     _score_verdict,
 )
+from job_bot.pipeline.failures import throttle_backoff_minutes
 from job_bot.pipeline.retry import recent_failures_to_retry, since_days_ago
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 from job_bot.resume.store import ResumeStore, unusable_faq_reason
@@ -382,8 +383,10 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             "or until you stop it (Ctrl+C)."
         )
         try:
+            throttle_streak = 0
             while True:
                 applied, failed, fatal_error, throttled = run_one_cycle()
+                throttle_streak = throttle_streak + 1 if throttled else 0
                 _print_cycle_summary(applied, failed, rate_limiter, settings, provider)
                 if fatal_error:
                     # Same reasoning classify_failure() (pipeline/failures.py)
@@ -414,11 +417,13 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                     # NAVIGATION_FAILURE_STREAK_LIMIT) - searching again right
                     # away, even after a cycle that applied to something,
                     # would just resume hammering it.
+                    backoff = throttle_backoff_minutes(args.loop_interval_minutes, throttle_streak)
+                    in_a_row = f" ({throttle_streak} cycles in a row)" if throttle_streak > 1 else ""
                     print(
-                        f"Backing off {args.loop_interval_minutes} minute(s) before the next cycle "
-                        "since LinkedIn was refusing page loads..."
+                        f"Backing off {backoff:g} minute(s) before the next cycle "
+                        f"since LinkedIn was refusing page loads{in_a_row}..."
                     )
-                    time.sleep(args.loop_interval_minutes * 60)
+                    time.sleep(backoff * 60)
                 elif applied == 0:
                     # Nothing applied this cycle (no eligible postings found,
                     # or the search itself failed) - back off rather than

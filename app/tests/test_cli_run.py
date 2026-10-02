@@ -2847,3 +2847,37 @@ def test_retry_failed_with_loop_is_refused(tmp_path, capsys):
     with pytest.raises(SystemExit):
         cmd_run(make_settings(tmp_path), make_args(retry_failed=2.0, loop=True))
     assert "--retry-failed can't be combined with --loop or --job-id" in capsys.readouterr().err
+
+
+def test_refused_searches_back_off_exponentially_and_reset_after_a_good_cycle(tmp_path, monkeypatch, capsys):
+    """Real case (2026-10-02): LinkedIn refused the search page for hours
+    and --loop retried every 20 minutes. A refused search now counts as
+    throttled, and consecutive throttled cycles wait 20, 40, 80... minutes;
+    a cycle that gets through resets the streak."""
+    from job_bot.browser.linkedin_adapter import NavigationFailed
+
+    outcomes = iter(["refused", "refused", "refused", "ok", "refused"])
+
+    class RefusingSearchAdapter(FakeAdapter):
+        def search(self, *args, **kwargs):
+            if next(outcomes) == "refused":
+                raise NavigationFailed("Failed to load https://www.linkedin.com/jobs/search/ after 3 attempts")
+            return []
+
+    sleeps = []
+
+    def record_sleep(seconds):
+        sleeps.append(seconds / 60)
+        if len(sleeps) == 5:
+            raise KeyboardInterrupt  # end --loop cleanly
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", RefusingSearchAdapter)
+    monkeypatch.setattr("job_bot.cli.time.sleep", record_sleep)
+
+    cmd_run(make_settings(tmp_path), make_args(loop=True, loop_interval_minutes=20))
+
+    # refused x3 (20, 40, 80), ok-but-empty (the ordinary 20), refused again (streak reset: 20)
+    assert sleeps == [20, 40, 80, 20, 20]
+    assert "since LinkedIn was refusing page loads (3 cycles in a row)" in capsys.readouterr().out

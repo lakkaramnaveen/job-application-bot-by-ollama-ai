@@ -56,3 +56,19 @@ def test_a_refused_page_load_counts_toward_the_throttling_streak_but_is_not_fata
 )
 def test_everything_else_costs_only_this_posting(error):
     assert classify_failure(error, Page()) == POSTING_ONLY
+
+
+@pytest.mark.parametrize(
+    ("streak", "minutes"),
+    [(0, 20), (1, 20), (2, 40), (3, 80), (4, 120), (10, 120)],
+)
+def test_throttle_backoff_doubles_per_throttled_cycle_and_caps(streak, minutes):
+    from job_bot.pipeline.failures import throttle_backoff_minutes
+
+    assert throttle_backoff_minutes(20, streak) == minutes
+
+
+def test_throttle_backoff_never_shortens_a_long_base_interval():
+    from job_bot.pipeline.failures import throttle_backoff_minutes
+
+    assert throttle_backoff_minutes(180, 3) == 180
