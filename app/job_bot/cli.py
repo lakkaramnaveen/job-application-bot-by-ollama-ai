@@ -60,6 +60,9 @@ from job_bot.pipeline import cycle
 from job_bot.pipeline.answers import (
     cacheable_answer as _cacheable_answer,  # noqa: F401 - kept for callers/tests
 )
+from job_bot.pipeline.answers import (
+    pending_questions,
+)
 from job_bot.pipeline.context import RunContext
 from job_bot.pipeline.cycle import (  # noqa: F401 - re-exported for callers/tests
     NAVIGATION_FAILURE_STREAK_LIMIT,
@@ -220,6 +223,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     for warning in settings.validate_ready():
         print(f"Warning: {warning}")
     _warn_about_unconfirmed_submissions(Tracker(settings.db_path))
+    shown_pending = _announce_pending_questions(settings)
 
     # CompanyBlacklist loads an unreadable file as empty (so other commands
     # keep working while `job-bot doctor` reports it) - for a run, that
@@ -397,6 +401,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 result = run_one_cycle()
                 applied, failed = result.applied, result.failed
                 fatal_error, throttled = result.fatal, result.throttled
+                shown_pending = _announce_pending_questions(settings, already_shown=shown_pending)
                 throttle_streak = throttle_streak + 1 if throttled else 0
                 _print_cycle_summary(
                     applied, failed, rate_limiter, settings, provider, search_failed=result.search_failed
@@ -548,6 +553,26 @@ def _funnel(settings: Settings, days: float) -> Funnel:
 def _print_funnel(settings: Settings, days: float) -> None:
     for line in format_funnel(_funnel(settings, days), days=days):
         print(line)
+
+
+def _announce_pending_questions(settings: Settings, *, already_shown: int = 0) -> int:
+    """Tell the user how many questions are waiting for their answer, when
+    that's more than they were last told about (so a long --loop doesn't
+    repeat itself). Answering them once with `job-bot review-answers` is
+    how the bot learns - see pipeline/answers.py. Returns the count now
+    shown. Best effort: an unreadable gaps/FAQ file skips the reminder."""
+    try:
+        gaps = AnswerGapStore(settings.answer_gaps_path).list_unanswered()
+        faq = ResumeStore(settings.resume_path, settings.faq_path).faq_answers()
+    except (CorruptDataFile, OSError):
+        return already_shown
+    waiting = len(pending_questions(gaps, faq))
+    if waiting > already_shown:
+        print(
+            f"{waiting} application question(s) are waiting for your answer - run "
+            "`job-bot review-answers` once and every future posting that asks them gets answered."
+        )
+    return max(waiting, already_shown) if waiting else 0
 
 
 def _silence_asyncio_shutdown_noise() -> None:

@@ -3059,3 +3059,50 @@ def test_an_open_model_circuit_while_filling_a_form_ends_the_cycle_and_spares_th
     assert Tracker(settings.db_path).apply_failures(JOB.job_id) == 0
     assert "since the model kept failing" in capsys.readouterr().out
     assert sleeps == [20 * 60]
+
+
+def _write_gaps(settings, questions):
+    settings.answer_gaps_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.answer_gaps_path.write_text(json.dumps({q: {"count": 1} for q in questions}))
+
+
+def test_a_run_says_how_many_questions_are_waiting_for_an_answer(tmp_path, monkeypatch, capsys):
+    """The learning loop only works if the user knows to close it: a run
+    reports recorded questions with no saved answer - not ones already
+    answered in the FAQ some other way."""
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    settings = make_settings(tmp_path)
+    _write_gaps(settings, ["Security clearance level?", "Willing to relocate?"])
+    settings.faq_path.write_text(json.dumps({"Willing to relocate?": "Yes"}))
+
+    cmd_run(settings, make_args(dry_run=True))
+
+    out = capsys.readouterr().out
+    assert "1 application question(s) are waiting for your answer - run `job-bot review-answers`" in out
+
+
+def test_nothing_is_said_when_no_question_is_waiting(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    cmd_run(make_settings(tmp_path), make_args(dry_run=True))
+
+    assert "waiting for your answer" not in capsys.readouterr().out
+
+
+def test_a_loop_mentions_waiting_questions_again_only_when_more_arrive(tmp_path, monkeypatch, capsys):
+    from job_bot.cli import _announce_pending_questions
+
+    settings = make_settings(tmp_path)
+    _write_gaps(settings, ["Q1?"])
+
+    shown = _announce_pending_questions(settings)
+    shown = _announce_pending_questions(settings, already_shown=shown)  # no change: silent
+    _write_gaps(settings, ["Q1?", "Q2?"])
+    _announce_pending_questions(settings, already_shown=shown)  # grew: said again
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if "waiting for your answer" in line]
+    assert [line.split()[0] for line in lines] == ["1", "2"]

@@ -112,3 +112,11 @@ def test_an_unreadable_answer_gaps_file_costs_only_the_learning(env):
     service.learn_from_rejection(FieldsRejected("j1", [("Q?", "Invalid input")], "stuck"), POSTING)
     assert notes and notes[0].startswith("Warning: couldn't record the rejected answer")
     assert (tmp_path / "gaps.json").read_bytes() == b'{"broken": '  # left as it was
+
+
+def test_pending_questions_are_recorded_gaps_with_no_saved_answer():
+    from job_bot.pipeline.answers import pending_questions
+
+    gaps = {"Security clearance level?": {"count": 2}, "Willing to relocate?": {"count": 1}}
+    assert pending_questions(gaps, {"Willing to relocate?": "Yes"}) == ["Security clearance level?"]
+    assert pending_questions({}, {"Q?": "A"}) == []

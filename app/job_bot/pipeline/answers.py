@@ -34,6 +34,14 @@ from job_bot.tracker.db import Tracker
 AnswerFn = Callable[..., ApplicationAnswer]
 
 
+def pending_questions(gaps: dict[str, Any], faq_answers: dict[str, str]) -> list[str]:
+    """Recorded questions still waiting for the user's answer - those with
+    no saved FAQ answer. A gap answered some other way (`job-bot faq add`,
+    or an edit to the FAQ file) isn't waiting; on 2026-10-03 that was 28 of
+    39 recorded questions, so the raw gap count overstated it 3.5x."""
+    return [question for question in gaps if question not in faq_answers]
+
+
 def cacheable_answer(question: str, answer: str) -> str | None:
     """What may be saved to FAQ_PATH for `question`: the answer reduced to
     the shape the question asks for, or None to not cache it at all.
