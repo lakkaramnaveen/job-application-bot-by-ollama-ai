@@ -3023,3 +3023,39 @@ def test_an_open_model_circuit_ends_the_cycle_throttled_without_blaming_postings
     assert sleeps == [20 * 60]
     tracker = Tracker(settings.db_path)
     assert all(tracker.apply_failures(p.job_id) == 0 for p in postings)
+
+
+def test_an_open_model_circuit_while_filling_a_form_ends_the_cycle_and_spares_the_posting(tmp_path, monkeypatch, capsys):
+    """The apply path of the circuit breaker: the model gives out while
+    answering a form question. The cycle ends throttled (the model named
+    as the cause), the remaining postings aren't attempted, and the
+    posting isn't charged a failed attempt - the model failed, not it."""
+    from job_bot.llm.circuit_breaker import ModelUnavailable
+
+    class ModelGivesOutMidForm(FakeAdapter):
+        def search(self, *args, **kwargs):
+            return [JOB, JOB2]
+
+        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
+            self.fill_and_submit_calls.append({"posting": posting})
+            raise ModelUnavailable("The model failed 3 calls in a row (last: bad json) - not calling it again for 300s.")
+
+    adapter = ModelGivesOutMidForm(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    sleeps = []
+
+    def stop_at_first_sleep(seconds):
+        sleeps.append(seconds)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("job_bot.cli.time.sleep", stop_at_first_sleep)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args(loop=True, max_apps=10, loop_interval_minutes=20))
+
+    assert [c["posting"].job_id for c in adapter.fill_and_submit_calls] == [JOB.job_id]  # JOB2 not attempted
+    assert Tracker(settings.db_path).apply_failures(JOB.job_id) == 0
+    assert "since the model kept failing" in capsys.readouterr().out
+    assert sleeps == [20 * 60]

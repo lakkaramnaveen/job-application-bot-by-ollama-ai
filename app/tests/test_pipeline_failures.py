@@ -106,3 +106,12 @@ def test_a_rejected_model_key_ends_the_run_as_user_action():
     verdict = classify_failure(error, Page())
     assert verdict.fatal and verdict.failure_class is FailureClass.USER_ACTION
     assert "every call would be refused" in verdict.message
+
+
+def test_failure_class_of_covers_the_run_ending_provider_errors_too():
+    """failure_class_of() is also used where no verdict is built (the search
+    path), so it must agree with classify_failure() on these."""
+    from job_bot.pipeline.failures import failure_class_of
+
+    assert failure_class_of(OllamaProviderError("Could not reach Ollama at http://x.")) is FailureClass.FATAL
+    assert failure_class_of(ClaudeProviderError("Invalid ANTHROPIC_API_KEY.")) is FailureClass.USER_ACTION
