@@ -63,7 +63,9 @@ links to the section with the full detail:
   can't spam applications. `MAX_APPLICATIONS_PER_COMPANY` (e.g. `1`) also
   stops a run from sending several roles to the same employer or recruiter;
   it counts every application ever sent there, and `0` (the default) means
-  no limit.
+  no limit. `COMPANY_LIMIT_WINDOW_DAYS` (e.g. `14`) counts only the last N
+  days instead, so a company - often a staffing firm posting new roles - can
+  be applied to again once that long has passed.
   `MAX_APPLY_ATTEMPTS` (default `3`) stops retrying a posting whose Easy
   Apply form has failed that many times, since every retry regenerates
   the resume and cover letter; unanswered required questions don't count

@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     # run sending several roles to one employer or recruiter in a row.
     # 0 (default) means no limit.
     max_applications_per_company: int = 0
+    # Count only applications in the last this-many days toward
+    # MAX_APPLICATIONS_PER_COMPANY - e.g. 14 lets a staffing firm you applied
+    # to weeks ago through again for its new roles. On 2026-10-02 the limit
+    # skipped 93 postings; a 14-day window would have allowed 56 of them.
+    # 0 (default) counts every application ever, as before.
+    company_limit_window_days: int = 0
     # A posting whose Easy Apply form has failed this many times is no
     # longer retried by `job-bot run` - each retry regenerates a tailored
     # resume and cover letter and drives the whole form again, and in real

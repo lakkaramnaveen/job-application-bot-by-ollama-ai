@@ -1233,3 +1233,16 @@ def test_a_submission_in_flight_is_marked_and_listed_until_confirmed(tmp_path):
 
     assert [job["job_id"] for job in tracker.unconfirmed_submissions()] == ["j1"]
     assert not tracker.has_applied("j1")
+
+
+def test_applications_at_company_can_count_only_since_a_time(tmp_path):
+    from datetime import datetime, timedelta
+
+    tracker = Tracker(tmp_path / "t.sqlite3")
+    tracker.upsert_job("j1", "Engineer", "Acme Inc.", "https://example.com/1")
+    tracker.mark_applied("j1")
+    applied_at = datetime.fromisoformat(tracker.get_job("j1")["applied_at"])
+
+    assert tracker.applications_at_company("Acme Inc.") == 1
+    assert tracker.applications_at_company("Acme Inc.", since=applied_at - timedelta(days=1)) == 1
+    assert tracker.applications_at_company("Acme Inc.", since=applied_at + timedelta(days=1)) == 0

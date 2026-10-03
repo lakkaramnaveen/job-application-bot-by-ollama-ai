@@ -17,7 +17,8 @@ See docs/architecture.md.
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 
 from job_bot.browser.base_adapter import JobPosting
@@ -41,6 +42,8 @@ class SkipPolicy:
         *,
         max_applications_per_company: int,
         max_apply_attempts: int,
+        company_limit_window_days: int = 0,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
         exclude_keywords: Collection[str] = (),
         requested_ids: Collection[str] = (),
     ):
@@ -50,6 +53,8 @@ class SkipPolicy:
         self._tracker = tracker
         self._blacklist = blacklist
         self._company_limit = max_applications_per_company
+        self._company_window_days = company_limit_window_days
+        self._now = now
         self._max_attempts = max_apply_attempts
         self._exclude_keywords = tuple(exclude_keywords)
         self._requested_ids = frozenset(requested_ids)
@@ -108,7 +113,10 @@ class SkipPolicy:
         return self._max_attempts > 0 and self._tracker.apply_failures(posting.job_id) >= self._max_attempts
 
     def _company_limit_reached(self, posting: JobPosting) -> bool:
-        return self._company_limit > 0 and self._tracker.applications_at_company(posting.company) >= self._company_limit
+        if self._company_limit <= 0:
+            return False
+        since = self._now() - timedelta(days=self._company_window_days) if self._company_window_days > 0 else None
+        return self._tracker.applications_at_company(posting.company, since=since) >= self._company_limit
 
     def _has_excluded_keyword(self, posting: JobPosting) -> bool:
         title = posting.title.casefold()

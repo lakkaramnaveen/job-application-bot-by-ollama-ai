@@ -87,3 +87,31 @@ def test_limits_of_zero_mean_unlimited(tracker, blacklist):
 )
 def test_is_dead_end(tracker, blacklist, job, dead_end):
     assert policy(tracker, blacklist).is_dead_end(job) is dead_end
+
+
+def test_a_company_limit_window_counts_only_recent_applications(tmp_path, blacklist):
+    """COMPANY_LIMIT_WINDOW_DAYS: an application older than the window no
+    longer blocks the company (on 2026-10-02 a 14-day window would have
+    allowed 56 of 93 company-limit skips)."""
+    from datetime import datetime, timedelta
+
+    t = Tracker(tmp_path / "w.sqlite3")
+    t.upsert_job("old", "Engineer", "Staffing Co", "https://example.com/old")
+    t.mark_applied("old")
+    applied_at = datetime.fromisoformat(t.get_job("old")["applied_at"])
+
+    def policy_at(days_later, window):
+        return SkipPolicy(
+            t,
+            blacklist,
+            max_applications_per_company=1,
+            max_apply_attempts=0,
+            company_limit_window_days=window,
+            now=lambda: applied_at + timedelta(days=days_later),
+        )
+
+    new_role = posting("new", "Staffing Co")
+    assert policy_at(20, window=14).reason(new_role) is None  # outside the window
+    assert policy_at(20, window=14).is_dead_end(new_role) is False
+    assert policy_at(10, window=14).reason(new_role) is SkipReason.COMPANY_LIMIT  # inside it
+    assert policy_at(400, window=0).reason(new_role) is SkipReason.COMPANY_LIMIT  # 0 = ever, as before

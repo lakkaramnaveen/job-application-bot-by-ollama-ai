@@ -183,6 +183,7 @@ def run_cycle(
         blacklist,
         max_applications_per_company=settings.max_applications_per_company,
         max_apply_attempts=settings.max_apply_attempts,
+        company_limit_window_days=settings.company_limit_window_days,
         exclude_keywords=exclude_keywords,
         requested_ids=requested_ids,
     )
@@ -273,7 +274,12 @@ def run_cycle(
             # run, two roles at one recruiter went out back to back.
             limit = skip_policy.company_limit
             audit.log("skip_company_limit", job_id=posting.job_id, company=posting.company, limit=limit)
-            print(f"Skipping {posting.title} at {posting.company}: already applied there (MAX_APPLICATIONS_PER_COMPANY={limit}).")
+            window = settings.company_limit_window_days
+            recently = f" in the last {window} days" if window > 0 else ""
+            print(
+                f"Skipping {posting.title} at {posting.company}: already applied there{recently} "
+                f"(MAX_APPLICATIONS_PER_COMPANY={limit})."
+            )
         elif reason is SkipReason.EXCLUDED_KEYWORD:
             # Not persisted to the tracker (unlike a real score/skip
             # decision), since the exclude list is expected to change

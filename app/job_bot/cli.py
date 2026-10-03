@@ -640,7 +640,9 @@ def _print_run_plan(settings: Settings, args: argparse.Namespace, rate_limiter: 
     if min_score > 0:
         print(f"Only applying to postings scored {min_score}+.")
     if settings.max_applications_per_company > 0:
-        print(f"At most {settings.max_applications_per_company} application(s) per company.")
+        window = settings.company_limit_window_days
+        within = f" in any {window}-day window" if window > 0 else ""
+        print(f"At most {settings.max_applications_per_company} application(s) per company{within}.")
 
 
 
