@@ -43,10 +43,15 @@ Conclusions:
    laptop-class local model serves roughly 0.2 calls/s, so the central tier
    needs a batched GPU server (vLLM or similar: a handful of GPUs at peak) or a
    hosted API. Either way it sits behind one gateway.
-2. **Per-application cost is dominated by scoring postings that end up
-   rejected:** 88 scorings for 15 applications. A cheap first-pass filter (a
-   smaller model, or rules on title and requirements) before the full score is
-   the biggest single cost lever, more than any infrastructure choice.
+2. **Model work spent on postings that never get submitted is the biggest
+   cost lever.** On 2026-10-02 there were 88 scorings for 15 applications.
+   That isn't mostly weak matches: of 715 postings ever scored, only 13% fell
+   below the bar, and no title word predicts a low score (checked; a title
+   pre-filter would save little and risk skipping good fits). The waste was
+   strong fits that then failed to submit: form bugs since fixed, the
+   one-per-company limit, throttling. Raising the submit rate of good fits
+   (`job-bot report --by-failure`) saves more model work than any filter or
+   infrastructure choice.
 
 ## Target architecture
 
@@ -145,7 +150,7 @@ Rules that make this production-safe:
 ## Rollout, smallest useful steps first
 
 1. ~~Classify every failure (`FailureClass` on `FailureVerdict`) and log the
-   class with each failure.~~ Done (`88b24e6`). Done in the same change as this doc.
+   class with each failure.~~ Done (`88b24e6`).
 2. ~~Idempotent submission markers in the tracker (`submitting` → `applied`).~~
    Done (`1e3b1ff`).
 3. ~~A circuit breaker around the model provider (a `TRANSIENT` streak
