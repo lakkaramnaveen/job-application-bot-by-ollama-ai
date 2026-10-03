@@ -249,3 +249,21 @@ def test_security_md_documents_the_dashboards_same_origin_check():
     assert f"tests/test_dashboard_server.py::{test_name}" in security_text
     source = (Path(__file__).resolve().parent / "test_dashboard_server.py").read_text(encoding="utf-8")
     assert f"def {test_name}(" in source
+
+
+@pytest.mark.parametrize(
+    ("url", "warned"),
+    [
+        ("http://gpu-box:11434", True),
+        ("https://models.example.com", False),
+        ("http://localhost:11434", False),
+        ("http://127.0.0.1:11434", False),
+    ],
+)
+def test_an_api_key_over_plain_http_to_a_remote_host_is_warned_about(tmp_path, url, warned):
+    resume = tmp_path / "resume.txt"
+    resume.write_text("Experienced engineer.", encoding="utf-8")
+    settings = Settings(
+        _env_file=None, llm_provider="ollama", resume_path=resume, ollama_base_url=url, ollama_api_key="k"
+    )
+    assert any("OLLAMA_API_KEY is sent in clear text" in w for w in settings.validate_ready()) is warned

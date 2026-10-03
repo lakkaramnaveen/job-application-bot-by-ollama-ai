@@ -43,6 +43,9 @@ class Settings(BaseSettings):
 
     ollama_model: str = "deepseek-r1:8b"
     ollama_base_url: str = "http://localhost:11434"
+    # Bearer token for a remote, authenticated model endpoint (a shared
+    # gateway, or Ollama behind a proxy). Unset for local Ollama.
+    ollama_api_key: str | None = None
     # Once `job-bot run` hits today's application cap (or the loop stops for
     # any other reason - browser closed, Ctrl+C), best-effort quit the local
     # Ollama server/app so it stops holding the model in memory for the rest
@@ -246,6 +249,16 @@ class Settings(BaseSettings):
                 parse_resume(self.resume_path)
             except ResumeParseError as e:
                 errors.append(str(e))
+        if (
+            self.llm_provider == "ollama"
+            and self.ollama_api_key
+            and self.ollama_base_url.startswith("http://")
+            and not _is_local_host(self.ollama_base_url)
+        ):
+            warnings.append(
+                f"OLLAMA_API_KEY is sent in clear text to {self.ollama_base_url} - use an https:// "
+                "OLLAMA_BASE_URL for a remote server."
+            )
         if self.llm_provider == "claude" and not self.anthropic_api_key:
             errors.append("LLM_PROVIDER=claude but ANTHROPIC_API_KEY is not set in .env.")
         if self.daily_application_cap > HARD_DAILY_APPLICATION_CEILING:
@@ -270,6 +283,11 @@ class Settings(BaseSettings):
         if errors:
             raise SettingsError("\n".join(f"- {e}" for e in errors))
         return warnings
+
+
+def _is_local_host(url: str) -> bool:
+    host = url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].strip("[]")
+    return host in ("localhost", "127.0.0.1", "::1")
 
 
 class SettingsError(RuntimeError):

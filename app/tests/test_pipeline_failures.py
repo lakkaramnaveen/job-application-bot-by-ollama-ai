@@ -99,3 +99,10 @@ def test_throttle_backoff_never_shortens_a_long_base_interval():
     from job_bot.pipeline.failures import throttle_backoff_minutes
 
     assert throttle_backoff_minutes(180, 3) == 180
+
+
+def test_a_rejected_model_key_ends_the_run_as_user_action():
+    error = OllamaProviderError("Ollama rejected the request (HTTP 401) - check OLLAMA_API_KEY in .env.")
+    verdict = classify_failure(error, Page())
+    assert verdict.fatal and verdict.failure_class is FailureClass.USER_ACTION
+    assert "every call would be refused" in verdict.message

@@ -18,5 +18,7 @@ def get_provider(settings: Settings) -> LLMProvider:
     if settings.llm_provider == "claude":
         return ClaudeProvider(api_key=settings.anthropic_api_key, model=settings.claude_model)
     if settings.llm_provider == "ollama":
-        return OllamaProvider(model=settings.ollama_model, base_url=settings.ollama_base_url)
+        return OllamaProvider(
+            model=settings.ollama_model, base_url=settings.ollama_base_url, api_key=settings.ollama_api_key
+        )
     raise ValueError(f"Unknown LLM_PROVIDER: {settings.llm_provider!r}")

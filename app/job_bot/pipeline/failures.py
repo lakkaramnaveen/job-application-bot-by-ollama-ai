@@ -27,7 +27,7 @@ from job_bot.browser.linkedin_adapter import (
 )
 from job_bot.llm.circuit_breaker import ModelUnavailable
 from job_bot.llm.claude_provider import ClaudeProviderError
-from job_bot.llm.ollama_provider import OllamaProviderError
+from job_bot.llm.ollama_provider import OLLAMA_UNAUTHORIZED, OllamaProviderError
 
 
 class FailureClass(Enum):
@@ -95,6 +95,12 @@ def classify_failure(e: Exception, page: Page) -> FailureVerdict:
             fatal=True,
             message="Ollama is unreachable - stopping the run instead of repeating this for every posting.",
             failure_class=FailureClass.FATAL,
+        )
+    if isinstance(e, OllamaProviderError) and str(e).startswith(OLLAMA_UNAUTHORIZED):
+        return FailureVerdict(
+            fatal=True,
+            message=f"{e} Stopping the run - every call would be refused the same way.",
+            failure_class=FailureClass.USER_ACTION,
         )
     if _is_claude_misconfigured(e):
         return FailureVerdict(

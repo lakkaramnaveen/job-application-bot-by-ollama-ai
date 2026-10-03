@@ -624,3 +624,40 @@ def test_start_ollama_reports_failure_when_ollama_is_not_installed(monkeypatch):
     monkeypatch.setattr("job_bot.llm.ollama_provider.platform.system", lambda: "Linux")
     monkeypatch.setattr("job_bot.llm.ollama_provider.subprocess.Popen", missing)
     assert start_ollama() is False
+
+
+@respx.mock
+def test_an_api_key_is_sent_as_a_bearer_token_on_every_request():
+    """docs/scaling.md rollout step 4: a remote, authenticated model endpoint."""
+    tags = respx.get(f"{BASE_URL}/api/tags").mock(return_value=httpx.Response(200, json={"models": [{"name": "m:1"}]}))
+    chat = respx.post(f"{BASE_URL}/api/chat").mock(
+        return_value=httpx.Response(200, text=_ndjson({"message": {"content": '{"body": "Hi."}'}}))
+    )
+    provider = OllamaProvider(model="m:1", base_url=BASE_URL, api_key="secret-token")
+
+    assert provider.readiness_problem() is None
+    provider.generate_structured(system="sys", prompt="p", schema=CoverLetter)
+
+    assert tags.calls[0].request.headers["Authorization"] == "Bearer secret-token"
+    assert chat.calls[0].request.headers["Authorization"] == "Bearer secret-token"
+
+
+@respx.mock
+def test_no_api_key_sends_no_authorization_header():
+    chat = respx.post(f"{BASE_URL}/api/chat").mock(
+        return_value=httpx.Response(200, text=_ndjson({"message": {"content": '{"body": "Hi."}'}}))
+    )
+    make_provider().generate_structured(system="sys", prompt="p", schema=CoverLetter)
+    assert "Authorization" not in chat.calls[0].request.headers
+
+
+@respx.mock
+def test_a_rejected_key_is_reported_as_such_at_startup_and_during_a_run():
+    respx.get(f"{BASE_URL}/api/tags").mock(return_value=httpx.Response(401))
+    respx.post(f"{BASE_URL}/api/chat").mock(return_value=httpx.Response(403))
+    provider = OllamaProvider(model="m:1", base_url=BASE_URL, api_key="wrong")
+
+    problem = provider.readiness_problem()
+    assert problem is not None and "rejected the request (HTTP 401)" in problem and "OLLAMA_API_KEY" in problem
+    with pytest.raises(OllamaProviderError, match=r"Ollama rejected the request \(HTTP 403\)"):
+        provider.generate_structured(system="sys", prompt="p", schema=CoverLetter)

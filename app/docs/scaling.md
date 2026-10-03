@@ -155,8 +155,10 @@ Rules that make this production-safe:
    Done (`1e3b1ff`).
 3. ~~A circuit breaker around the model provider (a `TRANSIENT` streak
    becomes `THROTTLED` and fails fast).~~ Done (`llm/circuit_breaker.py`).
-4. **The LLM gateway interface:** the agent calls the model through one client
-   that can be pointed at local Ollama or a remote gateway (config only).
+4. ~~The LLM gateway interface: the agent calls the model through one client
+   that can be pointed at local Ollama or a remote gateway (config only).~~
+   Done: `OLLAMA_BASE_URL` plus `OLLAMA_API_KEY` (bearer token, with a warning
+   if it would go over plain http to a remote host).
 5. **Postgres-backed tracker behind the existing `Tracker` interface;** the API
    and auth come after that.
 

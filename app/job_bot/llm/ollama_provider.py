@@ -10,6 +10,9 @@ from pydantic import ValidationError
 from job_bot.llm.base import GenerationStats, LLMProvider, SchemaT
 
 DEFAULT_TIMEOUT = 120.0
+# Prefix of the error raised when the server refuses our credentials - every
+# call would fail the same way, so pipeline/failures.py ends the run on it.
+OLLAMA_UNAUTHORIZED = "Ollama rejected the request"
 
 # Two bounds on a single generation, added after a real hang: with
 # streaming (see _read_chat_stream()), DEFAULT_TIMEOUT applies per chunk,
@@ -200,9 +203,13 @@ class OllamaProvider(LLMProvider):
     per-model code here.
     """
 
-    def __init__(self, model: str, base_url: str):
+    def __init__(self, model: str, base_url: str, api_key: str | None = None):
         self._model = model
         self._base_url = base_url.rstrip("/")
+        # Sent as a bearer token on every request when set - for a shared
+        # model gateway or an Ollama server behind an authenticating proxy
+        # (docs/scaling.md, rollout step 4). Plain local Ollama needs none.
+        self._headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         # Performance metrics for every request this provider makes - see
         # GenerationStats and cli.py's per-cycle summary line.
         self.stats = GenerationStats()
@@ -218,7 +225,12 @@ class OllamaProvider(LLMProvider):
         traffic generated for a run that could never apply to anything.
         """
         try:
-            resp = httpx.get(f"{self._base_url}/api/tags", timeout=5.0)
+            resp = httpx.get(f"{self._base_url}/api/tags", timeout=5.0, headers=self._headers)
+            if resp.status_code in (401, 403):
+                return (
+                    f"Ollama at {self._base_url} rejected the request (HTTP {resp.status_code}) - "
+                    "check OLLAMA_API_KEY in .env."
+                )
             resp.raise_for_status()
             names = {m.get("name", "") for m in resp.json().get("models", [])}
         except (httpx.HTTPError, ValueError) as e:
@@ -265,8 +277,12 @@ class OllamaProvider(LLMProvider):
         for _ in range(MAX_GENERATION_ATTEMPTS):
             try:
                 with httpx.stream(
-                    "POST", f"{self._base_url}/api/chat", json=payload, timeout=DEFAULT_TIMEOUT
+                    "POST", f"{self._base_url}/api/chat", json=payload, timeout=DEFAULT_TIMEOUT, headers=self._headers
                 ) as resp:
+                    if resp.status_code in (401, 403):
+                        raise OllamaProviderError(
+                            f"{OLLAMA_UNAUTHORIZED} (HTTP {resp.status_code}) - check OLLAMA_API_KEY in .env."
+                        )
                     if resp.status_code == 404:
                         raise OllamaProviderError(
                             f"Model '{self._model}' is not pulled. Run `ollama pull {self._model}`."
