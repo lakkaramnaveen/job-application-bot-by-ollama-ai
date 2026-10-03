@@ -216,6 +216,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
 
     for warning in settings.validate_ready():
         print(f"Warning: {warning}")
+    _warn_about_unconfirmed_submissions(Tracker(settings.db_path))
 
     # CompanyBlacklist loads an unreadable file as empty (so other commands
     # keep working while `job-bot doctor` reports it) - for a run, that
@@ -511,6 +512,26 @@ def _run_apply_cycle(
         external_adapter_factory=ExternalApplyAdapter,
         form_time_limit_seconds=FORM_TIME_LIMIT_SECONDS,
     )
+
+
+def _warn_about_unconfirmed_submissions(tracker: Tracker) -> None:
+    """Postings whose Submit was clicked in an earlier run but never
+    recorded as applied - that run stopped in between (a crash, Ctrl+C, the
+    browser closing). They may or may not have gone out, so the run never
+    retries them on its own (docs/scaling.md, "Idempotent submission");
+    this is where the user hears about them."""
+    unconfirmed = tracker.unconfirmed_submissions()
+    if not unconfirmed:
+        return
+    print(
+        f"Warning: {len(unconfirmed)} application(s) were submitted but never confirmed - an earlier "
+        "run stopped right after clicking Submit. Check them on LinkedIn, then record what happened "
+        "with `job-bot status <job_id> applied` (or `seen` to let the bot try again):"
+    )
+    for job in unconfirmed[:10]:
+        print(f"  {job['job_id']}  {job['title']} at {job['company']}  {job['url']}")
+    if len(unconfirmed) > 10:
+        print(f"  ... and {len(unconfirmed) - 10} more (`job-bot report` lists them by status).")
 
 
 def _silence_asyncio_shutdown_noise() -> None:

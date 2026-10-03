@@ -1220,3 +1220,16 @@ def test_an_existing_database_gains_the_apply_failures_column(tmp_path):
     conn.close()
 
     assert Tracker(db).apply_failures("j1") == 0
+
+
+def test_a_submission_in_flight_is_marked_and_listed_until_confirmed(tmp_path):
+    tracker = Tracker(tmp_path / "t.sqlite3")
+    tracker.upsert_job("j1", "Engineer", "Acme", "https://example.com/1")
+    tracker.upsert_job("j2", "Engineer", "Globex", "https://example.com/2")
+
+    tracker.mark_submitting("j1")
+    tracker.mark_submitting("j2")
+    tracker.mark_applied("j2")  # j2's submission was recorded; j1's run stopped in between
+
+    assert [job["job_id"] for job in tracker.unconfirmed_submissions()] == ["j1"]
+    assert not tracker.has_applied("j1")

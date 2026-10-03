@@ -94,7 +94,7 @@ class FakeAdapter:
     def load_description(self, posting):
         return "We need a backend engineer with Python experience."
 
-    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
         answered = answer_question("Years of experience?")
         self.fill_and_submit_calls.append(
             {
@@ -140,7 +140,7 @@ class UnansweredQuestionFakeAdapter(FakeAdapter):
     deliberately left unanswered rather than guess.
     """
 
-    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
         answer_question("Years of experience?")
         raise UnansweredRequiredQuestion(
             posting.job_id, "Are you comfortable commuting to this job's location?", "reason"
@@ -978,7 +978,7 @@ def test_run_starts_normally_with_no_blacklist_file_at_all(tmp_path, monkeypatch
 
 
 class WorkHistoryDateAdapter(FakeAdapter):
-    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
         self.fill_and_submit_calls.append({"answered": answer_question("Year of From")})
         return not dry_run
 
@@ -1006,7 +1006,7 @@ def test_run_leaves_a_per_position_date_field_unanswered_without_asking_the_llm(
 
 
 class UnanswerableAdapter(FakeAdapter):
-    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
         raise UnansweredRequiredQuestion(posting.job_id, "Security clearance level?", "No answer")
 
 
@@ -1920,7 +1920,7 @@ class ApplyClosesTheBrowserForFirstJobAdapter(FakeAdapter):
     def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
         return [JOB, JOB2, JOB3]
 
-    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
         if posting.job_id == "job1":
             self.page.close()
             raise RuntimeError("Target page, context or browser has been closed")
@@ -2287,7 +2287,7 @@ class ClosesThePageDuringApplyAdapter(FakeAdapter):
     one shape only --loop's own top-level check catches.
     """
 
-    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
         result = super().fill_and_submit(
             posting,
             answer_question=answer_question,
@@ -2361,7 +2361,7 @@ def test_run_feeds_past_qa_answers_into_the_next_question(tmp_path, monkeypatch)
 
 
 class StuckFormAdapter(FakeAdapter):
-    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
         self.fill_and_submit_calls.append({"posting": posting})
         raise RuntimeError("Could not complete the Easy Apply form (stuck on a step)")
 
@@ -2416,7 +2416,7 @@ class SearchMustNotRunAdapter(StuckFormAdapter):
     def search(self, *args, **kwargs):
         raise AssertionError("--job-id must not search")
 
-    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+    def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
         self.fill_and_submit_calls.append({"posting": posting, "dry_run": dry_run})
         return not dry_run
 
@@ -2617,7 +2617,7 @@ def test_a_contact_block_answer_to_a_phone_question_is_cached_as_just_the_number
     and replayed into every later application."""
 
     class PhoneAdapter(FakeAdapter):
-        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
             answer_question("Mobile phone number*")
             return not dry_run
 
@@ -2647,7 +2647,7 @@ def test_an_answer_linkedin_rejected_is_dropped_from_the_cache_and_queued_for_re
     question = "How many years of work experience do you have with Java?"
 
     class RejectingAdapter(FakeAdapter):
-        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
             answer_question(question)
             raise FieldsRejected(posting.job_id, [(question, "Invalid input")], "stuck - Fields LinkedIn rejected: ...")
 
@@ -2700,7 +2700,7 @@ def test_a_form_that_never_finishes_is_abandoned_and_the_run_moves_on(tmp_path, 
         def search(self, *args, **kwargs):
             return [JOB, JOB2]
 
-        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run):
+        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
             self.fill_and_submit_calls.append({"posting": posting})
             while posting.job_id == JOB.job_id:
                 pass
@@ -2938,3 +2938,43 @@ def test_a_refused_search_is_logged_as_throttled(tmp_path, monkeypatch):
 
     [entry] = _failure_log_entries(settings)
     assert (entry["action"], entry["details"]["failure_class"]) == ("search_error", "throttled")
+
+
+def test_a_run_that_stops_after_clicking_submit_never_resubmits_and_says_so(tmp_path, monkeypatch, capsys):
+    """docs/scaling.md, idempotent submission: the marker is written before
+    the click; if the run dies before "applied" is recorded, the posting is
+    never submitted again automatically, and the next run lists it."""
+
+    class DiesAfterTheClick(FakeAdapter):
+        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
+            self.fill_and_submit_calls.append({"posting": posting})
+            before_submit()
+            raise RuntimeError("Page.click: Target crashed")  # after the click, before it's recorded
+
+    adapter = DiesAfterTheClick(page=None)
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", lambda page: adapter)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args())
+    assert Tracker(settings.db_path).get_job(JOB.job_id)["status"] == "submitting"
+
+    capsys.readouterr()
+    cmd_run(settings, make_args())  # the next run
+
+    assert len(adapter.fill_and_submit_calls) == 1  # never resubmitted
+    out = capsys.readouterr().out
+    assert "1 application(s) were submitted but never confirmed" in out
+    assert JOB.job_id in out
+
+
+def test_a_dry_run_never_marks_a_submission(tmp_path, monkeypatch):
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args(dry_run=True))
+
+    assert Tracker(settings.db_path).unconfirmed_submissions() == []

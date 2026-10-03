@@ -664,6 +664,7 @@ class LinkedInAdapter(JobBoardAdapter):
         resume_path: str | None,
         cover_letter_text: str | None,
         dry_run: bool,
+        before_submit: Callable[[], None] | None = None,
     ) -> bool:
         self._goto_with_retry(posting.url)
         self._page.wait_for_load_state("domcontentloaded")
@@ -702,6 +703,8 @@ class LinkedInAdapter(JobBoardAdapter):
             if submit_btn is not None:
                 if dry_run:
                     return False
+                if before_submit is not None:
+                    before_submit()
                 submit_btn.click()
                 self._dismiss_safety_reminder_if_present()
                 return True

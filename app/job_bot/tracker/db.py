@@ -36,6 +36,12 @@ IN_PROGRESS_STATUSES = frozenset({"applied", "interviewing", "offer"})
 TRACKER_STATUSES = frozenset(
     {
         "seen",
+        # Written immediately before the final Submit click, replaced by
+        # "applied" once the submission is recorded. Still "submitting" after
+        # a run means the run stopped in between - the application may or may
+        # not have gone out, so it's never retried automatically (see
+        # unconfirmed_submissions()).
+        "submitting",
         "applied",
         "skipped",
         "interviewing",
@@ -351,6 +357,24 @@ class Tracker:
         with self._connect() as conn:
             row = conn.execute("SELECT apply_failures FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
         return int(row[0]) if row else 0
+
+    def mark_submitting(self, job_id: str) -> None:
+        """Record that the final Submit click is about to happen - see the
+        "submitting" status in TRACKER_STATUSES. Idempotent submission: a
+        crash between the click and mark_applied() leaves this marker, so
+        the posting is never blindly submitted again."""
+        self.update_status(job_id, "submitting")
+
+    def unconfirmed_submissions(self) -> list[dict[str, Any]]:
+        """Postings whose Submit was clicked but whose submission was never
+        confirmed (status still "submitting") - for the user to check by
+        hand. Most recent first."""
+        with self._transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM jobs WHERE status = 'submitting' ORDER BY first_seen_at DESC"
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def mark_skipped(self, job_id: str) -> None:
         self.update_status(job_id, "skipped")

@@ -419,6 +419,10 @@ def run_cycle(
                         resume_path=resume_path,
                         cover_letter_text=cover_letter.body,
                         dry_run=args.dry_run,
+                        # Idempotent submission (docs/scaling.md): mark it
+                        # in flight before the click, so a crash before
+                        # "applied" is recorded can't lead to a resubmit.
+                        before_submit=lambda: tracker.mark_submitting(posting.job_id),
                     )
             external_page = adapter.open_external_application(posting)
             if external_page is None:

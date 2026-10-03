@@ -251,6 +251,29 @@ def test_a_years_answer_with_a_qualifier_fills_just_the_number_into_a_text_field
     assert playwright_page.locator("#years-python").input_value() == "5"
 
 
+def test_before_submit_runs_right_before_the_submit_click_and_never_on_a_dry_run(playwright_page):
+    """Idempotent submission: the caller's marker must be written before the
+    click (so a crash after it is detectable), and never on a dry run."""
+    posting = JobPosting(
+        job_id="1", title="X", company="Acme", url=f"file://{NATIVE_DIALOG_FIXTURE_PATH}", description=""
+    )
+    calls = []
+
+    submitted = LinkedInAdapter(playwright_page).fill_and_submit(
+        posting, answer_question=_answers, resume_path=None, cover_letter_text=None, dry_run=True,
+        before_submit=lambda: calls.append("dry"),
+    )
+    assert submitted is False and calls == []
+
+    playwright_page.evaluate("document.querySelector('dialog').close()")
+    submitted = LinkedInAdapter(playwright_page).fill_and_submit(
+        posting, answer_question=_answers, resume_path=None, cover_letter_text=None, dry_run=False,
+        before_submit=lambda: calls.append(playwright_page.locator("dialog[open]").count()),
+    )
+    assert submitted is True
+    assert calls == [1]  # called while the form was still open, i.e. before Submit was clicked
+
+
 def test_a_skill_only_label_answered_with_a_year_count_gets_the_number(playwright_page, monkeypatch):
     """Failure log: years fields labeled only "Model Context Protocol (MCP)"
     or "LLM / Generative AI" were answered "N+ years" and the step stuck at

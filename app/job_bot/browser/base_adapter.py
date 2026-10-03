@@ -114,11 +114,15 @@ class JobBoardAdapter(ABC):
         resume_path: str | None,
         cover_letter_text: str | None,
         dry_run: bool,
+        before_submit: Callable[[], None] | None = None,
     ) -> bool:
         """Open the application form, fill every field, and submit unless
         dry_run is True (in which case it stops right before the submit
         click and returns False). `answer_question` is called for each
         free-text question the adapter can't fill deterministically.
-        Returns True if the application was actually submitted.
+        `before_submit`, if given, is called immediately before the final
+        Submit click (never on a dry run) - the caller's chance to record
+        that a submission is in flight. Returns True if the application was
+        actually submitted.
         """
         raise NotImplementedError
