@@ -43,6 +43,7 @@ from job_bot.generation.artifacts import (
 from job_bot.integrations.gmail_client import GmailClient, GmailClientError
 from job_bot.integrations.gmail_sync import sync_gmail
 from job_bot.llm.base import GenerationStats, LLMProvider
+from job_bot.llm.circuit_breaker import CircuitBreakerProvider
 from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.factory import get_provider
 from job_bot.llm.ollama_provider import (
@@ -341,7 +342,9 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
         run_context = RunContext(
             settings=settings,
             args=args,
-            provider=provider,
+            # Wrapped here, after the startup checks that need the concrete
+            # provider (Ollama readiness/auto-start): see llm/circuit_breaker.py.
+            provider=CircuitBreakerProvider(provider),
             resume_store=resume_store,
             tracker=tracker,
             rate_limiter=rate_limiter,
@@ -429,7 +432,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                     in_a_row = f" ({throttle_streak} cycles in a row)" if throttle_streak > 1 else ""
                     print(
                         f"Backing off {backoff:g} minute(s) before the next cycle "
-                        f"since LinkedIn was refusing page loads{in_a_row}..."
+                        f"since {result.throttle_reason}{in_a_row}..."
                     )
                     time.sleep(backoff * 60)
                 elif applied == 0:

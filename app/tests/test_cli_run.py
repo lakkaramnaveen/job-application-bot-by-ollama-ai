@@ -2978,3 +2978,48 @@ def test_a_dry_run_never_marks_a_submission(tmp_path, monkeypatch):
     cmd_run(settings, make_args(dry_run=True))
 
     assert Tracker(settings.db_path).unconfirmed_submissions() == []
+
+
+def test_an_open_model_circuit_ends_the_cycle_throttled_without_blaming_postings(tmp_path, monkeypatch, capsys):
+    """Step 3 of docs/scaling.md: once the model has failed 3 calls in a
+    row, the remaining postings aren't each tried (minutes apiece) and
+    failed - the cycle ends as throttled so --loop backs off - and no
+    posting's MAX_APPLY_ATTEMPTS is spent on the model's problem."""
+    from job_bot.llm.ollama_provider import OllamaProviderError
+
+    class BrokenModel(FakeProvider):
+        def generate_structured(self, *, system, prompt, schema):
+            self.schemas_requested.append(schema)
+            raise OllamaProviderError("Model 'm' did not return schema-valid JSON after 3 attempts")
+
+    postings = [
+        JobPosting(job_id=f"cb-{i}", title="Engineer", company=f"Company {i}", url=f"https://x/{i}", description="")
+        for i in range(5)
+    ]
+
+    class FivePostings(FakeAdapter):
+        def search(self, *args, **kwargs):
+            return postings
+
+    model = BrokenModel()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: model)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FivePostings)
+    sleeps = []
+
+    def stop_at_first_sleep(seconds):
+        sleeps.append(seconds)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("job_bot.cli.time.sleep", stop_at_first_sleep)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args(loop=True, max_apps=10, loop_interval_minutes=20))
+
+    out = capsys.readouterr().out
+    assert len(model.schemas_requested) == 3  # postings 4 and 5 never called the broken model
+    assert "Ending this cycle instead of failing every remaining posting" in out
+    assert "Backing off 20 minute(s) before the next cycle since the model kept failing" in out
+    assert sleeps == [20 * 60]
+    tracker = Tracker(settings.db_path)
+    assert all(tracker.apply_failures(p.job_id) == 0 for p in postings)

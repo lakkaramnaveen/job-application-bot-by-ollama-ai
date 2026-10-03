@@ -144,11 +144,12 @@ Rules that make this production-safe:
 
 ## Rollout, smallest useful steps first
 
-1. **Classify every failure** (`FailureClass` on `FailureVerdict`) and log the
-   class with each failure. Done in the same change as this doc.
-2. **Idempotent submission markers** in the tracker (`submitting` → `applied`).
-3. **A circuit breaker around the model provider** (a `TRANSIENT` streak
-   becomes `THROTTLED` and fails fast).
+1. ~~Classify every failure (`FailureClass` on `FailureVerdict`) and log the
+   class with each failure.~~ Done (`88b24e6`). Done in the same change as this doc.
+2. ~~Idempotent submission markers in the tracker (`submitting` → `applied`).~~
+   Done (`1e3b1ff`).
+3. ~~A circuit breaker around the model provider (a `TRANSIENT` streak
+   becomes `THROTTLED` and fails fast).~~ Done (`llm/circuit_breaker.py`).
 4. **The LLM gateway interface:** the agent calls the model through one client
    that can be pointed at local Ollama or a remote gateway (config only).
 5. **Postgres-backed tracker behind the existing `Tracker` interface;** the API

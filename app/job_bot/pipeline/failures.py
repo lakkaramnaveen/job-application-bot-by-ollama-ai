@@ -25,6 +25,7 @@ from job_bot.browser.linkedin_adapter import (
     NavigationFailed,
     UnansweredRequiredQuestion,
 )
+from job_bot.llm.circuit_breaker import ModelUnavailable
 from job_bot.llm.claude_provider import ClaudeProviderError
 from job_bot.llm.ollama_provider import OllamaProviderError
 
@@ -56,6 +57,9 @@ class FailureVerdict:
     message: str = ""
     navigation_refused: bool = False
     failure_class: FailureClass = FailureClass.POSTING
+    # End this cycle as throttled (--loop backs off) - the model's circuit
+    # breaker is open, so every remaining posting would fail the same way.
+    throttle_cycle: bool = False
 
 
 POSTING_ONLY = FailureVerdict()
@@ -103,13 +107,19 @@ def classify_failure(e: Exception, page: Page) -> FailureVerdict:
         return FailureVerdict(fatal=True, message=BROWSER_GONE_MESSAGE, failure_class=FailureClass.FATAL)
     if isinstance(e, NavigationFailed):
         return FailureVerdict(navigation_refused=True, failure_class=FailureClass.THROTTLED)
+    if isinstance(e, ModelUnavailable):
+        return FailureVerdict(
+            throttle_cycle=True,
+            message=f"{e} Ending this cycle instead of failing every remaining posting.",
+            failure_class=FailureClass.THROTTLED,
+        )
     return FailureVerdict(failure_class=failure_class_of(e))
 
 
 def failure_class_of(e: Exception) -> FailureClass:
     """The FailureClass of an exception that doesn't end the run on its own -
     used for the per-posting verdict above, and for logging any failure."""
-    if isinstance(e, NavigationFailed):
+    if isinstance(e, NavigationFailed | ModelUnavailable):
         return FailureClass.THROTTLED
     if isinstance(e, LinkedInSignedOut | UnansweredRequiredQuestion | FieldsRejected):
         # Signed out: `job-bot login`. A question the bot can't answer, or an

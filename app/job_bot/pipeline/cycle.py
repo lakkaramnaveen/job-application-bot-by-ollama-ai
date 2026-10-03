@@ -33,6 +33,7 @@ from job_bot.generation.artifacts import write_cover_letter, write_tailored_resu
 from job_bot.generation.cover_letter import generate_cover_letter
 from job_bot.generation.qa_answerer import answer_question
 from job_bot.generation.resume_tailor import tailor_resume
+from job_bot.llm.circuit_breaker import ModelUnavailable
 from job_bot.matching.scorer import score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
 from job_bot.pipeline.answers import AnswerService
@@ -124,6 +125,8 @@ class CycleResult:
     # apart from `failed`: counting it there printed "1 posting(s) could
     # not be completed" when no posting was involved (live, 2026-10-02).
     search_failed: bool = False
+    # Why the cycle was throttled, for the back-off message.
+    throttle_reason: str = "LinkedIn was refusing page loads"
 
 
 def run_cycle(
@@ -445,6 +448,7 @@ def run_cycle(
     failed = 0
     fatal_error = False
     throttled = False
+    throttle_reason = CycleResult.throttle_reason
     consecutive_navigation_failures = 0
     for position, posting in enumerate(postings, start=1):
         if applied >= args.max_apps:
@@ -493,6 +497,11 @@ def run_cycle(
                 print(verdict.message)
                 fatal_error = True
                 break
+            if verdict.throttle_cycle:
+                print(verdict.message)
+                throttled = True
+                throttle_reason = "the model kept failing"
+                break
             if verdict.navigation_refused:
                 consecutive_navigation_failures += 1
                 if consecutive_navigation_failures >= NAVIGATION_FAILURE_STREAK_LIMIT:
@@ -531,7 +540,9 @@ def run_cycle(
                     print(f"Warning: unanswered question not recorded - {gap_error}")
             if isinstance(e, FieldsRejected):
                 answers.learn_from_rejection(e, posting)
-            if not isinstance(e, UnansweredRequiredQuestion | FieldsRejected):
+            # Not this posting's fault: a question only the user can answer,
+            # an answer LinkedIn refused, or the model being unavailable.
+            if not isinstance(e, UnansweredRequiredQuestion | FieldsRejected | ModelUnavailable):
                 attempts = tracker.record_apply_failure(posting.job_id)
                 if settings.max_apply_attempts > 0 and attempts >= settings.max_apply_attempts:
                     print(
@@ -555,6 +566,11 @@ def run_cycle(
             if verdict.fatal:
                 print(verdict.message)
                 fatal_error = True
+                break
+            if verdict.throttle_cycle:
+                print(verdict.message)
+                throttled = True
+                throttle_reason = "the model kept failing"
                 break
             continue
 
@@ -589,4 +605,6 @@ def run_cycle(
             audit.log("dry_run_stopped", job_id=posting.job_id)
             print(f"[dry-run] Would apply to {posting.title} at {posting.company}")
 
-    return CycleResult(applied=applied, failed=failed, fatal=fatal_error, throttled=throttled)
+    return CycleResult(
+        applied=applied, failed=failed, fatal=fatal_error, throttled=throttled, throttle_reason=throttle_reason
+    )
