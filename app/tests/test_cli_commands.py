@@ -115,6 +115,7 @@ def report_args(**overrides) -> argparse.Namespace:
         by_week=False,
         by_failure=False,
         by_missing_qualifications=False,
+        funnel=None,
         missing_qualifications_limit=None,
         format="text",
     )
@@ -4283,3 +4284,25 @@ def test_mark_stale_rejects_a_non_positive_days(tmp_path, capsys):
         _mark_stale(make_settings(tmp_path), days=0)
     assert exc_info.value.code == 1
     assert "--days must be at least 1" in capsys.readouterr().err
+
+
+def test_report_funnel_prints_the_funnel_from_the_audit_log(tmp_path, capsys):
+    import json as _json
+    from datetime import UTC, datetime
+
+    settings = make_settings(tmp_path)
+    now = datetime.now(UTC).isoformat()
+    settings.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.audit_log_path.write_text(
+        "\n".join(
+            _json.dumps({"timestamp": now, "action": a, "details": d})
+            for a, d in (("search", {}), ("scored", {"should_apply": True}), ("applied", {}))
+        )
+        + "\n"
+    )
+
+    cmd_report(settings, build_parser().parse_args(["report", "--funnel"]))
+
+    out = capsys.readouterr().out
+    assert "Funnel, last 1 day(s):" in out
+    assert "  applied               1  (100% of fits)" in out

@@ -14,6 +14,7 @@ propagating out of a command is a real bug.
 """
 
 import argparse
+import dataclasses
 import json
 import logging
 import os
@@ -67,6 +68,7 @@ from job_bot.pipeline.cycle import (  # noqa: F401 - re-exported for callers/tes
     _score_verdict,
 )
 from job_bot.pipeline.failures import throttle_backoff_minutes
+from job_bot.pipeline.funnel import Funnel, build_funnel, format_funnel
 from job_bot.pipeline.retry import recent_failures_to_retry, since_days_ago
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 from job_bot.resume.store import ResumeStore, unusable_faq_reason
@@ -535,6 +537,17 @@ def _warn_about_unconfirmed_submissions(tracker: Tracker) -> None:
         print(f"  {job['job_id']}  {job['title']} at {job['company']}  {job['url']}")
     if len(unconfirmed) > 10:
         print(f"  ... and {len(unconfirmed) - 10} more (`job-bot report` lists them by status).")
+
+
+def _funnel(settings: Settings, days: float) -> Funnel:
+    """`job-bot report --funnel`: the audit log since `days` ago, as a funnel."""
+    since = datetime.now(UTC) - timedelta(days=days)
+    return build_funnel(AuditLogger(settings.audit_log_path).read_entries(), since=since)
+
+
+def _print_funnel(settings: Settings, days: float) -> None:
+    for line in format_funnel(_funnel(settings, days), days=days):
+        print(line)
 
 
 def _silence_asyncio_shutdown_noise() -> None:
@@ -1387,6 +1400,8 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
             payload["by_week"] = _weekly_breakdown(tracker)
         if args.by_failure:
             payload["by_failure"] = AuditLogger(settings.failed_applications_log_path).failure_kinds()
+        if getattr(args, "funnel", None) is not None:
+            payload["funnel"] = dataclasses.asdict(_funnel(settings, args.funnel))
         if args.by_missing_qualifications:
             payload["by_missing_qualifications"] = _missing_qualifications_breakdown(
                 tracker, limit=args.missing_qualifications_limit
@@ -1396,6 +1411,9 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
 
     if not counts:
         print("No jobs tracked yet.")
+        # The funnel comes from the audit log, not the tracker - still show it.
+        if getattr(args, "funnel", None) is not None:
+            _print_funnel(settings, args.funnel)
         return
     width = max(len(status) for status in counts)
     for status in sorted(counts):
@@ -1421,6 +1439,10 @@ def cmd_report(settings: Settings, args: argparse.Namespace) -> None:
 
     if args.by_failure:
         _print_failure_breakdown(settings)
+
+    if getattr(args, "funnel", None) is not None:
+        print()
+        _print_funnel(settings, args.funnel)
 
     if args.by_missing_qualifications:
         _print_missing_qualifications_breakdown(tracker, limit=args.missing_qualifications_limit)
@@ -2500,6 +2522,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--by-week",
         action="store_true",
         help="Count applications sent per week (local time, most recent first), by current status.",
+    )
+    report_p.add_argument(
+        "--funnel",
+        nargs="?",
+        type=float,
+        const=1.0,
+        default=None,
+        metavar="DAYS",
+        help="Where postings dropped out over the last DAYS days (default 1): searches, postings "
+        "considered, fits, materials written, applied - plus skips by reason and failures by class.",
     )
     report_p.add_argument(
         "--by-failure",
