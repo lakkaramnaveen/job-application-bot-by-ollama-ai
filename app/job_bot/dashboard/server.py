@@ -25,6 +25,7 @@ still says attacker.example:<port> in that case, so it's rejected.
 import io
 import json
 import webbrowser
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,6 +39,7 @@ from job_bot.dashboard.render import (
     render_blacklist_html,
     render_failure_kinds_html,
     render_faq_html,
+    render_funnel_html,
     render_missing_qualifications_html,
     render_page_html,
     render_qa_history_html,
@@ -48,6 +50,7 @@ from job_bot.dashboard.render import (
     render_weekly_activity_html,
 )
 from job_bot.data_files import CorruptDataFile
+from job_bot.pipeline.funnel import build_funnel
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
 from job_bot.safety.audit_log import AuditLogger
@@ -60,6 +63,8 @@ from job_bot.tracker.db import (
     write_export_json,
 )
 
+# The dashboard Funnel modal's window (`job-bot report --funnel DAYS` picks its own).
+FUNNEL_DAYS = 3
 DASHBOARD_HOST = "127.0.0.1"
 
 # A POST body larger than this is rejected outright - the only legitimate
@@ -229,6 +234,8 @@ def make_handler(
                 self._handle_missing_qualifications(tracker)
             elif parsed.path == "/api/failure-kinds":
                 self._handle_failure_kinds()
+            elif parsed.path == "/api/funnel":
+                self._handle_funnel()
             elif parsed.path == "/api/weekly-activity":
                 self._handle_weekly_activity(tracker)
             elif parsed.path == "/api/answer-gaps":
@@ -536,6 +543,14 @@ def make_handler(
             entries = CompanyBlacklist(blacklist_path).list_entries()
             body = render_blacklist_html(entries).encode("utf-8")
             self._send(200, "text/html; charset=utf-8", body)
+
+        def _handle_funnel(self) -> None:
+            """The last FUNNEL_DAYS days of the audit log as a funnel, for
+            the dashboard's Funnel modal - the counterpart to `job-bot report
+            --funnel`. Read-only."""
+            since = datetime.now(UTC) - timedelta(days=FUNNEL_DAYS)
+            funnel = build_funnel(AuditLogger(audit_log_path).read_entries(), since=since)
+            self._send(200, "text/html; charset=utf-8", render_funnel_html(funnel, days=FUNNEL_DAYS).encode("utf-8"))
 
         def _handle_failure_kinds(self) -> None:
             """The failed-applications log grouped by kind, for the

@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
+from job_bot.pipeline.funnel import Funnel, format_funnel
 from job_bot.resume.store import unusable_faq_reason
 from job_bot.text_utils import format_local_timestamp, is_per_position_field
 from job_bot.tracker.db import TRACKER_STATUSES
@@ -401,6 +402,17 @@ def render_failure_kinds_html(kinds: list[dict[str, Any]]) -> str:
     )
 
 
+def render_funnel_html(funnel: Funnel, *, days: float) -> str:
+    """Where postings dropped out over the last `days` days
+    (pipeline/funnel.py) as an HTML fragment, for the dashboard's Funnel
+    modal - the counterpart to `job-bot report --funnel`. Reuses
+    format_funnel()'s lines so the CLI and dashboard can't disagree;
+    escaped like every other fragment, since skip reasons and failure
+    classes come from logged data."""
+    lines = "\n".join(format_funnel(funnel, days=days))
+    return f'<pre class="funnel">{html.escape(lines)}</pre>'
+
+
 def render_answer_gaps_html(gaps: dict[str, dict[str, Any]]) -> str:
     """Unanswered required-question gaps (AnswerGapStore.list_unanswered())
     as an HTML fragment, for the dashboard's Unanswered Questions modal -
@@ -753,6 +765,7 @@ def render_page_html(
   <button type="button" id="showMissingQualifications" class="export-link">Missing Qualifications</button>
   <button type="button" id="showWeeklyActivity" class="export-link">Weekly Activity</button>
   <button type="button" id="showFailureKinds" class="export-link">Failure Summary</button>
+  <button type="button" id="showFunnel" class="export-link">Funnel</button>
   <button type="button" id="showAnswerGaps" class="export-link">Unanswered Questions</button>
   <button type="button" id="showFaq" class="export-link">FAQ Answers</button>
   <button type="button" id="showQaHistory" class="export-link">Q&amp;A History</button>
@@ -799,6 +812,12 @@ def render_page_html(
   <h2>Failures by kind</h2>
   <div id="failureKindsContent"></div>
   <button type="button" id="failureKindsClose">Close</button>
+</dialog>
+
+<dialog id="funnelDialog">
+  <h2>Where postings dropped out (last 3 days)</h2>
+  <div id="funnelContent"></div>
+  <button type="button" id="funnelClose">Close</button>
 </dialog>
 
 <dialog id="weeklyActivityDialog">
@@ -1132,6 +1151,22 @@ document.getElementById('showFailureKinds').addEventListener('click', async () =
 }});
 document.getElementById('failureKindsClose').addEventListener(
   'click', () => failureKindsDialog.close()
+);
+
+const funnelDialog = document.getElementById('funnelDialog');
+document.getElementById('showFunnel').addEventListener('click', async () => {{
+  const content = document.getElementById('funnelContent');
+  content.innerHTML = 'Loading...';
+  funnelDialog.showModal();
+  try {{
+    const res = await fetch('/api/funnel');
+    content.innerHTML = res.ok ? await res.text() : 'Could not load the funnel.';
+  }} catch (err) {{
+    content.innerHTML = 'Could not load the funnel (network error).';
+  }}
+}});
+document.getElementById('funnelClose').addEventListener(
+  'click', () => funnelDialog.close()
 );
 
 const weeklyActivityDialog = document.getElementById('weeklyActivityDialog');

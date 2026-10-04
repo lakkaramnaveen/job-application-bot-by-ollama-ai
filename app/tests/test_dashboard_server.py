@@ -1469,3 +1469,33 @@ def test_post_mark_stale_rejects_a_non_json_content_type(live_server, tmp_path):
         urllib.request.urlopen(req)
     assert exc_info.value.code == 400
     assert Tracker(tmp_path / "db.sqlite3").get_job("job1")["status"] == "applied"
+
+
+def test_get_funnel_shows_where_postings_dropped_out(live_server, tmp_path):
+    """The dashboard counterpart to `job-bot report --funnel`."""
+    audit = AuditLogger(tmp_path / "audit.log")
+    audit.log("search")
+    audit.log("scored", job_id="1", should_apply=True)
+    audit.log("applied", job_id="1")
+    audit.log("skip_company_limit", job_id="2")
+
+    with urllib.request.urlopen(f"{live_server}/api/funnel") as resp:
+        assert resp.headers["Content-Type"].startswith("text/html")
+        body = resp.read().decode("utf-8")
+    assert "Funnel, last 3 day(s):" in body
+    assert "applied               1  (100% of fits)" in body
+    assert "skipped before scoring: company_limit 1" in body
+
+
+def test_the_funnel_fragment_escapes_logged_values():
+    from job_bot.dashboard.render import render_funnel_html
+    from job_bot.pipeline.funnel import Funnel
+
+    html_out = render_funnel_html(Funnel(failures={"<script>x</script>": 1}), days=3)
+    assert "<script>" not in html_out and "&lt;script&gt;" in html_out
+
+
+def test_the_dashboard_page_has_the_funnel_button_and_modal(live_server):
+    with urllib.request.urlopen(live_server) as resp:
+        page = resp.read().decode("utf-8")
+    assert 'id="showFunnel"' in page and 'id="funnelDialog"' in page and "/api/funnel" in page
