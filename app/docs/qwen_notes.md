@@ -245,6 +245,40 @@ cycle ends with a "Model: N call(s), ... avg prompt ... tokens, ...
 tokens generated (N/s)" line (`c021235`) - check it first when a run feels
 slow.
 
+## 9. LinkedIn's October 2026 form and page changes (not a model issue)
+
+Three changes in a few days, each seen first as a run of identical failures.
+All three were browser-side, not model-side. Check here before suspecting the
+model when the failure log shows the same error on posting after posting.
+
+- **Yes/no questions have no `<legend>` and empty `<label>`s.** The question
+  text is only in each radio's `aria-label`; "Yes"/"No" sits in a `<p>` next to
+  the radio. Symptom: "stuck on a step… 'Back', 'Next'" with *no answers
+  recorded* for that step, because the question never reached the model. Fix:
+  `_radio_group_question()` / `_radio_option_text()` (`0bf8a72`).
+- **The native radio inputs are moved off-screen** behind custom styling.
+  Symptom: `Locator.check: Element is outside of the viewport`, even with
+  `force=True`. Fix: `_check_hidden_radio()` clicks the input from page
+  JavaScript (`b6c67e5`).
+- **A closed posting redirects to a search page showing a *different* job**
+  (`/jobs/search-results/?currentJobId=<another id>`). Symptom: "Easy Apply
+  dialog never appeared", with the error's URL naming another job id. This one
+  is dangerous: the bot read and clicked the other job's page. Fix:
+  `_open_posting_page()` raises `PostingUnavailable` unless the browser landed
+  on this job, and the posting is marked closed (`704cd8a`).
+
+Related learning changes from the same days: the stuck error now names the
+fields LinkedIn rejected (`6a9b019`). A refused answer is dropped from the
+cache and queued for `review-answers` (`adb159c`). Cached answers are reduced
+to the shape the question asks for (`cd05747`), and a bare year count becomes
+a number whatever the label says (`8a654d9`).
+
+When a new failure kind appears, the fastest diagnosis has been a read-only
+probe of one failing posting: a copy of the browser profile, walking the form
+step by step and dumping the question markup, never clicking Submit. Then
+build a fixture from that markup, with classes stripped, and confirm it
+reproduces the exact error before writing the fix.
+
 ## General guidance for a future session
 
 - When a local-model failure looks bizarre or shows up as a repeating
