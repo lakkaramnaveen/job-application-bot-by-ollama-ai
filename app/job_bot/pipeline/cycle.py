@@ -29,13 +29,10 @@ from job_bot.browser.linkedin_adapter import (
     UnansweredRequiredQuestion,
 )
 from job_bot.data_files import CorruptDataFile
-from job_bot.generation.artifacts import write_cover_letter, write_tailored_resume, write_tailored_resume_docx
-from job_bot.generation.cover_letter import generate_cover_letter
 from job_bot.generation.qa_answerer import answer_question
-from job_bot.generation.resume_tailor import tailor_resume
 from job_bot.llm.circuit_breaker import ModelUnavailable
 from job_bot.matching.scorer import score_job_match
-from job_bot.models.schemas import CoverLetter, JobMatchScore, TailoredResume
+from job_bot.models.schemas import CoverLetter, JobMatchScore
 from job_bot.pipeline.answers import AnswerService
 from job_bot.pipeline.context import RunContext
 from job_bot.pipeline.failures import (
@@ -45,6 +42,7 @@ from job_bot.pipeline.failures import (
     classify_failure,
     failure_class_of,
 )
+from job_bot.pipeline.materials import prepare_materials
 from job_bot.pipeline.skip import SkipPolicy, SkipReason
 from job_bot.safety.rate_limiter import DailyCapReached
 
@@ -337,49 +335,17 @@ def run_cycle(
         return should_apply
 
     def generate_materials(posting: JobPosting, description: str) -> tuple[CoverLetter, str]:
-        """Tailors the resume (using past generations that led to a real
-        interview/offer as few-shot examples - see
-        Tracker.best_resume_examples()) and a cover letter, writes both to
-        disk as reference material, and records the generation. The
-        returned cover letter's body is what gets filled into the
-        application form itself; the returned resume path is what gets
-        uploaded as the resume - a freshly tailored .docx when
-        write_tailored_resume_docx() could confidently build one (see
-        generation/resume_document.py's module docstring for exactly what
-        it will and won't change), else the user's own unmodified
-        resume_path, unchanged from this project's original behavior.
-        """
-        examples = [
-            TailoredResume(summary=r["summary"], highlighted_skills=r["skills"], bullet_points=r["bullets"])
-            for r in tracker.best_resume_examples(limit=3)
-        ]
-        tailored = tailor_resume(provider, resume_text, description, examples=examples)
-        tracker.record_resume_generation(
-            posting.job_id,
-            posting.title,
-            posting.company,
-            tailored.summary,
-            tailored.highlighted_skills,
-            tailored.bullet_points,
+        materials = prepare_materials(
+            posting,
+            description,
+            provider=provider,
+            resume_text=resume_text,
+            resume_path=settings.resume_path,
+            applications_dir=settings.applications_dir,
+            tracker=tracker,
+            audit=audit,
         )
-        cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
-        write_tailored_resume(
-            settings.applications_dir, posting.job_id, tailored, company=posting.company, title=posting.title
-        )
-        tailored_resume_path = write_tailored_resume_docx(
-            settings.applications_dir,
-            posting.job_id,
-            resume_text,
-            tailored,
-            company=posting.company,
-            title=posting.title,
-        )
-        write_cover_letter(
-            settings.applications_dir, posting.job_id, cover_letter, company=posting.company, title=posting.title
-        )
-        audit.log("generated_materials", job_id=posting.job_id)
-        resume_path = str(tailored_resume_path) if tailored_resume_path is not None else str(settings.resume_path)
-        return cover_letter, resume_path
+        return materials.cover_letter, materials.resume_path
 
     answers = AnswerService(
         provider=provider,
