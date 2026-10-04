@@ -26,6 +26,7 @@ from job_bot.browser.linkedin_adapter import (
     LinkedInAdapter,
     LinkedInSignedOut,
     NavigationFailed,
+    PostingUnavailable,
     UnansweredRequiredQuestion,
 )
 from job_bot.data_files import CorruptDataFile
@@ -125,6 +126,20 @@ class CycleResult:
     search_failed: bool = False
     # Why the cycle was throttled, for the back-off message.
     throttle_reason: str = "LinkedIn was refusing page loads"
+
+
+def _close_if_unavailable(e: Exception, posting: JobPosting, ctx: RunContext) -> None:
+    """A posting LinkedIn no longer shows (PostingUnavailable) will fail the
+    same way every time - mark it decided ("skipped") so neither later
+    cycles nor `--retry-failed` try it again."""
+    if isinstance(e, PostingUnavailable):
+        # Recorded first: a posting seen for the first time isn't tracked
+        # until it's scored, and the description is loaded before that.
+        # (Only if untracked: upsert_job() would also reset an existing score.)
+        if ctx.tracker.get_job(posting.job_id) is None:
+            ctx.tracker.upsert_job(posting.job_id, posting.title, posting.company, posting.url)
+        ctx.tracker.mark_skipped(posting.job_id)
+        print("  That posting has closed - it won't be tried again.")
 
 
 def run_cycle(
@@ -465,6 +480,7 @@ def run_cycle(
             )
             print(f"Error preparing application for {posting.title} at {posting.company}: {e}")
             failed += 1
+            _close_if_unavailable(e, posting, ctx)
             if verdict.fatal:
                 print(verdict.message)
                 fatal_error = True
@@ -535,6 +551,7 @@ def run_cycle(
             )
             print(f"Error applying to {posting.title} at {posting.company}: {e}")
             failed += 1
+            _close_if_unavailable(e, posting, ctx)
             if verdict.fatal:
                 print(verdict.message)
                 fatal_error = True

@@ -3106,3 +3106,41 @@ def test_a_loop_mentions_waiting_questions_again_only_when_more_arrive(tmp_path,
 
     lines = [line for line in capsys.readouterr().out.splitlines() if "waiting for your answer" in line]
     assert [line.split()[0] for line in lines] == ["1", "2"]
+
+
+def test_a_closed_posting_is_marked_decided_and_never_retried(tmp_path, monkeypatch, capsys):
+    from job_bot.browser.linkedin_adapter import PostingUnavailable
+
+    class ClosedPosting(FakeAdapter):
+        def load_description(self, posting):
+            raise PostingUnavailable(posting.job_id, "https://www.linkedin.com/jobs/search-results/")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", ClosedPosting)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args())
+
+    assert Tracker(settings.db_path).get_job(JOB.job_id)["status"] == "skipped"
+    assert "That posting has closed - it won't be tried again." in capsys.readouterr().out
+
+
+def test_closing_an_already_scored_posting_keeps_its_score(tmp_path, monkeypatch):
+    """--retry-failed hits closed postings that were scored earlier; marking
+    them closed mustn't wipe that record."""
+    from job_bot.browser.linkedin_adapter import PostingUnavailable
+
+    class ClosedOnApply(FakeAdapter):
+        def fill_and_submit(self, posting, *, answer_question, resume_path, cover_letter_text, dry_run, before_submit=None):
+            raise PostingUnavailable(posting.job_id, "https://www.linkedin.com/jobs/search-results/")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", ClosedOnApply)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args())
+
+    job = Tracker(settings.db_path).get_job(JOB.job_id)
+    assert job["status"] == "skipped" and job["match_score"] is not None

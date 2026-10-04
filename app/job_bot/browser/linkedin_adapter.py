@@ -308,6 +308,18 @@ class NavigationFailed(RuntimeError):
     """
 
 
+class PostingUnavailable(RuntimeError):
+    """LinkedIn sent the browser somewhere other than this posting's page -
+    see LinkedInAdapter._open_posting_page()."""
+
+    def __init__(self, job_id: str, landed_on: str):
+        self.job_id = job_id
+        super().__init__(
+            f"Job {job_id} is no longer available - LinkedIn redirected it to {landed_on}, which shows a "
+            "different job. Not reading or applying to that page."
+        )
+
+
 class LinkedInSignedOut(RuntimeError):
     """The browser profile's LinkedIn session has expired, so the search page
     redirected to a sign-in wall instead of results. Without this, the
@@ -513,9 +525,33 @@ class LinkedInAdapter(JobBoardAdapter):
             easy_apply=easy_apply,
         )
 
-    def load_description(self, posting: JobPosting) -> str:
+    def _open_posting_page(self, posting: JobPosting) -> None:
+        """Load `posting`'s page and make sure that's where the browser is.
+
+        Real case (2026-10-03, `--retry-failed`): two postings, closed since
+        they were found, redirected to `/jobs/search-results/?currentJobId=`
+        <a different job>. The bot read that page's description and clicked
+        its "Easy Apply" - for the *other* job. The dialog happened not to
+        open, but it could have tailored materials to, and applied for, a
+        job nobody chose. So a LinkedIn page that isn't this job's raises
+        PostingUnavailable before anything on it is read or clicked.
+
+        Not checked: sign-in/security redirects (handled where they're
+        detected) and non-LinkedIn pages (the test fixtures, file://).
+        """
         self._goto_with_retry(posting.url)
         self._page.wait_for_load_state("domcontentloaded")
+        landed_on = self._page.url
+        if "linkedin.com" not in landed_on or any(
+            marker in landed_on for marker in ("/authwall", "/login", "/checkpoint", "/uas/")
+        ):
+            return
+        if f"/jobs/view/{posting.job_id}" in landed_on or f"currentJobId={posting.job_id}" in landed_on:
+            return
+        raise PostingUnavailable(posting.job_id, _short_url(landed_on))
+
+    def load_description(self, posting: JobPosting) -> str:
+        self._open_posting_page(posting)
         body = self._page.locator('div[class*="description"]').first
         if body.count():
             text = body.inner_text()
@@ -561,8 +597,7 @@ class LinkedInAdapter(JobBoardAdapter):
         everything past this point happens on a site this project doesn't
         control the structure of - see external_apply_adapter.py.
         """
-        self._goto_with_retry(posting.url)
-        self._page.wait_for_load_state("domcontentloaded")
+        self._open_posting_page(posting)
         button = self._page.locator(SELECTORS["external_apply_button"])
         if button.count() == 0:
             return None
@@ -666,8 +701,7 @@ class LinkedInAdapter(JobBoardAdapter):
         dry_run: bool,
         before_submit: Callable[[], None] | None = None,
     ) -> bool:
-        self._goto_with_retry(posting.url)
-        self._page.wait_for_load_state("domcontentloaded")
+        self._open_posting_page(posting)
         self._page.locator(SELECTORS["easy_apply_button"]).first.click()
         time.sleep(ACTION_DELAY_SECONDS)
 

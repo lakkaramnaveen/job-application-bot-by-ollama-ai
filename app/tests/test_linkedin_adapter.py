@@ -1733,6 +1733,34 @@ def test_open_external_application_returns_none_when_theres_no_external_button(p
     assert adapter.open_external_application(posting) is None
 
 
+@pytest.mark.parametrize(
+    ("landed_on", "raises"),
+    [
+        # Real case (2026-10-03): a closed posting redirected here, showing another job.
+        ("https://www.linkedin.com/jobs/search-results/?currentJobId=4463520807&eBP=x", True),
+        ("https://www.linkedin.com/jobs/view/999/", True),  # some other job's page
+        ("https://www.linkedin.com/jobs/view/4474327218/?trk=x", False),  # the right job
+        ("https://www.linkedin.com/jobs/search/?currentJobId=4474327218", False),  # right job, search layout
+        ("https://www.linkedin.com/authwall?trk=x", False),  # sign-in: handled elsewhere
+    ],
+)
+def test_a_redirect_away_from_the_posting_is_caught_before_reading_or_clicking(playwright_page, landed_on, raises):
+    from job_bot.browser.linkedin_adapter import PostingUnavailable
+
+    playwright_page.route("https://www.linkedin.com/**", lambda route: route.fulfill(body="<button>Easy Apply</button>"))
+    adapter = LinkedInAdapter(playwright_page)
+    adapter._goto_with_retry = lambda url: playwright_page.goto(landed_on)  # LinkedIn's redirect
+    posting = JobPosting(
+        job_id="4474327218", title="X", company="Y", url="https://www.linkedin.com/jobs/view/4474327218/", description=""
+    )
+
+    if raises:
+        with pytest.raises(PostingUnavailable, match="Job 4474327218 is no longer available"):
+            adapter.load_description(posting)
+    else:
+        adapter.load_description(posting)  # no error
+
+
 def test_navigation_failures_are_reported_without_tracking_parameters_or_call_logs(playwright_page, monkeypatch, caplog):
     """Live output (2026-10-02): each refused page load printed the full job
     URL - its eBP= tracking token alone was 800+ characters - plus
