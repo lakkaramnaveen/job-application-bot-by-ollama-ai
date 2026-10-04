@@ -64,6 +64,24 @@ class FailureVerdict:
 
 POSTING_ONLY = FailureVerdict()
 
+# LinkedIn answers HTTP 999 when it has flagged a session as automated
+# traffic. Unlike a rate limit (429), backing off and retrying keeps
+# confirming that flag - the run stops instead (see is_automation_block()).
+LINKEDIN_AUTOMATION_BLOCK_STATUS = 999
+AUTOMATION_BLOCK_MESSAGE = (
+    "LinkedIn answered HTTP 999 - it has flagged this session as automated traffic. Stopping the run: "
+    "retrying, even with back-off, keeps confirming that flag and risks the account. Leave LinkedIn alone "
+    "for several hours (use it normally in a browser in the meantime if you like), then run again."
+)
+
+
+def is_automation_block(e: Exception) -> bool:
+    """A page load LinkedIn refused with its automation-block status (999).
+    Seen as a distinct status only since c15613d - before that every
+    refusal was the same opaque net::ERR_HTTP_RESPONSE_CODE_FAILURE."""
+    return isinstance(e, NavigationFailed) and e.status == LINKEDIN_AUTOMATION_BLOCK_STATUS
+
+
 # Longest wait between --loop cycles while LinkedIn keeps refusing page
 # loads - see throttle_backoff_minutes().
 MAX_THROTTLE_BACKOFF_MINUTES = 120
@@ -111,6 +129,8 @@ def classify_failure(e: Exception, page: Page) -> FailureVerdict:
         )
     if _browser_is_gone(e, page):
         return FailureVerdict(fatal=True, message=BROWSER_GONE_MESSAGE, failure_class=FailureClass.FATAL)
+    if is_automation_block(e):
+        return FailureVerdict(fatal=True, message=AUTOMATION_BLOCK_MESSAGE, failure_class=FailureClass.USER_ACTION)
     if isinstance(e, NavigationFailed):
         return FailureVerdict(navigation_refused=True, failure_class=FailureClass.THROTTLED)
     if isinstance(e, ModelUnavailable):
@@ -125,6 +145,8 @@ def classify_failure(e: Exception, page: Page) -> FailureVerdict:
 def failure_class_of(e: Exception) -> FailureClass:
     """The FailureClass of an exception that doesn't end the run on its own -
     used for the per-posting verdict above, and for logging any failure."""
+    if is_automation_block(e):
+        return FailureClass.USER_ACTION
     if isinstance(e, NavigationFailed | ModelUnavailable):
         return FailureClass.THROTTLED
     if isinstance(e, LinkedInSignedOut | UnansweredRequiredQuestion | FieldsRejected):

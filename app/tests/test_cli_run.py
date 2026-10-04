@@ -3144,3 +3144,26 @@ def test_closing_an_already_scored_posting_keeps_its_score(tmp_path, monkeypatch
 
     job = Tracker(settings.db_path).get_job(JOB.job_id)
     assert job["status"] == "skipped" and job["match_score"] is not None
+
+
+def test_a_999_on_the_search_page_stops_the_loop_instead_of_backing_off(tmp_path, monkeypatch, capsys):
+    from job_bot.browser.linkedin_adapter import NavigationFailed
+
+    class Blocked(FakeAdapter):
+        def search(self, *args, **kwargs):
+            raise NavigationFailed("Failed to load https://www.linkedin.com/jobs/search/ after 3 attempts", status=999)
+
+    def no_sleep(seconds):
+        raise AssertionError("must not back off and retry an automation block")
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", Blocked)
+    monkeypatch.setattr("job_bot.cli.time.sleep", no_sleep)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args(loop=True))
+
+    assert "LinkedIn answered HTTP 999" in capsys.readouterr().out
+    [entry] = [json.loads(line) for line in settings.failed_applications_log_path.read_text().splitlines()]
+    assert entry["details"]["failure_class"] == "user_action"

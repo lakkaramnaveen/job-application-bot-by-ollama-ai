@@ -37,11 +37,13 @@ from job_bot.models.schemas import CoverLetter, JobMatchScore
 from job_bot.pipeline.answers import AnswerService
 from job_bot.pipeline.context import RunContext
 from job_bot.pipeline.failures import (
+    AUTOMATION_BLOCK_MESSAGE,
     BROWSER_GONE_MESSAGE,
     FailureClass,
     _browser_is_gone,
     classify_failure,
     failure_class_of,
+    is_automation_block,
 )
 from job_bot.pipeline.materials import prepare_materials
 from job_bot.pipeline.skip import SkipPolicy, SkipReason
@@ -255,6 +257,9 @@ def run_cycle(
             # refused job pages - report it as throttled so --loop backs off
             # progressively instead of probing every interval (2026-10-02:
             # searches kept being refused for hours).
+            if is_automation_block(e):
+                print(AUTOMATION_BLOCK_MESSAGE)
+                return CycleResult(applied=0, failed=0, fatal=True, search_failed=True)
             return CycleResult(
                 applied=0,
                 failed=0,

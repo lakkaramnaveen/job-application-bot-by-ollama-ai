@@ -115,3 +115,22 @@ def test_failure_class_of_covers_the_run_ending_provider_errors_too():
 
     assert failure_class_of(OllamaProviderError("Could not reach Ollama at http://x.")) is FailureClass.FATAL
     assert failure_class_of(ClaudeProviderError("Invalid ANTHROPIC_API_KEY.")) is FailureClass.USER_ACTION
+
+
+def test_linkedins_automation_block_ends_the_run_but_a_rate_limit_only_throttles():
+    """999 means LinkedIn flagged the session as automated: retrying keeps
+    confirming it, so the run stops. A 429 (or an unknown status) is a
+    refusal worth backing off from, as before."""
+    from job_bot.pipeline.failures import failure_class_of
+
+    blocked = NavigationFailed("Failed to load ... (HTTP 999 - ...)", status=999)
+    verdict = classify_failure(blocked, Page())
+    assert verdict.fatal and verdict.failure_class is FailureClass.USER_ACTION
+    assert "flagged this session as automated traffic" in verdict.message
+    assert failure_class_of(blocked) is FailureClass.USER_ACTION
+
+    for status in (429, None):
+        refused = NavigationFailed("Failed to load ...", status=status)
+        verdict = classify_failure(refused, Page())
+        assert not verdict.fatal and verdict.navigation_refused
+        assert failure_class_of(refused) is FailureClass.THROTTLED
