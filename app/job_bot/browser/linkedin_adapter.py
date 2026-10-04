@@ -29,7 +29,7 @@ from collections.abc import Callable
 from urllib.parse import quote, urljoin
 
 from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import Locator, Page
+from playwright.sync_api import Locator, Page, Response
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from job_bot.browser.base_adapter import (
@@ -304,8 +304,33 @@ class NavigationFailed(RuntimeError):
     """_goto_with_retry() exhausted its retries - a RuntimeError subclass so
     every existing `except RuntimeError`/message check is unaffected, but
     cli.py can recognize a streak of these (LinkedIn refusing page loads)
-    without matching on message text.
+    without matching on message text. `status` is the HTTP status LinkedIn
+    answered the last attempt with, when one was seen (999, 429, ...).
     """
+
+    def __init__(self, message: str, *, status: int | None = None):
+        self.status = status
+        super().__init__(message)
+
+
+class _RefusedLoad(PlaywrightError):
+    """A navigation that "succeeded" with an HTTP error status - see
+    _goto_with_retry()."""
+
+
+def _status_meaning(status: int | None) -> str:
+    """A short, human reading of the HTTP status LinkedIn refused a load
+    with - the detail Chrome's bare net::ERR_HTTP_RESPONSE_CODE_FAILURE
+    hides, and that decides what to do about it."""
+    if status is None:
+        return ""
+    meanings = {
+        999: "LinkedIn is blocking automated traffic from this session",
+        429: "rate limited",
+        403: "forbidden",
+    }
+    meaning = meanings.get(status, "server error" if status >= 500 else "")
+    return f"HTTP {status}" + (f" - {meaning}" if meaning else "")
 
 
 class PostingUnavailable(RuntimeError):
@@ -855,20 +880,44 @@ class LinkedInAdapter(JobBoardAdapter):
         _run_apply_cycle(), so this crashed the entire `--loop` run instead
         of just costing this one navigation a retry.
         """
+        # The real HTTP status of each attempt's main-frame navigation.
+        # Chrome reports a refused load only as net::ERR_HTTP_RESPONSE_CODE_
+        # FAILURE, hiding whether LinkedIn rate limited (429), blocked
+        # automation (999), or failed (5xx) - two days of 2026-10 runs were
+        # misdiagnosed for want of this number. And an error status with an
+        # empty body doesn't raise at all: goto() "succeeds" on a blank page,
+        # which used to read as a search with no results.
+        statuses: list[int] = []
+
+        def record(response: Response) -> None:
+            if response.request.is_navigation_request() and response.frame == self._page.main_frame:
+                statuses.append(response.status)
+
+        self._page.on("response", record)
         last_error: Exception | None = None
-        for attempt in range(NAVIGATION_RETRIES + 1):
-            try:
-                self._page.goto(url, timeout=20000)
-                return
-            except PlaywrightError as e:
-                last_error = e
-                logger.warning(
-                    "Navigation to %s failed (attempt %d): %s - retrying", _short_url(url), attempt + 1, _first_line(e)
-                )
-                time.sleep(ACTION_DELAY_SECONDS)
+        last_status: int | None = None
+        try:
+            for attempt in range(NAVIGATION_RETRIES + 1):
+                statuses.clear()
+                try:
+                    response = self._page.goto(url, timeout=20000)
+                    if response is not None and response.status >= 400:
+                        raise _RefusedLoad(f"Page.goto: HTTP {response.status} at {url}")
+                    return
+                except PlaywrightError as e:
+                    last_error = e
+                    last_status = statuses[-1] if statuses else None
+                    detail = _status_meaning(last_status) or _first_line(e)
+                    logger.warning(
+                        "Navigation to %s failed (attempt %d): %s - retrying", _short_url(url), attempt + 1, detail
+                    )
+                    time.sleep(ACTION_DELAY_SECONDS)
+        finally:
+            self._page.remove_listener("response", record)
+        detail = _status_meaning(last_status) or (_first_line(last_error) if last_error else "no error")
         raise NavigationFailed(
-            f"Failed to load {_short_url(url)} after {NAVIGATION_RETRIES + 1} attempts "
-            f"({_first_line(last_error) if last_error else 'no error'})"
+            f"Failed to load {_short_url(url)} after {NAVIGATION_RETRIES + 1} attempts ({detail})",
+            status=last_status,
         ) from last_error
 
     def _upload_resume_if_requested(self, dialog: Locator, resume_path: str | None) -> None:

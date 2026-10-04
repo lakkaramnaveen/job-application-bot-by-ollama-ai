@@ -1791,3 +1791,35 @@ def test_navigation_failures_are_reported_without_tracking_parameters_or_call_lo
         "eBP" not in r.getMessage() and "Call log" not in r.getMessage() for r in caplog.records
     )
     assert all(len(r.getMessage()) < 300 for r in caplog.records)
+
+
+@pytest.mark.parametrize(
+    ("status", "meaning"),
+    [
+        (999, "HTTP 999 - LinkedIn is blocking automated traffic from this session"),
+        (429, "HTTP 429 - rate limited"),
+        (503, "HTTP 503 - server error"),
+    ],
+)
+def test_a_refused_load_reports_linkedins_real_status(playwright_page, monkeypatch, caplog, status, meaning):
+    """Chrome reports a refused load only as net::ERR_HTTP_RESPONSE_CODE_FAILURE
+    - or, with an empty body, not at all (goto() "succeeds" on a blank page,
+    which read as a search with no results). The real status decides what's
+    wrong: rate limiting, automation blocking, or an outage."""
+    from job_bot.browser.linkedin_adapter import NavigationFailed
+
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.time.sleep", lambda s: None)
+    playwright_page.route("https://www.linkedin.com/**", lambda route: route.fulfill(status=status, body=""))
+
+    with caplog.at_level("WARNING"), pytest.raises(NavigationFailed) as excinfo:
+        LinkedInAdapter(playwright_page)._goto_with_retry("https://www.linkedin.com/jobs/search/?keywords=x")
+
+    assert excinfo.value.status == status
+    assert str(excinfo.value).endswith(f"after 3 attempts ({meaning})")
+    assert all(meaning in r.getMessage() for r in caplog.records)
+
+
+def test_a_successful_load_is_untouched(playwright_page):
+    playwright_page.route("https://www.linkedin.com/**", lambda route: route.fulfill(status=200, body="<p>ok</p>"))
+    LinkedInAdapter(playwright_page)._goto_with_retry("https://www.linkedin.com/jobs/search/?keywords=x")
+    assert playwright_page.locator("p").inner_text() == "ok"
