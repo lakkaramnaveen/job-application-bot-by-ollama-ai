@@ -103,7 +103,9 @@ class Settings(BaseSettings):
 
     # What `job-bot run` searches LinkedIn for when --keywords/--location
     # aren't given - set once here instead of typing them on every run.
-    # The flags still override these for one invocation.
+    # The flags still override these for one invocation. Several titles,
+    # comma-separated, are searched one per cycle in turn - see
+    # pipeline/search_terms.py.
     search_keywords: str = "software engineer"
     search_location: str = "United States"
 

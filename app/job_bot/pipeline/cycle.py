@@ -152,6 +152,7 @@ def run_cycle(
     resume_text: str,
     external_adapter_factory: Callable[[Page], Any],
     form_time_limit_seconds: float = FORM_TIME_LIMIT_SECONDS,
+    keywords: str | None = None,
 ) -> CycleResult:
     """One search -> score -> tailor -> apply pass over a fresh batch of
     postings. Called once for a plain `job-bot run`, or repeatedly for
@@ -192,6 +193,9 @@ def run_cycle(
     require_w2, include_external = ctx.require_w2, ctx.include_external
 
     requested_ids: list[str] = getattr(args, "job_id", None) or []
+    # This cycle's search - one of SEARCH_KEYWORDS' titles, rotated by the
+    # caller (see search_terms.py); args.keywords when there's just one.
+    keywords = keywords or args.keywords
 
     skip_policy = SkipPolicy(
         tracker,
@@ -223,7 +227,7 @@ def run_cycle(
     else:
         try:
             postings = adapter.search(
-                args.keywords,
+                keywords,
                 args.location,
                 max_results=args.search_pool,
                 experience_levels=experience_levels,
@@ -243,7 +247,7 @@ def run_cycle(
             # - a structured flag, not a match on the error message's wording.
             signed_out = isinstance(e, LinkedInSignedOut)
             failure_class = (FailureClass.FATAL if _browser_is_gone(e, page) else failure_class_of(e)).value
-            details = dict(keywords=args.keywords, location=args.location, error=str(e), signed_out=signed_out)
+            details = dict(keywords=keywords, location=args.location, error=str(e), signed_out=signed_out)
             audit.log("search_error", **details, failure_class=failure_class)
             failure_log.log("search_error", **details, failure_class=failure_class)
             print(f"Error searching for postings: {e}")
@@ -267,7 +271,7 @@ def run_cycle(
                 throttled=isinstance(e, NavigationFailed),
                 search_failed=True,
             )
-        audit.log("search", keywords=args.keywords, location=args.location, results=len(postings))
+        audit.log("search", keywords=keywords, location=args.location, results=len(postings))
 
     def should_skip(posting: JobPosting) -> bool:
         """Cheap, deterministic reasons to pass over this posting before

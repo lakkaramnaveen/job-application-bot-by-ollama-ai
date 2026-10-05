@@ -3219,3 +3219,40 @@ def test_a_restart_honors_the_back_off_an_earlier_run_was_refused_into(tmp_path,
     assert searched == [1]
     assert "Waiting until" in capsys.readouterr().out
     assert ThrottleState(state_path).streak() == 0  # that search went through
+
+
+def test_a_loop_with_several_titles_searches_one_per_cycle_in_turn(tmp_path, monkeypatch, capsys):
+    """Several SEARCH_KEYWORDS titles: one search per cycle, round robin -
+    never all of them each cycle, which would multiply LinkedIn requests."""
+    searched = []
+
+    class Recording(FakeAdapter):
+        def search(self, keywords, location, max_results=25, experience_levels=None, include_external=False, skip=None):
+            searched.append(keywords)
+            return []
+
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", Recording)
+    monkeypatch.setattr("job_bot.cli.time.sleep", sleep)
+    settings = make_settings(tmp_path)
+
+    cmd_run(settings, make_args(loop=True, keywords="java full stack, mern stack"))
+
+    assert searched == ["java full stack", "mern stack", "java full stack"]
+    out = capsys.readouterr().out
+    assert 'for 2 titles, one per cycle in turn: java full stack, mern stack.' in out
+    assert 'Searching for "mern stack" (2 of 2)...' in out
+    searches = [
+        json.loads(line)["details"]["keywords"]
+        for line in settings.audit_log_path.read_text().splitlines()
+        if json.loads(line)["action"] == "search"
+    ]
+    assert searches == ["java full stack", "mern stack", "java full stack"]

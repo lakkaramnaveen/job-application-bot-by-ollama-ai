@@ -73,6 +73,7 @@ from job_bot.pipeline.cycle import (  # noqa: F401 - re-exported for callers/tes
 from job_bot.pipeline.failures import throttle_backoff_minutes
 from job_bot.pipeline.funnel import Funnel, build_funnel, format_funnel
 from job_bot.pipeline.retry import recent_failures_to_retry, since_days_ago
+from job_bot.pipeline.search_terms import SearchRotation, split_search_terms
 from job_bot.pipeline.throttle_state import ThrottleState
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 from job_bot.resume.store import ResumeStore, unusable_faq_reason
@@ -406,14 +407,23 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             include_external=include_external,
         )
 
+        rotation = SearchRotation(args.keywords)
+
         def run_one_cycle() -> cycle.CycleResult:
             # Re-fetched every cycle, not captured once before the loop:
             # --loop can run for many hours, and ResumeStore.resume_text()
             # re-parses only if the file's mtime actually changed since the
             # last cycle, so this stays cheap while still picking up a
             # resume edited/re-exported mid-loop on the very next cycle.
+            keywords = rotation.next_term()
+            if len(rotation.terms) > 1 and not getattr(args, "job_id", None):
+                print(f'Searching for "{keywords}"{rotation.position(keywords)}...')
             return _run_apply_cycle(
-                run_context, adapter=adapter, page=page, resume_text=resume_store.resume_text()
+                run_context,
+                adapter=adapter,
+                page=page,
+                resume_text=resume_store.resume_text(),
+                keywords=keywords,
             )
 
         def remember(result: cycle.CycleResult) -> int:
@@ -557,6 +567,7 @@ def _run_apply_cycle(
     adapter: LinkedInAdapter,
     page: Page,
     resume_text: str,
+    keywords: str | None = None,
 ) -> cycle.CycleResult:
     """One search -> score -> tailor -> apply pass - see
     pipeline/cycle.py's run_cycle(). This wrapper is where cli.py injects
@@ -569,6 +580,7 @@ def _run_apply_cycle(
         resume_text=resume_text,
         external_adapter_factory=ExternalApplyAdapter,
         form_time_limit_seconds=FORM_TIME_LIMIT_SECONDS,
+        keywords=keywords,
     )
 
 
@@ -695,7 +707,15 @@ def _print_run_plan(settings: Settings, args: argparse.Namespace, rate_limiter: 
     if getattr(args, "job_id", None):
         print(f"Running just the requested posting(s): {', '.join(args.job_id)} (no search).")
     else:
-        print(f'Searching LinkedIn for "{args.keywords}" in "{args.location}".')
+        terms = split_search_terms(args.keywords)
+        if len(terms) > 1:
+            print(
+                f'Searching LinkedIn in "{args.location}" for {len(terms)} titles, one per cycle in turn: '
+                + ", ".join(terms)
+                + "."
+            )
+        else:
+            print(f'Searching LinkedIn for "{args.keywords}" in "{args.location}".')
     print(f"Model: {settings.llm_provider} ({model}) | Resume: {settings.resume_path}")
     if args.dry_run:
         print("Dry run: nothing will be submitted.")
