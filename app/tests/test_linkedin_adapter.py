@@ -2126,4 +2126,5 @@ def test_easy_apply_is_clicked_again_when_the_first_click_opens_nothing(playwrig
 
     assert submitted is False  # dry run: reached Submit without clicking it
     assert playwright_page.evaluate("window.__clicks") == 2
+    assert playwright_page.evaluate("window.__wrongClick") is None  # never the similar-jobs link
     assert playwright_page.locator("#c").input_value() == "Springfield"

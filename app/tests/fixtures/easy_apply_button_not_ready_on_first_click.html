@@ -7,7 +7,10 @@
      matches elsewhere on the page. -->
 <body>
   <div style="display:none"><button>Easy Apply</button></div>
-  <button id="apply" aria-label="Easy Apply to X at Acme">Easy Apply</button>
+  <!-- A visible "similar jobs" link whose text includes "Easy Apply", ahead
+       of the real button in DOM order (live 2026-10-05). -->
+  <a id="similar" href="#similar-job" onclick="window.__wrongClick = true; return false;">Other Job · Easy Apply</a>
+  <button id="apply" aria-label="Easy Apply to this job">Easy Apply</button>
   <script>
     window.__clicks = 0;
     document.getElementById('apply').addEventListener('click', () => {

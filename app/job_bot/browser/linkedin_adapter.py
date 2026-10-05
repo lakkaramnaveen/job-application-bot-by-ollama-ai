@@ -869,12 +869,19 @@ class LinkedInAdapter(JobBoardAdapter):
         So: the first *visible* match, after it's visible, and one more
         click if no dialog opens within EASY_APPLY_DIALOG_WAIT_SECONDS.
         """
-        buttons = self._page.locator(SELECTORS["easy_apply_button"])
-        button = buttons.filter(visible=True).first
+        # The posting's own button is a <button> labeled "Easy Apply to this
+        # job" (live 2026-10-05); the same page has "similar jobs" links
+        # whose text also contains "Easy Apply" - clicking one navigates
+        # away. The labeled button first, any visible match as a fallback.
+        # (Locators return matches in page order, so the preference is two
+        # lookups, not one combined selector.)
+        labeled = self._page.locator('button[aria-label^="Easy Apply" i]').filter(visible=True).first
+        any_match = self._page.locator(SELECTORS["easy_apply_button"])
         try:
-            button.wait_for(state="visible", timeout=15000)
+            labeled.wait_for(state="visible", timeout=15000)
+            button = labeled
         except PlaywrightTimeoutError:
-            button = buttons.first  # let the click below report it, as before
+            button = any_match.filter(visible=True).first if any_match.filter(visible=True).count() else any_match.first
         for attempt in range(EASY_APPLY_CLICK_ATTEMPTS):
             button.click()
             if self._a_dialog_opened_within(EASY_APPLY_DIALOG_WAIT_SECONDS):
