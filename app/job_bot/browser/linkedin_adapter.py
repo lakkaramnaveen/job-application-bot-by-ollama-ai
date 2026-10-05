@@ -1319,7 +1319,9 @@ class LinkedInAdapter(JobBoardAdapter):
                 continue
             label = self._radio_group_question(group, radios)
             answer = answer_question(label) if label else ""
-            self._select_best_radio(group, answer)
+            if not self._select_best_radio(group, answer) and label:
+                choices = [self._radio_option_text(radios.nth(i)) for i in range(radios.count())]
+                self._select_best_radio(group, self._ask_with_choices(answer_question, label, choices))
 
         for select in dialog.locator("select").all():
             # A select with no blank placeholder option has its first real
@@ -1336,7 +1338,9 @@ class LinkedInAdapter(JobBoardAdapter):
             options = select.locator("option").all_inner_texts()
             label = self._label_for(select)
             answer = answer_question(label) if label else ""
-            self._select_best_option(select, options, answer)
+            if not self._select_best_option(select, options, answer) and label:
+                choices = [o for o in options if o.strip() and not o.strip().casefold().startswith("select")]
+                self._select_best_option(select, options, self._ask_with_choices(answer_question, label, choices))
 
     def _first_unanswered_required_text_field_label(self, dialog: Locator) -> str | None:
         """A required text/number/textarea field _fill_visible_fields()
@@ -1654,7 +1658,8 @@ class LinkedInAdapter(JobBoardAdapter):
         return bool(re.fullmatch(r"\s*\d+(?:\.\d+)?\s*\+?\s*(?:years?|yrs?)?\.?\s*", answer, re.IGNORECASE))
 
     @staticmethod
-    def _select_best_radio(group: Locator, answer: str) -> None:
+    def _select_best_radio(group: Locator, answer: str) -> bool:
+        """Select the option matching `answer`; False if none does."""
         radios = group.locator('input[type="radio"]')
         labels = [LinkedInAdapter._radio_option_text(radios.nth(i)) for i in range(radios.count())]
         idx = LinkedInAdapter._best_match_index(labels, answer)
@@ -1664,7 +1669,7 @@ class LinkedInAdapter(JobBoardAdapter):
             # required, LinkedIn's own validation blocks the Next/Review click
             # and fill_and_submit's stuck-form detection surfaces that as a
             # clear error instead of a silently wrong high-stakes answer.
-            return
+            return False
         radio = radios.nth(idx)
         radio_id = radio.get_attribute("id")
         label = group.page.locator(f'label[for="{radio_id}"]') if radio_id else None
@@ -1684,6 +1689,7 @@ class LinkedInAdapter(JobBoardAdapter):
         else:
             # No label, or LinkedIn's 2026-10 markup's empty one.
             LinkedInAdapter._check_hidden_radio(radio)
+        return True
 
     @staticmethod
     def _check_hidden_radio(radio: Locator) -> None:
@@ -1702,10 +1708,28 @@ class LinkedInAdapter(JobBoardAdapter):
             radio.evaluate("el => el.click()")
 
     @staticmethod
-    def _select_best_option(select: Locator, options: list[str], answer: str) -> None:
+    def _select_best_option(select: Locator, options: list[str], answer: str) -> bool:
         idx = LinkedInAdapter._best_match_index(options, answer)
         if idx is not None:
             select.select_option(index=idx)
+        return idx is not None
+
+    @staticmethod
+    def _ask_with_choices(answer_question: Callable[[str], str], question: str, choices: list[str]) -> str:
+        """Ask again, naming the choices - for a radio/select question whose
+        first answer matched none of them.
+
+        Real failure (2026-10-05): "Looking candidates with Any 2-stack
+        experience in Backend (Go/Golang or Java or Python or Node.js)" -
+        radios, likely Yes/No - got "5" (the model read it as a years
+        question; it never saw the options), matched nothing, was left
+        unanswered by design, and the form stuck. The retry's wording is
+        its own FAQ cache key, so a good answer to it is reused as is.
+        """
+        named = [c.strip() for c in choices if c and c.strip()]
+        if not named:
+            return ""
+        return answer_question(f"{question} (answer with one of: {' / '.join(named)})")
 
     @staticmethod
     def _radio_group_question(group: Locator, radios: Locator) -> str:

@@ -2060,3 +2060,53 @@ def test_a_resume_already_in_linkedins_library_is_selected_not_uploaded_again(pl
         "[...document.querySelectorAll('input[type=radio]:checked')].map(r => r.getAttribute('aria-label'))"
     )
     assert checked == ["Jane_Doe_Resume.pdf"]
+
+
+def test_a_choice_question_answered_off_the_options_is_asked_again_with_them(playwright_page):
+    """Real failure (2026-10-05): a Yes/No radio question about backend
+    stacks got "5" - the model never saw the options - so nothing matched,
+    it was left unanswered, and the form stuck. A mismatch now gets one
+    retry naming the choices; dropdowns the same."""
+    playwright_page.set_content(
+        """
+        <div role="dialog">
+          <fieldset><legend>Do you have experience in two backend stacks?</legend>
+            <input type="radio" id="y" name="g" value="Yes"><label for="y">Yes</label>
+            <input type="radio" id="n" name="g" value="No"><label for="n">No</label>
+          </fieldset>
+          <label for="s">Preferred work setting</label>
+          <select id="s"><option>Select an option</option><option>On-site</option><option>Remote</option></select>
+        </div>
+        """
+    )
+    asked = []
+
+    def answer(question):
+        asked.append(question)
+        if "(answer with one of:" in question:
+            return "Yes" if "backend" in question else "Remote"
+        return "5" if "backend" in question else "anywhere is fine"
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(playwright_page.locator("[role=dialog]"), answer)
+
+    assert playwright_page.locator("#y").is_checked()
+    assert playwright_page.locator("#s").evaluate("el => el.value") == "Remote"
+    assert asked == [
+        "Do you have experience in two backend stacks?",
+        "Do you have experience in two backend stacks? (answer with one of: Yes / No)",
+        "Preferred work setting",
+        "Preferred work setting (answer with one of: On-site / Remote)",
+    ]
+
+
+def test_a_choice_question_whose_answer_matches_is_asked_once(playwright_page):
+    playwright_page.set_content(
+        """<div role="dialog"><fieldset><legend>Willing to relocate?</legend>
+        <input type="radio" id="y" name="g"><label for="y">Yes</label>
+        <input type="radio" id="n" name="g"><label for="n">No</label></fieldset></div>"""
+    )
+    asked = []
+    LinkedInAdapter(playwright_page)._fill_visible_fields(
+        playwright_page.locator("[role=dialog]"), lambda q: asked.append(q) or "No"
+    )
+    assert asked == ["Willing to relocate?"] and playwright_page.locator("#n").is_checked()
