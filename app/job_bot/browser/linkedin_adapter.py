@@ -161,6 +161,16 @@ RESULTS_PER_PAGE = 25
 MAX_SEARCH_PAGES = 8  # hard cap so a huge search can't page forever
 NAVIGATION_RETRIES = 2
 
+# How long to wait before retrying a load LinkedIn rate limited (HTTP 429)
+# with no Retry-After header - per retry. A one-second retry was always
+# refused too, yet the same search a few minutes later went through: three
+# days running (2026-10-03..05), the first search after a long break got
+# 429 x3 within three seconds, then the cycle backed off 20 minutes - while
+# an identical load 6-9 minutes later, same profile, got results. Waiting
+# here gives the refusal a chance to clear inside the cycle.
+RATE_LIMIT_RETRY_SECONDS = (30.0, 90.0)
+MAX_RETRY_AFTER_SECONDS = 300.0
+
 # Job-card anchors on the search page carry root-relative hrefs
 # ("/jobs/view/4012345678/?refId=..."), so every scraped href is resolved
 # against this before being stored. A relative URL would be unusable
@@ -316,6 +326,18 @@ class NavigationFailed(RuntimeError):
 class _RefusedLoad(PlaywrightError):
     """A navigation that "succeeded" with an HTTP error status - see
     _goto_with_retry()."""
+
+
+def _rate_limit_wait(attempt: int, retry_after: str | None) -> float:
+    """Seconds to wait before retrying a 429: LinkedIn's Retry-After when it
+    sends a usable one (capped), else RATE_LIMIT_RETRY_SECONDS[attempt]."""
+    try:
+        seconds = float(retry_after) if retry_after is not None else None
+    except ValueError:  # the HTTP-date form - rare, and not worth parsing
+        seconds = None
+    if seconds is not None and seconds >= 0:
+        return min(seconds, MAX_RETRY_AFTER_SECONDS)
+    return RATE_LIMIT_RETRY_SECONDS[min(attempt, len(RATE_LIMIT_RETRY_SECONDS) - 1)]
 
 
 def _status_meaning(status: int | None) -> str:
@@ -888,10 +910,12 @@ class LinkedInAdapter(JobBoardAdapter):
         # empty body doesn't raise at all: goto() "succeeds" on a blank page,
         # which used to read as a search with no results.
         statuses: list[int] = []
+        retry_after: list[str | None] = []
 
         def record(response: Response) -> None:
             if response.request.is_navigation_request() and response.frame == self._page.main_frame:
                 statuses.append(response.status)
+                retry_after.append(response.headers.get("retry-after"))
 
         self._page.on("response", record)
         last_error: Exception | None = None
@@ -899,6 +923,7 @@ class LinkedInAdapter(JobBoardAdapter):
         try:
             for attempt in range(NAVIGATION_RETRIES + 1):
                 statuses.clear()
+                retry_after.clear()
                 try:
                     response = self._page.goto(url, timeout=20000)
                     if response is not None and response.status >= 400:
@@ -908,10 +933,18 @@ class LinkedInAdapter(JobBoardAdapter):
                     last_error = e
                     last_status = statuses[-1] if statuses else None
                     detail = _status_meaning(last_status) or _first_line(e)
+                    wait = ACTION_DELAY_SECONDS
+                    if last_status == 429 and attempt < NAVIGATION_RETRIES:
+                        wait = _rate_limit_wait(attempt, retry_after[-1] if retry_after else None)
                     logger.warning(
-                        "Navigation to %s failed (attempt %d): %s - retrying", _short_url(url), attempt + 1, detail
+                        "Navigation to %s failed (attempt %d): %s - retrying%s",
+                        _short_url(url),
+                        attempt + 1,
+                        detail,
+                        f" in {wait:g}s" if wait > ACTION_DELAY_SECONDS else "",
                     )
-                    time.sleep(ACTION_DELAY_SECONDS)
+                    if attempt < NAVIGATION_RETRIES:
+                        time.sleep(wait)
         finally:
             self._page.remove_listener("response", record)
         detail = _status_meaning(last_status) or (_first_line(last_error) if last_error else "no error")

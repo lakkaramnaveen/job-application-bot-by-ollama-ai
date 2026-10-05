@@ -1823,3 +1823,49 @@ def test_a_successful_load_is_untouched(playwright_page):
     playwright_page.route("https://www.linkedin.com/**", lambda route: route.fulfill(status=200, body="<p>ok</p>"))
     LinkedInAdapter(playwright_page)._goto_with_retry("https://www.linkedin.com/jobs/search/?keywords=x")
     assert playwright_page.locator("p").inner_text() == "ok"
+
+
+def _answer_in_turn(playwright_page, responses):
+    remaining = list(responses)
+
+    def handle(route):
+        status, headers = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        route.fulfill(status=status, headers=headers, body="<p>ok</p>" if status == 200 else "")
+
+    playwright_page.route("https://www.linkedin.com/**", handle)
+
+
+def test_a_rate_limited_load_waits_long_enough_to_clear_before_retrying(playwright_page, monkeypatch):
+    """Live, three days running: 429 x3 one second apart, then a 20-minute
+    back-off - while the same load minutes later went through."""
+    waits = []
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.time.sleep", waits.append)
+    _answer_in_turn(playwright_page, [(429, {}), (429, {}), (200, {})])
+
+    LinkedInAdapter(playwright_page)._goto_with_retry("https://www.linkedin.com/jobs/search/?keywords=x")
+
+    assert waits == [30.0, 90.0]
+    assert playwright_page.locator("p").inner_text() == "ok"
+
+
+def test_linkedins_retry_after_is_honored_and_capped(playwright_page, monkeypatch):
+    waits = []
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.time.sleep", waits.append)
+    _answer_in_turn(playwright_page, [(429, {"Retry-After": "7"}), (429, {"Retry-After": "86400"}), (200, {})])
+
+    LinkedInAdapter(playwright_page)._goto_with_retry("https://www.linkedin.com/jobs/search/?keywords=x")
+
+    assert waits == [7.0, 300.0]
+
+
+def test_other_failures_still_retry_after_a_second_and_never_sleep_after_the_last(playwright_page, monkeypatch):
+    from job_bot.browser.linkedin_adapter import NavigationFailed
+
+    waits = []
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.time.sleep", waits.append)
+    _answer_in_turn(playwright_page, [(503, {})])
+
+    with pytest.raises(NavigationFailed):
+        LinkedInAdapter(playwright_page)._goto_with_retry("https://www.linkedin.com/jobs/search/?keywords=x")
+
+    assert waits == [1.0, 1.0]
