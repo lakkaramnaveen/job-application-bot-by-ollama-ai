@@ -3256,3 +3256,21 @@ def test_a_loop_with_several_titles_searches_one_per_cycle_in_turn(tmp_path, mon
         if json.loads(line)["action"] == "search"
     ]
     assert searches == ["java full stack", "mern stack", "java full stack"]
+
+
+def test_search_last_24_hours_only_turns_off_widening_for_the_run(tmp_path, monkeypatch):
+    adapters = []
+
+    class Recording(FakeAdapter):
+        def __init__(self, page):
+            super().__init__(page)
+            adapters.append(self)
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", Recording)
+
+    cmd_run(make_settings(tmp_path, search_last_24_hours_only=True), make_args())
+    cmd_run(make_settings(tmp_path), make_args())
+
+    assert [a.widen_to_3_days for a in adapters] == [False, True]

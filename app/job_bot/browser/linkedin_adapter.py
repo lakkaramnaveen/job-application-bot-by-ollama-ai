@@ -383,6 +383,12 @@ class LinkedInSignedOut(RuntimeError):
 
 
 class LinkedInAdapter(JobBoardAdapter):
+    # Whether search() may widen from the last 24 hours to the last 3 days
+    # when 24 hours doesn't fill max_results. SEARCH_LAST_24_HOURS_ONLY=true
+    # turns it off: with several titles rotating (search_terms.py), a short
+    # 24-hour pool per title is fine - the next cycle searches another.
+    widen_to_3_days = True
+
     def __init__(self, page: Page):
         self._page = page
 
@@ -432,7 +438,7 @@ class LinkedInAdapter(JobBoardAdapter):
             DATE_POSTED_24H,
             skip,
         )
-        if len(postings) >= max_results:
+        if len(postings) >= max_results or not self.widen_to_3_days:
             return postings
         # The 3-day window is always a superset of the 24h one, so a fresh
         # search under it supersedes rather than merges with the narrower

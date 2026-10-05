@@ -1869,3 +1869,23 @@ def test_other_failures_still_retry_after_a_second_and_never_sleep_after_the_las
         LinkedInAdapter(playwright_page)._goto_with_retry("https://www.linkedin.com/jobs/search/?keywords=x")
 
     assert waits == [1.0, 1.0]
+
+
+def test_search_stays_within_24_hours_when_widening_is_off(playwright_page, monkeypatch):
+    """SEARCH_LAST_24_HOURS_ONLY=true: a short 24-hour pool is returned as
+    is, never topped up from the last 3 days."""
+    real_goto = playwright_page.goto
+    urls: list[str] = []
+
+    def fake_goto(url, **kw):
+        urls.append(url)
+        return real_goto(f"file://{SEARCH_FIXTURE_PATH}")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    adapter = LinkedInAdapter(playwright_page)
+    adapter.widen_to_3_days = False
+
+    postings = adapter.search("python", "Remote", max_results=50)
+
+    assert {p.job_id for p in postings} == {"101", "103"}
+    assert urls and all(f"f_TPR={DATE_POSTED_24H}" in url for url in urls)

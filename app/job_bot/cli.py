@@ -383,6 +383,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
     ) as context:
         page = context.new_page()
         adapter = LinkedInAdapter(page)
+        adapter.widen_to_3_days = not settings.search_last_24_hours_only
 
         run_context = RunContext(
             settings=settings,

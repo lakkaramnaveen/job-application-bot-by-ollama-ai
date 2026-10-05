@@ -108,6 +108,9 @@ class Settings(BaseSettings):
     # pipeline/search_terms.py.
     search_keywords: str = "software engineer"
     search_location: str = "United States"
+    # Only postings from the last 24 hours - never widen the search to the
+    # last 3 days when 24 hours doesn't fill the search pool.
+    search_last_24_hours_only: bool = False
 
     # Extra floor `job-bot run` enforces on top of the LLM's own should_apply
     # verdict - a posting only gets applied to if should_apply is True AND
