@@ -151,7 +151,8 @@ _STEP_FIELDS_JS = """
     const legend = fieldset && fieldset.querySelector('legend');
     const label = (el.type === 'radio' && legend && legend.innerText.trim())
       || (el.labels && el.labels[0] && el.labels[0].innerText.trim())
-      || el.getAttribute('aria-label') || el.name || el.id || '?';
+      || el.getAttribute('aria-label')
+      || (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map((id) => (document.getElementById(id) || {}).innerText || '').join(' ').trim() || '(unlabeled)';
     const kind = el.tagName === 'SELECT' ? 'select' : (el.type || el.tagName.toLowerCase());
     let state;
     if (el.type === 'radio') {
@@ -176,7 +177,7 @@ _STEP_FIELDS_JS = """
 MAX_STALLED_CLICKS = 2
 
 _FIELD_ERRORS_JS = """(dialog) => {
-  const counter = /\\d+\\s*\\/\\s*\\d+|\\d+ of \\d+ characters/gi;
+  const counter = /\\d[\\d,]*\\s*\\/\\s*\\d[\\d,]*|\\d[\\d,]* of \\d[\\d,]* characters/gi;
   const out = [];
   const fields = dialog.querySelectorAll('input:not([type=hidden]):not([type=radio]), select, textarea, fieldset');
   for (const el of fields) {
@@ -192,7 +193,10 @@ _FIELD_ERRORS_JS = """(dialog) => {
       const radio = el.querySelector('input[type=radio]');
       label = (legend && legend.innerText) || (radio && radio.getAttribute('aria-label')) || el.getAttribute('aria-label') || '';
     } else {
-      label = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.name || el.id || '';
+      // Never el.id/el.name: LinkedIn's are generated ("_r_3n_"), and a
+      // rejected field's label becomes a question queued for the user.
+      label = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label')
+        || (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map((id) => (document.getElementById(id) || {}).innerText || '').join(' ').trim();
     }
     out.push({label: label.trim(), message: Array.from(new Set(lines)).join(' / ').slice(0, 120)});
   }
@@ -1269,6 +1273,12 @@ class LinkedInAdapter(JobBoardAdapter):
             aria = el.get_attribute("aria-label")
             if aria:
                 return aria.strip()
+            labelled_by = el.evaluate(
+                "el => (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean)"
+                ".map((id) => (document.getElementById(id) || {}).innerText || '').join(' ').trim()"
+            )
+            if labelled_by:
+                return LinkedInAdapter._dedupe_repeated_lines(str(labelled_by))
         except PlaywrightTimeoutError:
             pass
         return ""

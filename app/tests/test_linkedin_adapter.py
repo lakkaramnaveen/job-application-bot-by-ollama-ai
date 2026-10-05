@@ -1916,3 +1916,34 @@ def test_a_step_next_will_not_leave_is_reported_as_such_with_its_fields(playwrig
     assert "'I agree to the privacy policy' (checkbox, unchecked)" in message
     assert "Springfield" not in message  # states, never values
     assert playwright_page.evaluate("window.__nextClicks") == 2
+
+
+def test_field_errors_never_use_linkedins_generated_ids_as_questions(playwright_page):
+    """Real case (2026-10-05): a work-experience editor inside the form gave
+    "_r_3n_", "_r_3p_", ... - generated element ids - as the questions LinkedIn
+    rejected, and they were queued for `job-bot review-answers`. And
+    "Description" came back as ",000 / 134 of 2,000 characters": the
+    character counter's thousands separator defeated the counter filter."""
+    playwright_page.set_content(
+        """
+        <div role="dialog">
+          <span id="to-label">Month of To</span>
+          <select id="_r_3n_" aria-labelledby="to-label" aria-invalid="true" aria-describedby="e1"></select>
+          <div id="e1">This field is required</div>
+          <select id="_r_3p_" aria-invalid="true" aria-describedby="e2"></select>
+          <div id="e2">This field is required</div>
+          <label for="desc">Description</label>
+          <textarea id="desc" aria-describedby="c1 c2">x</textarea>
+          <div id="c1">134/2,000</div><div id="c2">134 of 2,000 characters</div>
+        </div>
+        """
+    )
+    dialog = playwright_page.locator("[role=dialog]")
+
+    assert LinkedInAdapter._field_errors(dialog) == [
+        ("Month of To", "This field is required"),
+        ("", "This field is required"),
+    ]
+    assert LinkedInAdapter._label_for(playwright_page.locator("#_r_3n_")) == "Month of To"
+    assert LinkedInAdapter._label_for(playwright_page.locator("#_r_3p_")) == ""
+    assert "'(unlabeled)' (select" in LinkedInAdapter._describe_step_fields(dialog)
