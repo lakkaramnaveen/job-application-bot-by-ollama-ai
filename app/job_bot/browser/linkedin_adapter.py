@@ -1021,7 +1021,9 @@ class LinkedInAdapter(JobBoardAdapter):
                         _short_url(url),
                         attempt + 1,
                         detail,
-                        f" in {wait:g}s" if wait > ACTION_DELAY_SECONDS else "",
+                        f" in {wait:g}s (LinkedIn's slow-down usually clears by then - leave the bot running)"
+                        if wait > ACTION_DELAY_SECONDS
+                        else "",
                     )
                     if attempt < NAVIGATION_RETRIES:
                         time.sleep(wait)

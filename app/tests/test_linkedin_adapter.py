@@ -1947,3 +1947,15 @@ def test_field_errors_never_use_linkedins_generated_ids_as_questions(playwright_
     assert LinkedInAdapter._label_for(playwright_page.locator("#_r_3n_")) == "Month of To"
     assert LinkedInAdapter._label_for(playwright_page.locator("#_r_3p_")) == ""
     assert "'(unlabeled)' (select" in LinkedInAdapter._describe_step_fields(dialog)
+
+
+def test_the_rate_limit_wait_tells_the_user_to_leave_the_bot_running(playwright_page, monkeypatch, caplog):
+    """Live (2026-10-05): two runs in a row were stopped with Ctrl+C during
+    the 30-second wait - the wait whose retry is the one expected to work."""
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.time.sleep", lambda s: None)
+    _answer_in_turn(playwright_page, [(429, {}), (200, {})])
+
+    with caplog.at_level("WARNING"):
+        LinkedInAdapter(playwright_page)._goto_with_retry("https://www.linkedin.com/jobs/search/?keywords=x")
+
+    assert "retrying in 30s (LinkedIn's slow-down usually clears by then - leave the bot running)" in caplog.text
