@@ -19,6 +19,7 @@ job-id-named folders.
 """
 
 import re
+import shutil
 from datetime import date
 from pathlib import Path
 
@@ -65,6 +66,30 @@ def _job_dir(base_dir: Path, job_id: str, *, company: str = "", title: str = "")
     out_dir = base_dir / date.today().isoformat() / folder_name
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
+
+
+def file_as_applied(folder: Path, applications_dir: Path, resume_path: str) -> Path:
+    """Move a submitted application's folder into
+    applications_dir/applied/<date>/, with the resume that was actually
+    sent in it - and return its new location.
+
+    Materials are written as soon as they're generated, before the form is
+    even opened - so the dated folders also hold applications that failed
+    or were never submitted. applied/ holds only real submissions: a
+    user looking for "what did I send to this company" finds exactly that.
+    The resume is copied in when it's the user's own file (no tailored
+    one could be built), so the folder is complete either way.
+    """
+    destination = applications_dir / "applied" / folder.parent.name / folder.name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        # A retry of a posting filed before: keep the newest materials.
+        shutil.rmtree(destination)
+    shutil.move(str(folder), str(destination))
+    sent = Path(resume_path)
+    if sent.parent != folder and sent.is_file():
+        shutil.copy2(sent, destination / sent.name)
+    return destination
 
 
 def write_tailored_resume(

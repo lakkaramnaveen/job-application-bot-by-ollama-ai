@@ -245,7 +245,10 @@ def test_run_generates_and_persists_tailored_resume_and_cover_letter(tmp_path, m
     assert TailoredResume in provider.schemas_requested
     assert CoverLetter in provider.schemas_requested
 
-    job_dir = settings.applications_dir / date.today().isoformat() / JOB_MATERIALS_DIR_NAME
+    # Submitted, so filed under applied/ (file_as_applied()) - not left in
+    # the dated drafts folder.
+    job_dir = settings.applications_dir / "applied" / date.today().isoformat() / JOB_MATERIALS_DIR_NAME
+    assert not (settings.applications_dir / date.today().isoformat() / JOB_MATERIALS_DIR_NAME).exists()
     assert (job_dir / "tailored_resume.txt").exists()
     assert "Tailored summary for Acme" in (job_dir / "tailored_resume.txt").read_text()
     assert (job_dir / "cover_letter.txt").read_text() == "Dear Acme, I would love to join your team."
@@ -476,7 +479,9 @@ def test_run_uploads_a_freshly_tailored_docx_resume_when_one_can_be_built(tmp_pa
     resume_path_used = adapter_instances[0].fill_and_submit_calls[0]["resume_path"]
     assert resume_path_used.endswith(".docx")
     assert resume_path_used != str(structured_resume_path)
-    assert Path(resume_path_used).exists()
+    # Uploaded from the drafts folder, then filed under applied/ with the rest.
+    filed = settings.applications_dir / "applied" / Path(resume_path_used).relative_to(settings.applications_dir)
+    assert filed.exists() and not Path(resume_path_used).exists()
 
 
 def test_run_caches_high_confidence_answers_to_faq(tmp_path, monkeypatch):
@@ -3274,3 +3279,24 @@ def test_search_last_24_hours_only_turns_off_widening_for_the_run(tmp_path, monk
     cmd_run(make_settings(tmp_path), make_args())
 
     assert [a.widen_to_3_days for a in adapters] == [False, True]
+
+
+def test_only_submitted_applications_are_filed_under_applied_with_the_resume_sent(tmp_path, monkeypatch):
+    """A user found materials in the applications folder for postings that
+    were never submitted - they're written before the form is opened. Now
+    applied/ holds only real submissions, each with the resume that went out
+    (here the user's own file, since no tailored .docx can be built from it)."""
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+    settings = make_settings(tmp_path)
+    today = date.today().isoformat()
+
+    cmd_run(settings, make_args(dry_run=True))
+    assert (settings.applications_dir / today / JOB_MATERIALS_DIR_NAME / "cover_letter.txt").exists()
+    assert not (settings.applications_dir / "applied").exists()
+
+    cmd_run(settings, make_args())
+    filed = settings.applications_dir / "applied" / today / JOB_MATERIALS_DIR_NAME
+    assert (filed / "cover_letter.txt").exists()
+    assert (filed / settings.resume_path.name).read_bytes() == settings.resume_path.read_bytes()

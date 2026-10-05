@@ -16,6 +16,7 @@ import dataclasses
 import signal
 import threading
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 from playwright.sync_api import Page
@@ -30,6 +31,7 @@ from job_bot.browser.linkedin_adapter import (
     UnansweredRequiredQuestion,
 )
 from job_bot.data_files import CorruptDataFile
+from job_bot.generation.artifacts import file_as_applied
 from job_bot.generation.qa_answerer import answer_question
 from job_bot.llm.circuit_breaker import ModelUnavailable
 from job_bot.matching.scorer import score_job_match
@@ -45,7 +47,7 @@ from job_bot.pipeline.failures import (
     failure_class_of,
     is_automation_block,
 )
-from job_bot.pipeline.materials import prepare_materials
+from job_bot.pipeline.materials import Materials, prepare_materials
 from job_bot.pipeline.skip import SkipPolicy, SkipReason
 from job_bot.safety.rate_limiter import DailyCapReached
 
@@ -142,6 +144,20 @@ def _close_if_unavailable(e: Exception, posting: JobPosting, ctx: RunContext) ->
             ctx.tracker.upsert_job(posting.job_id, posting.title, posting.company, posting.url)
         ctx.tracker.mark_skipped(posting.job_id)
         print("  That posting has closed - it won't be tried again.")
+
+
+def _file_submitted_application(materials: Materials | None, applications_dir: Path) -> None:
+    """Move a submitted application's materials into applications/applied/
+    (file_as_applied()). Best effort: the application is already sent and
+    recorded, so a filing problem only warns."""
+    if materials is None:
+        return
+    try:
+        filed = file_as_applied(materials.folder, applications_dir, materials.resume_path)
+    except OSError as e:
+        print(f"  Warning: couldn't file this application under applied/ - {e}")
+        return
+    print(f"  Saved what was sent in {filed}")
 
 
 def run_cycle(
@@ -358,6 +374,10 @@ def run_cycle(
         print(f"  {_score_verdict(match, should_apply, min_score)}")
         return should_apply
 
+    # Each posting's materials, for filing a submitted application under
+    # applications/applied/ - see file_as_applied().
+    prepared: dict[str, Materials] = {}
+
     def generate_materials(posting: JobPosting, description: str) -> tuple[CoverLetter, str]:
         materials = prepare_materials(
             posting,
@@ -369,6 +389,7 @@ def run_cycle(
             tracker=tracker,
             audit=audit,
         )
+        prepared[posting.job_id] = materials
         return materials.cover_letter, materials.resume_path
 
     answers = AnswerService(
@@ -596,6 +617,7 @@ def run_cycle(
             audit.log("applied", job_id=posting.job_id, company=posting.company)
             applied += 1
             print(f"Applied: {posting.title} at {posting.company}")
+            _file_submitted_application(prepared.get(posting.job_id), settings.applications_dir)
             if cap_reached_concurrently:
                 print("Daily application cap reached (possibly by a concurrent run). Stopping.")
                 break

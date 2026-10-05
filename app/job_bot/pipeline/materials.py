@@ -26,6 +26,7 @@ from job_bot.tracker.db import Tracker
 class Materials:
     cover_letter: CoverLetter  # its body is what fills the form's cover-letter field
     resume_path: str  # what gets uploaded as the resume
+    folder: Path  # where the materials were written - see file_as_applied()
 
 
 def prepare_materials(
@@ -77,9 +78,12 @@ def prepare_materials(
         # uploaded" and never be sent).
         file_stem=f"{resume_path.stem} - {posting.company}",
     )
-    write_cover_letter(applications_dir, posting.job_id, cover_letter, company=posting.company, title=posting.title)
+    cover_letter_path = write_cover_letter(
+        applications_dir, posting.job_id, cover_letter, company=posting.company, title=posting.title
+    )
     audit.log("generated_materials", job_id=posting.job_id)
     return Materials(
         cover_letter=cover_letter,
         resume_path=str(tailored_resume_path) if tailored_resume_path is not None else str(resume_path),
+        folder=cover_letter_path.parent,
     )

@@ -286,8 +286,9 @@ def test_full_run_applies_scores_and_records_everything(settings, wired_run):
     assert applied["url"] == "https://www.linkedin.com/jobs/view/901/?refId=e2e"
 
     # Generated material landed on disk for the job actually applied to,
-    # under today's date folder (see generation/artifacts.py's _job_dir()).
-    job_dir = settings.applications_dir / date.today().isoformat() / "901 - Acme Corp - Backend Engineer"
+    # filed under applied/<today's date> once submitted (see
+    # generation/artifacts.py's _job_dir() and file_as_applied()).
+    job_dir = settings.applications_dir / "applied" / date.today().isoformat() / "901 - Acme Corp - Backend Engineer"
     assert (job_dir / "tailored_resume.txt").read_text(encoding="utf-8").startswith("SUMMARY")
     assert "Acme Corp" in (job_dir / "cover_letter.txt").read_text(encoding="utf-8")
     dated_dir = settings.applications_dir / date.today().isoformat()
