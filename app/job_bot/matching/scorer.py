@@ -42,12 +42,17 @@ _BASE_SYSTEM_PROMPT = (
 )
 
 _SENIORITY_RULE = (
-    "- Seniority: the title or description explicitly marks this a Senior/"
-    "Staff/Principal/Lead/Director-or-higher-level role, or explicitly "
+    "- Seniority: the title or description explicitly marks this a {levels}"
+    "-or-higher-level role, or explicitly "
     "requires more than {max_years_experience} years of professional "
-    "experience - the candidate is targeting entry-to-mid-level roles only, "
+    "experience - the candidate is targeting {target} roles only, "
     "regardless of how many years of experience the resume itself shows.\n"
 )
+# "Senior" roles typically ask for about 5 years. With a cap below that, a
+# Senior title is out of range on its own; with a cap of 5 or more, it's
+# the years the posting asks for that decide - a "Senior Software Engineer,
+# 5+ years" is exactly what a 6-year cap is meant to let through.
+SENIOR_TITLE_MIN_YEARS = 5
 
 _W2_RULE = (
     "- Employment type: the posting explicitly states this is Corp-to-Corp "
@@ -59,11 +64,14 @@ _W2_RULE = (
 
 
 def _build_system_prompt(max_years_experience: int | None, require_w2: bool) -> str:
-    seniority_rule = (
-        _SENIORITY_RULE.format(max_years_experience=max_years_experience)
-        if max_years_experience is not None
-        else ""
-    )
+    seniority_rule = ""
+    if max_years_experience is not None:
+        senior_ok = max_years_experience >= SENIOR_TITLE_MIN_YEARS
+        seniority_rule = _SENIORITY_RULE.format(
+            levels="Staff/Principal/Lead/Director" if senior_ok else "Senior/Staff/Principal/Lead/Director",
+            max_years_experience=max_years_experience,
+            target="entry-to-senior-level (not staff or above)" if senior_ok else "entry-to-mid-level",
+        )
     w2_rule = _W2_RULE if require_w2 else ""
     return _BASE_SYSTEM_PROMPT.format(seniority_rule=seniority_rule, w2_rule=w2_rule)
 

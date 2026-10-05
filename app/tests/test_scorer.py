@@ -87,7 +87,19 @@ def test_max_years_experience_adds_a_seniority_eligibility_rule():
 
     system = provider.calls[0]["system"]
     assert "more than 6 years" in system
-    assert "entry-to-mid-level roles only" in system
+    assert "Staff/Principal/Lead/Director-or-higher" in system
+
+
+def test_a_senior_title_alone_disqualifies_only_below_a_5_year_cap():
+    """Senior roles typically ask ~5 years: a cap of 5+ lets them through
+    (the stated years decide), while a lower cap still rules them out."""
+    for cap, senior_excluded in ((3, True), (4, True), (5, False), (6, False)):
+        provider = FakeProvider()
+        score_job_match(provider, resume_text="resume", job_description="job", max_years_experience=cap)
+        system = provider.calls[0]["system"]
+        assert ("Senior/Staff" in system) is senior_excluded, cap
+        assert f"more than {cap} years" in system
+        assert ("entry-to-mid-level roles only" in system) is senior_excluded
 
 
 def test_require_w2_adds_an_employment_type_eligibility_rule():
