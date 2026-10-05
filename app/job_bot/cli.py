@@ -73,6 +73,7 @@ from job_bot.pipeline.cycle import (  # noqa: F401 - re-exported for callers/tes
 from job_bot.pipeline.failures import throttle_backoff_minutes
 from job_bot.pipeline.funnel import Funnel, build_funnel, format_funnel
 from job_bot.pipeline.retry import recent_failures_to_retry, since_days_ago
+from job_bot.pipeline.throttle_state import ThrottleState
 from job_bot.resume.parser import ResumeParseError, find_moved_resume, parse_resume
 from job_bot.resume.store import ResumeStore, unusable_faq_reason
 from job_bot.safety.answer_gaps import AnswerGapStore
@@ -183,6 +184,32 @@ def cmd_login(settings: Settings) -> None:
         print("Logged in. `job-bot run` will reuse this same Chrome session.")
     else:
         print("Session saved to", settings.browser_profile_dir)
+
+
+def _wait_out_linkedin_backoff(throttle_state: ThrottleState, args: argparse.Namespace) -> bool:
+    """Honor a refusal back-off left by an earlier run before touching
+    LinkedIn. --loop waits it out; a one-off run stops and says when to try
+    again. Returns False when the run shouldn't go ahead."""
+    resume_at = throttle_state.resume_at(args.loop_interval_minutes)
+    if resume_at is None:
+        return True
+    last = throttle_state.last_refused_at()
+    streak = throttle_state.streak()
+    cycles = f"{streak} cycle(s) in a row, " if streak > 1 else ""
+    why = (
+        f"LinkedIn refused this account's searches {cycles}most recently at "
+        f"{last:%H:%M}" if last else "LinkedIn refused this account's searches recently"
+    )
+    if not args.loop:
+        print(f"{why}. Searching again before {resume_at:%H:%M} would likely be refused too - run again then.")
+        return False
+    print(f"{why}. Waiting until {resume_at:%H:%M} before searching again (Ctrl+C to stop)...")
+    try:
+        time.sleep(max(0.0, (resume_at - datetime.now()).total_seconds()))
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        return False
+    return True
 
 
 def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
@@ -339,6 +366,10 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
 
     _print_run_plan(settings, args, rate_limiter, min_score)
 
+    throttle_state = ThrottleState(settings.db_path.parent / "linkedin_throttle.json")
+    if not _wait_out_linkedin_backoff(throttle_state, args):
+        return
+
     with browser_session(
         settings.browser_profile_dir, headless=args.headless, cdp_url=settings.browser_cdp_url
     ) as context:
@@ -378,8 +409,19 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
                 run_context, adapter=adapter, page=page, resume_text=resume_store.resume_text()
             )
 
+        def remember(result: cycle.CycleResult) -> int:
+            """Persist the refusal streak (see ThrottleState); a search that
+            went through ends it. A fatal search failure (e.g. a 999) leaves
+            it as it was."""
+            if result.throttled:
+                return throttle_state.record_refusal()
+            if not result.search_failed:
+                throttle_state.clear()
+            return throttle_state.streak()
+
         if not args.loop:
             result = run_one_cycle()
+            remember(result)
             applied, failed = result.applied, result.failed
             _print_cycle_summary(
                 applied, failed, rate_limiter, settings, provider, search_failed=result.search_failed
@@ -396,13 +438,12 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             "or until you stop it (Ctrl+C)."
         )
         try:
-            throttle_streak = 0
             while True:
                 result = run_one_cycle()
                 applied, failed = result.applied, result.failed
                 fatal_error, throttled = result.fatal, result.throttled
                 shown_pending = _announce_pending_questions(settings, already_shown=shown_pending)
-                throttle_streak = throttle_streak + 1 if throttled else 0
+                throttle_streak = remember(result)
                 _print_cycle_summary(
                     applied, failed, rate_limiter, settings, provider, search_failed=result.search_failed
                 )

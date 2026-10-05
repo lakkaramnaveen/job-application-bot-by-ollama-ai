@@ -3167,3 +3167,55 @@ def test_a_999_on_the_search_page_stops_the_loop_instead_of_backing_off(tmp_path
     assert "LinkedIn answered HTTP 999" in capsys.readouterr().out
     [entry] = [json.loads(line) for line in settings.failed_applications_log_path.read_text().splitlines()]
     assert entry["details"]["failure_class"] == "user_action"
+
+
+def _refused_search_adapter():
+    from job_bot.browser.linkedin_adapter import NavigationFailed
+
+    class Refused(FakeAdapter):
+        def search(self, *args, **kwargs):
+            raise NavigationFailed("Failed to load ... (HTTP 429 - rate limited)", status=429)
+
+    return Refused
+
+
+def test_a_restart_honors_the_back_off_an_earlier_run_was_refused_into(tmp_path, monkeypatch, capsys):
+    """Real case (2026-10-04): a refused run was restarted two hours later
+    and its first search was refused again - the back-off lived only in the
+    process that was stopped."""
+    from job_bot.pipeline.throttle_state import ThrottleState
+
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: FakeProvider())
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", _refused_search_adapter())
+    settings = make_settings(tmp_path)
+    state_path = settings.db_path.parent / "linkedin_throttle.json"
+
+    cmd_run(settings, make_args())
+    assert ThrottleState(state_path).streak() == 1
+
+    searched = []
+
+    class Counting(FakeAdapter):
+        def search(self, *args, **kwargs):
+            searched.append(1)
+            return []
+
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", Counting)
+    cmd_run(settings, make_args())
+    assert searched == []
+    assert "run again then" in capsys.readouterr().out
+
+    waits = []
+
+    def sleep(seconds):
+        waits.append(seconds)
+        if len(waits) > 1:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("job_bot.cli.time.sleep", sleep)
+    cmd_run(settings, make_args(loop=True))
+    assert 0 < waits[0] <= 20 * 60  # waited out the rest of the window first
+    assert searched == [1]
+    assert "Waiting until" in capsys.readouterr().out
+    assert ThrottleState(state_path).streak() == 0  # that search went through
