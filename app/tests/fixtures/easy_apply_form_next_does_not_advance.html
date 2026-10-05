@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply step that Next never leaves</title></head>
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <!-- Live 2026-10-05: Next was on screen, clicking it kept the dialog on the
+       same step, and no validation message was shown. -->
+  <div role="dialog" aria-label="Job application">
+    <progress value="40" max="100"></progress>
+    <h3>Additional questions</h3>
+    <label for="city">City</label>
+    <input id="city" type="text" required />
+    <input id="terms" type="checkbox" />
+    <label for="terms">I agree to the privacy policy</label>
+    <button onclick="window.__nextClicks = (window.__nextClicks || 0) + 1">Next</button>
+  </div>
+</body>
+</html>

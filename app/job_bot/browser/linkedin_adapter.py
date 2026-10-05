@@ -119,6 +119,62 @@ _RADIO_OPTION_TEXT_JS = """(radio) => {
 RADIO_LABEL_CLICK_TIMEOUT_MS = 3000
 
 # See LinkedInAdapter._field_errors().
+# What identifies the step the Easy Apply dialog is on: its progress value
+# plus its headings and field labels. Unchanged after a Next/Review click
+# means LinkedIn refused to leave the step.
+_STEP_SIGNATURE_JS = """
+(dialog) => {
+  const progress = dialog.querySelector('progress, [role="progressbar"]');
+  const value = progress ? (progress.getAttribute('value') || progress.getAttribute('aria-valuenow') || '') : '';
+  const labels = [...dialog.querySelectorAll('h1, h2, h3, label, legend')].map((e) => e.innerText.trim());
+  return value + '#' + labels.join('|');
+}
+"""
+
+# Each field on the current step - label, kind, required, and whether it's
+# filled/checked (never its value) - for the error when a step won't
+# advance and LinkedIn shows no message saying why. Radio groups collapse
+# to one entry.
+_STEP_FIELDS_JS = """
+(dialog) => {
+  const out = [];
+  const groups = new Set();
+  for (const el of dialog.querySelectorAll('input, select, textarea')) {
+    if (el.type === 'hidden' || el.type === 'file') continue;
+    const toggle = el.type === 'checkbox' || el.type === 'radio';
+    if (!toggle && el.offsetParent === null) continue;
+    if (el.type === 'radio') {
+      if (groups.has(el.name)) continue;
+      groups.add(el.name);
+    }
+    const fieldset = el.closest('fieldset');
+    const legend = fieldset && fieldset.querySelector('legend');
+    const label = (el.type === 'radio' && legend && legend.innerText.trim())
+      || (el.labels && el.labels[0] && el.labels[0].innerText.trim())
+      || el.getAttribute('aria-label') || el.name || el.id || '?';
+    const kind = el.tagName === 'SELECT' ? 'select' : (el.type || el.tagName.toLowerCase());
+    let state;
+    if (el.type === 'radio') {
+      state = [...dialog.querySelectorAll('input[type="radio"]')].some((r) => r.name === el.name && r.checked)
+        ? 'answered' : 'unanswered';
+    } else if (toggle) {
+      state = el.checked ? 'checked' : 'unchecked';
+    } else {
+      state = String(el.value || '').trim() ? 'filled' : 'empty';
+    }
+    const required = el.required || el.getAttribute('aria-required') === 'true';
+    out.push({ label: label.split('\\n')[0].slice(0, 80), kind, required, state });
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+"""
+
+# Consecutive Next/Review clicks that left the dialog on the same step
+# before giving up - one more than 1, since a slow render can look like a
+# refusal once.
+MAX_STALLED_CLICKS = 2
+
 _FIELD_ERRORS_JS = """(dialog) => {
   const counter = /\\d+\\s*\\/\\s*\\d+|\\d+ of \\d+ characters/gi;
   const out = [];
@@ -781,6 +837,7 @@ class LinkedInAdapter(JobBoardAdapter):
             ) from e
 
         max_steps = 20  # hard cap so a stuck form can't loop forever
+        stalled = 0
         for _ in range(max_steps):
             self._upload_resume_if_requested(dialog, resume_path)
             self._fill_visible_fields(dialog, answer_question, cover_letter_text)
@@ -796,15 +853,21 @@ class LinkedInAdapter(JobBoardAdapter):
                 self._dismiss_safety_reminder_if_present()
                 return True
 
-            review_btn = self._find_button(dialog, REVIEW_BUTTON_SELECTORS)
-            if review_btn is not None:
-                review_btn.click()
+            progress_btn = self._find_button(dialog, REVIEW_BUTTON_SELECTORS) or self._find_button(
+                dialog, NEXT_BUTTON_SELECTORS
+            )
+            if progress_btn is not None:
+                before = self._step_signature(dialog)
+                progress_btn.click()
                 time.sleep(ACTION_DELAY_SECONDS)
-                continue
-            next_btn = self._find_button(dialog, NEXT_BUTTON_SELECTORS)
-            if next_btn is not None:
-                next_btn.click()
-                time.sleep(ACTION_DELAY_SECONDS)
+                # Real failure (2026-10-05, 4 applications in 15 minutes):
+                # Next was clicked, LinkedIn stayed on the same step with no
+                # message on screen, and the loop clicked it until max_steps
+                # ran out - then reported "no Next/Review/Submit button
+                # found" with 'Next' listed as visible.
+                stalled = stalled + 1 if before and self._step_signature(dialog) == before else 0
+                if stalled >= MAX_STALLED_CLICKS:
+                    break
                 continue
 
             # No progress button found and no submit button - the form is
@@ -823,10 +886,17 @@ class LinkedInAdapter(JobBoardAdapter):
         # adapter doesn't fill at all).
         visible_button_texts = [t.strip() for t in dialog.locator("button:visible").all_inner_texts()]
         buttons_seen = ", ".join(repr(t) for t in visible_button_texts if t) or "none"
-        message = (
-            f"Could not complete the Easy Apply form for job {posting.job_id} (stuck on a step with "
-            f"no Next/Review/Submit button found - buttons visible on this step: {buttons_seen})."
-        )
+        if stalled >= MAX_STALLED_CLICKS:
+            message = (
+                f"Could not complete the Easy Apply form for job {posting.job_id} (clicking Next/Review "
+                f"{stalled} times in a row left it on the same step - LinkedIn didn't accept something "
+                f"on it; buttons visible: {buttons_seen}). Fields on that step: {self._describe_step_fields(dialog)}."
+            )
+        else:
+            message = (
+                f"Could not complete the Easy Apply form for job {posting.job_id} (stuck on a step with "
+                f"no Next/Review/Submit button found - buttons visible on this step: {buttons_seen})."
+            )
         field_errors = self._field_errors(dialog)
         if field_errors:
             listed = "; ".join(f"{label[:80] or '?'}: {error}" for label, error in field_errors)
@@ -1239,6 +1309,31 @@ class LinkedInAdapter(JobBoardAdapter):
             if not deduped or deduped[-1] != line:
                 deduped.append(line)
         return "\n".join(deduped)
+
+    @staticmethod
+    def _step_signature(dialog: Locator) -> str:
+        """What identifies the step the dialog is on (see
+        _STEP_SIGNATURE_JS) - "" when it can't be read, which never counts
+        as a stall."""
+        try:
+            return str(dialog.evaluate(_STEP_SIGNATURE_JS))
+        except PlaywrightError:
+            return ""
+
+    @staticmethod
+    def _describe_step_fields(dialog: Locator) -> str:
+        """"'Phone' (text, required, filled); 'I agree' (checkbox, required,
+        unchecked)" - each field's state on a step that won't advance, never
+        its value. Best effort."""
+        try:
+            fields = dialog.evaluate(_STEP_FIELDS_JS)
+        except PlaywrightError:
+            return "unreadable"
+        described = [
+            f"{str(f.get('label', '?'))!r} ({f.get('kind')}{', required' if f.get('required') else ''}, {f.get('state')})"
+            for f in fields
+        ]
+        return "; ".join(described) or "none"
 
     @staticmethod
     def _field_errors(dialog: Locator) -> list[tuple[str, str]]:

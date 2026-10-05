@@ -65,6 +65,7 @@ SUBMIT_BUTTON_TEXT_ONLY_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_submit_button_text_only.html"
 )
 NO_PROGRESS_BUTTON_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_no_progress_button.html"
+NEXT_DOES_NOT_ADVANCE_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "easy_apply_form_next_does_not_advance.html"
 DELAYED_SAFETY_REMINDER_FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "easy_apply_form_delayed_safety_reminder.html"
 )
@@ -830,7 +831,8 @@ def test_stuck_error_names_the_field_linkedin_rejected_and_why(playwright_page, 
     message = str(excinfo.value)
     assert "'Back', 'Review'" in message
     assert "Fields LinkedIn rejected: How many years of work experience do you have with Java?: Invalid input" in message
-    assert "City" not in message and "0/20" not in message
+    rejected_part = message.split("Fields LinkedIn rejected:")[1]
+    assert "City" not in rejected_part and "0/20" not in message
     # Structured, for cli.py to learn from - including a radio group's
     # error, which LinkedIn attaches to the <fieldset>.
     assert isinstance(excinfo.value, FieldsRejected)
@@ -1889,3 +1891,28 @@ def test_search_stays_within_24_hours_when_widening_is_off(playwright_page, monk
 
     assert {p.job_id for p in postings} == {"101", "103"}
     assert urls and all(f"f_TPR={DATE_POSTED_24H}" in url for url in urls)
+
+
+def test_a_step_next_will_not_leave_is_reported_as_such_with_its_fields(playwright_page, monkeypatch):
+    """Real failure (2026-10-05, 4 applications in 15 minutes): Next was on
+    screen and clicked, LinkedIn kept the form on the same step with no
+    message, and the loop clicked it 20 times before reporting "no
+    Next/Review/Submit button found" - with 'Next' listed as visible. Now it
+    gives up after MAX_STALLED_CLICKS and says what's on the step."""
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.ACTION_DELAY_SECONDS", 0)
+    posting = JobPosting(
+        job_id="1", title="X", company="Y", url=f"file://{NEXT_DOES_NOT_ADVANCE_FIXTURE_PATH}", description=""
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        LinkedInAdapter(playwright_page).fill_and_submit(
+            posting, answer_question=lambda label: "Springfield", resume_path=None, cover_letter_text=None, dry_run=True
+        )
+
+    message = str(excinfo.value)
+    assert "clicking Next/Review 2 times in a row left it on the same step" in message
+    assert "no Next/Review/Submit button found" not in message
+    assert "'City' (text, required, filled)" in message
+    assert "'I agree to the privacy policy' (checkbox, unchecked)" in message
+    assert "Springfield" not in message  # states, never values
+    assert playwright_page.evaluate("window.__nextClicks") == 2
