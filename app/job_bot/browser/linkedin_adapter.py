@@ -272,6 +272,10 @@ ACTION_DELAY_SECONDS = 1.0
 # decoy dialog does, short enough to stay well under fill_and_submit()'s
 # own 10s dialog.wait_for() budget that follows it.
 _DIALOG_POLL_TIMEOUT_SECONDS = 4.0
+# Clicks on Easy Apply before giving up on its dialog, and the wait for the
+# dialog after each - see _click_easy_apply().
+EASY_APPLY_CLICK_ATTEMPTS = 2
+EASY_APPLY_DIALOG_WAIT_SECONDS = 5.0
 _DIALOG_POLL_INTERVAL_SECONDS = 0.5
 
 RESULTS_PER_PAGE = 25
@@ -853,6 +857,41 @@ class LinkedInAdapter(JobBoardAdapter):
         external_page.wait_for_load_state("domcontentloaded")
         return external_page
 
+    def _click_easy_apply(self) -> None:
+        """Click the posting's Easy Apply button so its dialog opens.
+
+        Real failure (2026-10-05, 11 postings in 35 minutes): "Easy Apply
+        dialog never appeared ... within 10s of clicking", on the right
+        posting page - and two of those postings applied fine when retried
+        15 minutes later. The button renders before LinkedIn's app wires it
+        up, and `.first` of a text match can also be another element that
+        happens to say "Easy Apply" (a similar-jobs card) rendered earlier.
+        So: the first *visible* match, after it's visible, and one more
+        click if no dialog opens within EASY_APPLY_DIALOG_WAIT_SECONDS.
+        """
+        buttons = self._page.locator(SELECTORS["easy_apply_button"])
+        button = buttons.filter(visible=True).first
+        try:
+            button.wait_for(state="visible", timeout=15000)
+        except PlaywrightTimeoutError:
+            button = buttons.first  # let the click below report it, as before
+        for attempt in range(EASY_APPLY_CLICK_ATTEMPTS):
+            button.click()
+            if self._a_dialog_opened_within(EASY_APPLY_DIALOG_WAIT_SECONDS):
+                return
+            if attempt + 1 < EASY_APPLY_CLICK_ATTEMPTS:
+                logger.warning("Clicking Easy Apply opened nothing within %gs - clicking again", EASY_APPLY_DIALOG_WAIT_SECONDS)
+
+    def _a_dialog_opened_within(self, seconds: float) -> bool:
+        deadline = time.monotonic() + seconds
+        dialogs = self._page.locator(SELECTORS["dialog"]).filter(visible=True)
+        while True:
+            if dialogs.count() > 0:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.25)
+
     def _find_easy_apply_dialog(self) -> Locator:
         """Picks the actual Easy Apply modal out of every div[role="dialog"]
         currently on the page, rather than blindly taking the first one.
@@ -933,8 +972,7 @@ class LinkedInAdapter(JobBoardAdapter):
         before_submit: Callable[[], None] | None = None,
     ) -> bool:
         self._open_posting_page(posting)
-        self._page.locator(SELECTORS["easy_apply_button"]).first.click()
-        time.sleep(ACTION_DELAY_SECONDS)
+        self._click_easy_apply()
 
         dialog = self._find_easy_apply_dialog()
         try:

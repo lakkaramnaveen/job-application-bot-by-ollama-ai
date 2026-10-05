@@ -2110,3 +2110,20 @@ def test_a_choice_question_whose_answer_matches_is_asked_once(playwright_page):
         playwright_page.locator("[role=dialog]"), lambda q: asked.append(q) or "No"
     )
     assert asked == ["Willing to relocate?"] and playwright_page.locator("#n").is_checked()
+
+
+def test_easy_apply_is_clicked_again_when_the_first_click_opens_nothing(playwright_page, monkeypatch):
+    """Real failure (2026-10-05, 11 postings in 35 minutes): the click landed
+    before LinkedIn wired up the button, no dialog opened, and the posting
+    failed - two of them applied fine when retried later."""
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.EASY_APPLY_DIALOG_WAIT_SECONDS", 0.5)
+    fixture = Path(__file__).parent / "fixtures" / "easy_apply_button_not_ready_on_first_click.html"
+    posting = JobPosting(job_id="8", title="X", company="Acme", url=f"file://{fixture}", description="")
+
+    submitted = LinkedInAdapter(playwright_page).fill_and_submit(
+        posting, answer_question=lambda label: "Springfield", resume_path=None, cover_letter_text=None, dry_run=True
+    )
+
+    assert submitted is False  # dry run: reached Submit without clicking it
+    assert playwright_page.evaluate("window.__clicks") == 2
+    assert playwright_page.locator("#c").input_value() == "Springfield"

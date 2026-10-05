@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: Easy Apply ignores the first click</title></head>
+<!-- Live 2026-10-05: the button rendered before LinkedIn's app wired it up,
+     so a click could open nothing; the same posting applied fine later. A
+     hidden "Easy Apply" element earlier in the DOM stands in for text
+     matches elsewhere on the page. -->
+<body>
+  <div style="display:none"><button>Easy Apply</button></div>
+  <button id="apply" aria-label="Easy Apply to X at Acme">Easy Apply</button>
+  <script>
+    window.__clicks = 0;
+    document.getElementById('apply').addEventListener('click', () => {
+      window.__clicks++;
+      if (window.__clicks < 2) return;  // not wired up yet
+      const d = document.createElement('div');
+      d.setAttribute('role', 'dialog');
+      d.innerHTML = '<label for="c">City</label><input id="c" type="text" />'
+        + '<button aria-label="Submit application">Submit application</button>';
+      document.body.appendChild(d);
+    });
+  </script>
+</body>
+</html>
