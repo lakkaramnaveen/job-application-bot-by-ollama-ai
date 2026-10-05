@@ -4306,3 +4306,27 @@ def test_report_funnel_prints_the_funnel_from_the_audit_log(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Funnel, last 1 day(s):" in out
     assert "  applied               1  (100% of fits)" in out
+
+
+def test_doctor_reports_a_linkedin_back_off_still_in_effect(tmp_path, capsys):
+    from datetime import datetime, timedelta
+
+    from job_bot.pipeline.throttle_state import ThrottleState
+
+    settings = make_settings(tmp_path)
+    cmd_doctor(settings, doctor_args())
+    assert "[OK] LinkedIn accepting searches\n" in capsys.readouterr().out
+
+    state_path = settings.db_path.parent / "linkedin_throttle.json"
+    refused_at = datetime.now() - timedelta(minutes=5)
+    ThrottleState(state_path, now=lambda: refused_at).record_refusal()
+    cmd_doctor(settings, doctor_args())
+    out = capsys.readouterr().out
+    assert f"[!!] LinkedIn accepting searches - refused 1 cycle(s) in a row, most recently at {refused_at:%H:%M}" in out
+    assert f"waits until {refused_at + timedelta(minutes=20):%H:%M} before searching" in out
+
+    long_ago = datetime.now() - timedelta(hours=5)
+    state_path.unlink()
+    ThrottleState(state_path, now=lambda: long_ago).record_refusal()
+    cmd_doctor(settings, doctor_args())
+    assert "[OK] LinkedIn accepting searches - last refused at" in capsys.readouterr().out

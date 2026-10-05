@@ -186,6 +186,13 @@ def cmd_login(settings: Settings) -> None:
         print("Session saved to", settings.browser_profile_dir)
 
 
+DEFAULT_LOOP_INTERVAL_MINUTES = 20
+
+
+def _linkedin_throttle_state(settings: Settings) -> ThrottleState:
+    return ThrottleState(settings.db_path.parent / "linkedin_throttle.json")
+
+
 def _wait_out_linkedin_backoff(throttle_state: ThrottleState, args: argparse.Namespace) -> bool:
     """Honor a refusal back-off left by an earlier run before touching
     LinkedIn. --loop waits it out; a one-off run stops and says when to try
@@ -366,7 +373,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
 
     _print_run_plan(settings, args, rate_limiter, min_score)
 
-    throttle_state = ThrottleState(settings.db_path.parent / "linkedin_throttle.json")
+    throttle_state = _linkedin_throttle_state(settings)
     if not _wait_out_linkedin_backoff(throttle_state, args):
         return
 
@@ -2052,6 +2059,28 @@ def _failed_applications_log_check(settings: Settings) -> tuple[str, bool, str]:
     return (label, True, str(settings.failed_applications_log_path))
 
 
+def _linkedin_backoff_check(settings: Settings) -> tuple[str, bool, str]:
+    """Whether a refusal back-off from an earlier run is still in effect -
+    the next `job-bot run` would wait it out (--loop) or stop (a one-off
+    run) before searching. See ThrottleState. Uses the default
+    --loop-interval-minutes; a run with a different interval waits
+    proportionally longer or shorter."""
+    state = _linkedin_throttle_state(settings)
+    label = "LinkedIn accepting searches"
+    resume_at = state.resume_at(DEFAULT_LOOP_INTERVAL_MINUTES)
+    last = state.last_refused_at()
+    if resume_at is not None and last is not None:
+        return (
+            label,
+            False,
+            f"refused {state.streak()} cycle(s) in a row, most recently at {last:%H:%M}; "
+            f"`job-bot run` waits until {resume_at:%H:%M} before searching",
+        )
+    if last is not None:
+        return label, True, f"last refused at {last:%Y-%m-%d %H:%M}, back-off over"
+    return label, True, ""
+
+
 def _tracker_db_check(settings: Settings) -> tuple[str, bool, str]:
     """Every other command opens the tracker eagerly (Tracker.__init__()'s
     _init_db() runs a schema migration on every construction), so a
@@ -2171,6 +2200,7 @@ def cmd_doctor(settings: Settings, args: argparse.Namespace) -> None:
         session_detail = str(settings.browser_profile_dir)
     checks.append(("LinkedIn session saved", session_ready and signed_out_at is None, session_detail))
     checks.append(_browser_profile_private_check(settings))
+    checks.append(_linkedin_backoff_check(settings))
 
     gmail_ready = settings.gmail_credentials_path.exists()
     checks.append(
@@ -2296,7 +2326,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--loop-interval-minutes",
         type=int,
-        default=20,
+        default=DEFAULT_LOOP_INTERVAL_MINUTES,
         help=(
             "Minutes to wait before retrying in --loop mode, but only after a cycle that applied "
             "to nothing (default: 20) - a cycle that did apply to something starts the next one "
