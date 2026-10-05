@@ -1959,3 +1959,26 @@ def test_the_rate_limit_wait_tells_the_user_to_leave_the_bot_running(playwright_
         LinkedInAdapter(playwright_page)._goto_with_retry("https://www.linkedin.com/jobs/search/?keywords=x")
 
     assert "retrying in 30s (LinkedIn's slow-down usually clears by then - leave the bot running)" in caplog.text
+
+
+def test_search_scrolls_the_results_list_to_read_every_card_on_a_page(playwright_page, monkeypatch):
+    """LinkedIn renders a results page's 25 cards a few at a time as its list
+    scrolls; reading only what's rendered on load (7-10 cards) made the
+    search load page after page in a burst to fill its pool. Scrolling reads
+    the whole page from one load."""
+    urls: list[str] = []
+    real_goto = playwright_page.goto
+
+    def fake_goto(url, **kw):
+        urls.append(url)
+        return real_goto(f"file://{Path(__file__).parent / 'fixtures' / 'search_results_lazy_list.html'}")
+
+    monkeypatch.setattr(playwright_page, "goto", fake_goto)
+    # The list renders on scroll events, a frame after each scroll - real
+    # runs wait 1.2s per step; a token wait suffices here.
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.RESULTS_SCROLL_WAIT_SECONDS", 0.1)
+
+    postings = LinkedInAdapter(playwright_page).search("x", "Remote", max_results=25)
+
+    assert len({p.job_id for p in postings}) == 25
+    assert len(urls) == 1  # one page load, not a page per handful of cards

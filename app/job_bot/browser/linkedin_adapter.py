@@ -176,6 +176,34 @@ _STEP_FIELDS_JS = """
 # refusal once.
 MAX_STALLED_CLICKS = 2
 
+# Marks the scrollable panel holding the search results (the nearest
+# scrolling ancestor of a card) for _SCROLL_RESULTS_STEP_JS; false if none.
+_MARK_RESULTS_SCROLLER_JS = """
+(selector) => {
+  const card = document.querySelector(selector);
+  let el = card && card.parentElement;
+  while (el && el !== document.body) {
+    const style = getComputedStyle(el);
+    if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 10) {
+      el.setAttribute('data-job-bot-results', '1');
+      return true;
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+"""
+
+# One scroll step down the results panel; true once it's at the end.
+_SCROLL_RESULTS_STEP_JS = """
+() => {
+  const el = document.querySelector('[data-job-bot-results]');
+  if (!el) return true;
+  el.scrollBy(0, el.clientHeight * 0.8);
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - 5;
+}
+"""
+
 _FIELD_ERRORS_JS = """(dialog) => {
   const counter = /\\d[\\d,]*\\s*\\/\\s*\\d[\\d,]*|\\d[\\d,]* of \\d[\\d,]* characters/gi;
   const out = [];
@@ -218,7 +246,18 @@ _DIALOG_POLL_TIMEOUT_SECONDS = 4.0
 _DIALOG_POLL_INTERVAL_SECONDS = 0.5
 
 RESULTS_PER_PAGE = 25
-MAX_SEARCH_PAGES = 8  # hard cap so a huge search can't page forever
+# Result pages one search may load. Was 8: LinkedIn renders only the first
+# ~7-10 of a page's 25 cards until its list is scrolled, so the search
+# loaded page after page, seconds apart, to fill its pool - the burst of
+# reloads a person never makes. Pages are now scrolled through first (all
+# 25 cards, confirmed live 2026-10-05), so 3 pages is 75 postings.
+MAX_SEARCH_PAGES = 3
+# Pause before loading another results page, like a person reading the list.
+SEARCH_PAGE_PAUSE_SECONDS = 8.0
+# Scrolling the results list: steps (each ~0.8 of the visible list) and the
+# wait for LinkedIn to render the newly visible cards.
+MAX_RESULTS_SCROLL_STEPS = 30
+RESULTS_SCROLL_WAIT_SECONDS = 1.2
 NAVIGATION_RETRIES = 2
 
 # How long to wait before retrying a load LinkedIn rate limited (HTTP 429)
@@ -531,6 +570,8 @@ class LinkedInAdapter(JobBoardAdapter):
         for page_num in range(MAX_SEARCH_PAGES):
             if len(postings) >= max_results:
                 break
+            if page_num > 0:
+                time.sleep(SEARCH_PAGE_PAUSE_SECONDS)
 
             start = page_num * RESULTS_PER_PAGE
             url = (
@@ -555,7 +596,9 @@ class LinkedInAdapter(JobBoardAdapter):
                     raise LinkedInSignedOut(self._page.url) from None
                 break  # no more results
 
-            cards = self._page.locator(SELECTORS["job_cards"]).all()
+            # Every card on the page, scrolled into rendering a few at a
+            # time - see _scroll_results_list().
+            cards = self._scroll_results_list()
             if not cards:
                 break
 
@@ -587,6 +630,52 @@ class LinkedInAdapter(JobBoardAdapter):
                 break
 
         return postings
+
+    def _scroll_results_list(self) -> list[Locator]:
+        """All of this results page's cards. LinkedIn renders a page's 25
+        results a few at a time as its list panel scrolls (7 of 25 on load,
+        live 2026-10-05), and may unrender cards scrolled past - so this
+        scrolls the panel in steps, keeping the first rendering of each
+        job id it sees, until the panel's end.
+
+        Each card is captured as a locator pinned to its job id, so it still
+        resolves after the list re-renders; a card scrolled out of rendering
+        again is scrolled back into view when it's read. Pages without a
+        scrollable list (the test fixtures, an all-fitting list) just return
+        the rendered cards.
+        """
+        selector = SELECTORS["job_cards"]
+
+        def rendered_ids() -> list[str]:
+            ids = self._page.locator(selector).evaluate_all("els => els.map((e) => e.getAttribute('data-job-id'))")
+            return [str(i) for i in ids if i]
+
+        seen: list[str] = []
+
+        def note() -> None:
+            for job_id in rendered_ids():
+                if job_id not in seen:
+                    seen.append(job_id)
+
+        note()
+        try:
+            found = self._page.evaluate(_MARK_RESULTS_SCROLLER_JS, selector)
+        except PlaywrightError:
+            found = False
+        if found:
+            for _ in range(MAX_RESULTS_SCROLL_STEPS):
+                try:
+                    at_end = self._page.evaluate(_SCROLL_RESULTS_STEP_JS)
+                except PlaywrightError:
+                    break
+                time.sleep(RESULTS_SCROLL_WAIT_SECONDS)
+                note()
+                if at_end:
+                    break
+            # Cards rendered by the last step's scroll handling.
+            time.sleep(RESULTS_SCROLL_WAIT_SECONDS)
+            note()
+        return [self._page.locator(f'{selector}[data-job-id="{job_id}"]').first for job_id in seen]
 
     def _parse_job_card(self, card: Locator, job_id: str, include_external: bool) -> JobPosting | None:
         """Builds a JobPosting from one search-result card, or returns None

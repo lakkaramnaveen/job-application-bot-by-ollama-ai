@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: search results rendered as the list scrolls</title>
+<style>#list { height: 200px; overflow-y: auto; } .card { height: 90px; }</style></head>
+<body>
+  <!-- Like LinkedIn's list (2026-10-05): 25 results, only the first few
+       rendered until the panel is scrolled. -->
+  <div id="list"></div>
+  <script>
+    const list = document.getElementById('list');
+    const TOTAL = 25;
+    let rendered = 0;
+    function render(upTo) {
+      while (rendered < Math.min(upTo, TOTAL)) {
+        const id = String(500 + rendered);
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.setAttribute('data-job-id', id);
+        card.innerHTML = `<a href="https://www.linkedin.com/jobs/view/${id}/">Engineer ${id}</a>`
+          + '<div class="artdeco-entity-lockup__subtitle">Acme</div>';
+        list.appendChild(card);
+        rendered++;
+      }
+      const spacer = document.getElementById('spacer') || Object.assign(document.createElement('div'), {id: 'spacer'});
+      spacer.style.height = ((TOTAL - rendered) * 90) + 'px';
+      list.appendChild(spacer);
+    }
+    render(3);
+    // Polled, not a scroll listener: headless Chromium under load can delay
+    // scroll events past the test's short waits.
+    setInterval(() => render(Math.ceil((list.scrollTop + list.clientHeight) / 90) + 1), 10);
+  </script>
+</body>
+</html>
