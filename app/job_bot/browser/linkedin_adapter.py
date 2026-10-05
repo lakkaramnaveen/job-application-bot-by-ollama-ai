@@ -205,8 +205,16 @@ _SCROLL_RESULTS_STEP_JS = """
 }
 """
 
-# LinkedIn's Resume step: one radio per resume in the user's library.
-_RESUME_CARD_SELECTOR = 'input[id^="jobsDocumentCardToggle"]'
+# LinkedIn's Resume step: one radio per resume in the user's library. Its
+# 2026-10 markup has no stable ids - each radio's aria-label is the file
+# name ("Jane Doe Resume.docx"), live 2026-10-05; the older markup's radios
+# had ids starting "jobsDocumentCardToggle".
+_RESUME_CARD_SELECTOR = ", ".join(
+    [
+        'input[id^="jobsDocumentCardToggle"]',
+        *(f'input[type="radio"][aria-label$=".{ext}" i]' for ext in ("pdf", "docx", "doc")),
+    ]
+)
 # How long to wait for an uploaded resume to show up as the selected card.
 RESUME_UPLOAD_WAIT_SECONDS = 10.0
 
@@ -218,7 +226,8 @@ _FIND_RESUME_CARD_JS = """
   return radios.findIndex((radio) => {
     const label = radio.id ? dialog.querySelector(`label[for="${CSS.escape(radio.id)}"]`) : null;
     const card = radio.closest('div');
-    const text = ((label && label.innerText) || '') + ' ' + ((card && card.innerText) || '');
+    const text = (radio.getAttribute('aria-label') || '') + ' ' + ((label && label.innerText) || '') + ' '
+      + ((card && card.innerText) || '');
     return text.toLowerCase().includes(fileName);
   });
 }
@@ -1174,6 +1183,7 @@ class LinkedInAdapter(JobBoardAdapter):
                 if not card.is_checked():
                     self._check_hidden_radio(card)
                 return
+        uploaded = False
         file_inputs = dialog.locator('input[type="file"]')
         # Skip file inputs that already have a resume selected (LinkedIn
         # often pre-fills with a previously uploaded resume).
@@ -1206,13 +1216,39 @@ class LinkedInAdapter(JobBoardAdapter):
                 continue
             file_input.set_input_files(resume_path)
             file_input.evaluate("el => el.setAttribute('data-job-bot-uploaded', '1')")
-            if has_cards and not self._wait_for_selected_resume(dialog, file_name):
-                logger.warning(
-                    "Uploaded %s, but LinkedIn didn't show it as the selected resume within %gs - "
-                    "this application may go out with the previously selected resume.",
-                    file_name,
-                    RESUME_UPLOAD_WAIT_SECONDS,
-                )
+            uploaded = True
+        if has_cards and not uploaded:
+            # The 2026-10 Resume step has no file input until its "Upload
+            # resume" button is clicked - it creates one and opens a file
+            # chooser (live 2026-10-05), which Playwright intercepts.
+            uploaded = self._upload_via_button(dialog, resume_path)
+        if has_cards and uploaded and not self._wait_for_selected_resume(dialog, file_name):
+            logger.warning(
+                "Uploaded %s, but LinkedIn didn't show it as the selected resume within %gs - "
+                "this application may go out with the previously selected resume.",
+                file_name,
+                RESUME_UPLOAD_WAIT_SECONDS,
+            )
+        elif has_cards and not uploaded:
+            logger.warning(
+                "Found LinkedIn's resume list but no way to upload %s - this application goes out "
+                "with the previously selected resume.",
+                file_name,
+            )
+
+    @staticmethod
+    def _upload_via_button(dialog: Locator, resume_path: str) -> bool:
+        button = dialog.get_by_role("button", name=re.compile(r"upload resume", re.IGNORECASE)).first
+        if button.count() == 0:
+            return False
+        try:
+            with dialog.page.expect_file_chooser(timeout=5000) as chooser:
+                button.click()
+            chooser.value.set_files(resume_path)
+        except PlaywrightError as e:
+            logger.warning("Couldn't upload the resume through LinkedIn's Upload button: %s", _first_line(e))
+            return False
+        return True
 
     @staticmethod
     def _resume_card_named(dialog: Locator, file_name: str) -> Locator | None:

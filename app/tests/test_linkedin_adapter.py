@@ -1996,3 +1996,67 @@ def test_search_scrolls_the_results_list_to_read_every_card_on_a_page(playwright
 
     assert len({p.job_id for p in postings}) == 25
     assert len(urls) == 1  # one page load, not a page per handful of cards
+
+
+RESUME_RADIOS_2026_10_FIXTURE_PATH = (
+    Path(__file__).parent / "fixtures" / "easy_apply_form_resume_radios_2026_10.html"
+)
+
+
+def test_a_tailored_resume_is_uploaded_through_linkedins_upload_button(playwright_page, tmp_path, caplog):
+    """Live (2026-10-05): LinkedIn's Resume step changed - resumes are radios
+    labeled only by aria-label (the file name), and there's no file input
+    until "Upload resume" is clicked. The adapter recognized neither, so no
+    tailored resume was ever uploaded: every application went out with the
+    preselected, last-used one."""
+    resume = tmp_path / "Jane Doe Resume - Acme.docx"
+    resume.write_bytes(b"tailored")
+    posting = JobPosting(
+        job_id="7",
+        title="X",
+        company="Acme",
+        url=f"file://{RESUME_RADIOS_2026_10_FIXTURE_PATH}",
+        description="",
+    )
+
+    with caplog.at_level("WARNING"):
+        LinkedInAdapter(playwright_page).fill_and_submit(
+            posting,
+            answer_question=lambda label: "",
+            resume_path=str(resume),
+            cover_letter_text=None,
+            dry_run=True,
+        )
+
+    assert playwright_page.evaluate("window.__choosers") == 1
+    checked = playwright_page.evaluate(
+        "[...document.querySelectorAll('input[type=radio]:checked')].map(r => r.getAttribute('aria-label'))"
+    )
+    assert checked == [resume.name]
+    assert "previously selected resume" not in caplog.text
+
+
+def test_a_resume_already_in_linkedins_library_is_selected_not_uploaded_again(playwright_page, tmp_path):
+    resume = tmp_path / "Jane_Doe_Resume.pdf"
+    resume.write_bytes(b"pdf")
+    posting = JobPosting(
+        job_id="7",
+        title="X",
+        company="Acme",
+        url=f"file://{RESUME_RADIOS_2026_10_FIXTURE_PATH}",
+        description="",
+    )
+
+    LinkedInAdapter(playwright_page).fill_and_submit(
+        posting,
+        answer_question=lambda label: "",
+        resume_path=str(resume),
+        cover_letter_text=None,
+        dry_run=True,
+    )
+
+    assert playwright_page.evaluate("window.__choosers") == 0
+    checked = playwright_page.evaluate(
+        "[...document.querySelectorAll('input[type=radio]:checked')].map(r => r.getAttribute('aria-label'))"
+    )
+    assert checked == ["Jane_Doe_Resume.pdf"]

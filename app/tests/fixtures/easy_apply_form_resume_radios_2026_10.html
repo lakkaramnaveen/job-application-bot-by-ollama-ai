@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Fixture: LinkedIn's 2026-10 Resume step</title></head>
+<!--
+  As captured live 2026-10-05: each resume in the user's library is a radio
+  whose aria-label is the file name (generated ids, empty <label>), the last
+  one used preselected - and no input[type=file] until "Upload resume" is
+  clicked, which creates one and opens a file chooser.
+-->
+<body>
+  <button aria-label="Easy Apply">Easy Apply</button>
+
+  <div role="dialog" aria-label="Apply to Acme">
+    <h3>Resume*</h3>
+    <p>Select or upload a resume in DOC, DOCX, or PDF format that is less than 2MB</p>
+    <div id="cards">
+      <div aria-label="Last Used Resume (1).pdf"><input id="_r_e_" aria-label="Last Used Resume (1).pdf" type="radio" name="radio-group-_r_d_" checked /><label for="_r_e_"></label></div>
+      <div aria-label="Jane_Doe_Resume.pdf"><input id="_r_f_" aria-label="Jane_Doe_Resume.pdf" type="radio" name="radio-group-_r_d_" /><label for="_r_f_"></label></div>
+    </div>
+    <button id="upload">Upload resume</button>
+    <button aria-label="Submit application">Submit application</button>
+  </div>
+  <script>
+    window.__choosers = 0;
+    document.getElementById('upload').addEventListener('click', () => {
+      window.__choosers++;
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.style.display = 'none';
+      input.addEventListener('change', () => {
+        const name = input.files[0].name;
+        const id = '_r_new_';
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `<input id="${id}" type="radio" name="radio-group-_r_d_" /><label for="${id}"></label>`;
+        wrap.firstChild.setAttribute('aria-label', name);
+        document.getElementById('cards').prepend(wrap);
+        document.getElementById(id).checked = true;
+      });
+      document.body.appendChild(input);
+      input.click();
+    });
+  </script>
+</body>
+</html>
