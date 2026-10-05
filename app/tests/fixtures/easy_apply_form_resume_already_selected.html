@@ -27,6 +27,17 @@
 
     <button>Upload resume</button>
     <input id="resume-upload" type="file" class="hidden" />
+    <script>
+      // Like LinkedIn: an uploaded resume becomes a new card, selected.
+      document.getElementById('resume-upload').addEventListener('change', (e) => {
+        const name = e.target.files[0].name;
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `<input id="jobsDocumentCardToggle-new" type="radio" name="resume-card" />`
+          + `<label for="jobsDocumentCardToggle-new">${name}</label>`;
+        e.target.before(wrap);
+        document.getElementById('jobsDocumentCardToggle-new').checked = true;
+      });
+    </script>
 
     <button aria-label="Submit application">Submit application</button>
   </div>

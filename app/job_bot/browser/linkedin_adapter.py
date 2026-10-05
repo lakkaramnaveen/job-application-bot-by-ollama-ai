@@ -26,6 +26,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
+from pathlib import Path
 from urllib.parse import quote, urljoin
 
 from playwright.sync_api import Error as PlaywrightError
@@ -201,6 +202,25 @@ _SCROLL_RESULTS_STEP_JS = """
   if (!el) return true;
   el.scrollBy(0, el.clientHeight * 0.8);
   return el.scrollTop + el.clientHeight >= el.scrollHeight - 5;
+}
+"""
+
+# LinkedIn's Resume step: one radio per resume in the user's library.
+_RESUME_CARD_SELECTOR = 'input[id^="jobsDocumentCardToggle"]'
+# How long to wait for an uploaded resume to show up as the selected card.
+RESUME_UPLOAD_WAIT_SECONDS = 10.0
+
+# Index of the resume card (radio) whose label or card text shows the file
+# name - -1 if none.
+_FIND_RESUME_CARD_JS = """
+(dialog, [selector, fileName]) => {
+  const radios = [...dialog.querySelectorAll(selector)];
+  return radios.findIndex((radio) => {
+    const label = radio.id ? dialog.querySelector(`label[for="${CSS.escape(radio.id)}"]`) : null;
+    const card = radio.closest('div');
+    const text = ((label && label.innerText) || '') + ' ' + ((card && card.innerText) || '');
+    return text.toLowerCase().includes(fileName);
+  });
 }
 """
 
@@ -1138,8 +1158,22 @@ class LinkedInAdapter(JobBoardAdapter):
         # silently piling up duplicate copies of the same document in the
         # user's LinkedIn resume library (5 identical entries were found
         # there from repeated runs before this fix).
-        if dialog.locator('input[id^="jobsDocumentCardToggle"]:checked').count() > 0:
-            return
+        #
+        # But skipping whenever *any* card was selected meant a tailored
+        # resume was never uploaded at all (2026-10-05: 97 tailored .docx
+        # files generated, none sent) - LinkedIn always preselects the last
+        # resume used. So: skip only if the selected card *is* this file;
+        # select its card if it's there but not selected; otherwise upload
+        # it (each tailored resume has its own file name) and check that
+        # LinkedIn selected it.
+        file_name = Path(resume_path).name
+        has_cards = dialog.locator(_RESUME_CARD_SELECTOR).count() > 0
+        if has_cards:
+            card = self._resume_card_named(dialog, file_name)
+            if card is not None:
+                if not card.is_checked():
+                    self._check_hidden_radio(card)
+                return
         file_inputs = dialog.locator('input[type="file"]')
         # Skip file inputs that already have a resume selected (LinkedIn
         # often pre-fills with a previously uploaded resume).
@@ -1172,6 +1206,31 @@ class LinkedInAdapter(JobBoardAdapter):
                 continue
             file_input.set_input_files(resume_path)
             file_input.evaluate("el => el.setAttribute('data-job-bot-uploaded', '1')")
+            if has_cards and not self._wait_for_selected_resume(dialog, file_name):
+                logger.warning(
+                    "Uploaded %s, but LinkedIn didn't show it as the selected resume within %gs - "
+                    "this application may go out with the previously selected resume.",
+                    file_name,
+                    RESUME_UPLOAD_WAIT_SECONDS,
+                )
+
+    @staticmethod
+    def _resume_card_named(dialog: Locator, file_name: str) -> Locator | None:
+        """The resume-card radio whose card shows `file_name`, if any."""
+        index = dialog.evaluate(_FIND_RESUME_CARD_JS, [_RESUME_CARD_SELECTOR, file_name.casefold()])
+        if index is None or index < 0:
+            return None
+        return dialog.locator(_RESUME_CARD_SELECTOR).nth(int(index))
+
+    def _wait_for_selected_resume(self, dialog: Locator, file_name: str) -> bool:
+        deadline = time.monotonic() + RESUME_UPLOAD_WAIT_SECONDS
+        while True:
+            card = self._resume_card_named(dialog, file_name)
+            if card is not None and card.is_checked():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.5)
 
     @classmethod
     def _looks_like_resume_file_field(cls, label: str) -> bool:

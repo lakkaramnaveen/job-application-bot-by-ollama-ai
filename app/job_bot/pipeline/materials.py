@@ -64,7 +64,18 @@ def prepare_materials(
     cover_letter = generate_cover_letter(provider, resume_text, description, posting.company)
     write_tailored_resume(applications_dir, posting.job_id, tailored, company=posting.company, title=posting.title)
     tailored_resume_path = write_tailored_resume_docx(
-        applications_dir, posting.job_id, resume_text, tailored, company=posting.company, title=posting.title
+        applications_dir,
+        posting.job_id,
+        resume_text,
+        tailored,
+        company=posting.company,
+        title=posting.title,
+        # "<the user's resume name> - <Company>.docx": a sensible name for
+        # an employer to see, and distinct per company - the Easy Apply
+        # adapter uploads it unless a card with that exact name is already
+        # selected (a same-named file every time would read as "already
+        # uploaded" and never be sent).
+        file_stem=f"{resume_path.stem} - {posting.company}",
     )
     write_cover_letter(applications_dir, posting.job_id, cover_letter, company=posting.company, title=posting.title)
     audit.log("generated_materials", job_id=posting.job_id)

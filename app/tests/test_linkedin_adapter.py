@@ -1080,31 +1080,45 @@ def test_resume_is_not_uploaded_to_a_differently_labeled_file_field(playwright_p
     assert uploaded == RESUME_FIXTURE_PATH.name
 
 
-def test_resume_is_not_reuploaded_when_linkedin_already_has_one_selected(playwright_page):
-    """Real-world bug this guards against: LinkedIn's "Resume" step shows a
-    card list of previously uploaded resumes with one already selected, but
-    still keeps a hidden input[type="file"] on the page regardless (behind
-    the "Upload resume" button). Before this check existed, that hidden
-    input was blindly filled on every single application - confirmed live,
-    this silently added a duplicate copy of the same resume document to the
-    user's LinkedIn resume library each time (5 identical entries had
-    accumulated there from repeated runs).
-    """
+def test_resume_is_not_reuploaded_when_its_card_is_already_selected(playwright_page, tmp_path):
+    """LinkedIn's Resume step lists previously uploaded resumes, one already
+    selected, and still keeps a hidden input[type="file"] on the page.
+    Filling that input every application added a duplicate of the same
+    resume to the user's LinkedIn library each time (5 identical entries,
+    live). So the same file, already selected, isn't uploaded again."""
+    resume = tmp_path / "Jane_Doe_Resume.pdf"
+    resume.write_bytes(RESUME_FIXTURE_PATH.read_bytes())
     posting = JobPosting(
         job_id="3d", title="X", company="Y", url=f"file://{RESUME_ALREADY_SELECTED_FIXTURE_PATH}", description=""
     )
-    adapter = LinkedInAdapter(playwright_page)
 
-    adapter.fill_and_submit(
-        posting,
-        answer_question=lambda label: "",
-        resume_path=str(RESUME_FIXTURE_PATH),
-        cover_letter_text=None,
-        dry_run=True,
+    LinkedInAdapter(playwright_page).fill_and_submit(
+        posting, answer_question=lambda label: "", resume_path=str(resume), cover_letter_text=None, dry_run=True
     )
 
-    file_count = playwright_page.evaluate("document.getElementById('resume-upload').files.length")
-    assert file_count == 0
+    assert playwright_page.evaluate("document.getElementById('resume-upload').files.length") == 0
+
+
+def test_a_tailored_resume_is_uploaded_and_selected_over_the_preselected_one(playwright_page, tmp_path, caplog):
+    """Real gap (2026-10-05): with any resume card preselected - LinkedIn
+    always preselects the last one used - the upload was skipped, so none of
+    97 tailored resumes was ever sent. A different file is uploaded, and
+    LinkedIn's new card for it ends up selected."""
+    resume = tmp_path / "Jane Doe Resume - Acme.docx"
+    resume.write_bytes(b"tailored")
+    posting = JobPosting(
+        job_id="3d", title="X", company="Y", url=f"file://{RESUME_ALREADY_SELECTED_FIXTURE_PATH}", description=""
+    )
+
+    with caplog.at_level("WARNING"):
+        LinkedInAdapter(playwright_page).fill_and_submit(
+            posting, answer_question=lambda label: "", resume_path=str(resume), cover_letter_text=None, dry_run=True
+        )
+
+    assert playwright_page.evaluate("document.getElementById('resume-upload').files[0].name") == resume.name
+    assert playwright_page.evaluate("document.getElementById('jobsDocumentCardToggle-new').checked") is True
+    assert playwright_page.evaluate("document.getElementById('jobsDocumentCardToggle-ember1').checked") is False
+    assert "didn't show it as the selected resume" not in caplog.text
 
 
 def test_resume_is_not_uploaded_when_a_second_file_field_is_ambiguous(playwright_page):

@@ -2,6 +2,7 @@
 posting - see job_bot/pipeline/materials.py."""
 
 import json
+from pathlib import Path
 
 from job_bot.browser.base_adapter import JobPosting
 from job_bot.models.schemas import CoverLetter, TailoredResume
@@ -49,3 +50,32 @@ def test_writes_records_and_returns_the_materials(tmp_path):
     assert tracker.get_resume_generation("j1")["summary"] == "Backend engineer."
     assert any((tmp_path / "applications").rglob("*"))  # reference copies written
     assert [json.loads(line)["action"] for line in audit_path.read_text().splitlines()] == ["generated_materials"]
+
+
+def test_the_tailored_resume_is_named_for_the_employer_and_distinct_per_company(tmp_path, monkeypatch):
+    """Every tailored resume used to be "tailored_resume.docx" - the name an
+    employer saw, and identical across applications, so the Easy Apply step
+    couldn't tell a new tailored file from one already in LinkedIn's library."""
+
+    def fake_build(resume_text, tailored, output_path):
+        output_path.write_bytes(b"docx")
+        return True
+
+    monkeypatch.setattr("job_bot.generation.artifacts.build_tailored_resume_docx", fake_build)
+    resume = tmp_path / "Jane Doe Resume.docx"
+    resume.write_bytes(b"original")
+
+    materials = prepare_materials(
+        POSTING,
+        "We need a Python backend engineer.",
+        provider=FakeModel(),
+        resume_text="resume text",
+        resume_path=resume,
+        applications_dir=tmp_path / "applications",
+        tracker=Tracker(tmp_path / "t.sqlite3"),
+        audit=AuditLogger(tmp_path / "audit.log"),
+    )
+
+    uploaded = Path(materials.resume_path)
+    assert uploaded.name == f"Jane Doe Resume - {POSTING.company}.docx"
+    assert uploaded.read_bytes() == b"docx" and uploaded != resume

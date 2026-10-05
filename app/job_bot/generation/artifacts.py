@@ -87,14 +87,25 @@ def write_tailored_resume(
 
 
 def write_tailored_resume_docx(
-    base_dir: Path, job_id: str, resume_text: str, tailored: TailoredResume, *, company: str = "", title: str = ""
+    base_dir: Path,
+    job_id: str,
+    resume_text: str,
+    tailored: TailoredResume,
+    *,
+    company: str = "",
+    title: str = "",
+    file_stem: str = "tailored_resume",
 ) -> Path | None:
     """Returns the written .docx's path, or None if build_tailored_resume_docx()
     declined (resume_text's sections couldn't be confidently located) -
     callers must fall back to the user's own resume_path in that case, never
     treat None as "retry" or "error".
     """
-    path = _job_dir(base_dir, job_id, company=company, title=title) / "tailored_resume.docx"
+    # The file name is what the employer sees attached to the application,
+    # and how the Easy Apply adapter tells its resume card apart from the
+    # ones already in the user's LinkedIn library - see materials.py.
+    stem = _safe_label(file_stem, max_length=100) or "tailored_resume"
+    path = _job_dir(base_dir, job_id, company=company, title=title) / f"{stem}.docx"
     return path if build_tailored_resume_docx(resume_text, tailored, path) else None
 
 
