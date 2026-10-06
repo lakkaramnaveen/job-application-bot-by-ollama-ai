@@ -2169,3 +2169,38 @@ def test_the_unlabeled_location_typeahead_is_answered_and_a_suggestion_picked(pl
 
     assert asked == ["Enter city or location"]
     assert playwright_page.locator("#_r_i_").get_attribute("data-picked") == "Dallas, Texas, United States"
+
+
+def test_the_education_steps_unlabeled_date_selects_are_asked_from_their_context(playwright_page):
+    """Real failure (2026-10-05/06, 2 applications): an education entry with
+    no dates opens an edit form whose four required date selects each have
+    an empty <label for> - only "Dates attended" > "From"/"To" text and a
+    "Month"/"Year" placeholder nearby. They were never asked about and the
+    step never advanced. Markup from a live read-only probe."""
+    month = "".join(f"<option value='{i}'>{m}</option>" for i, m in enumerate(["January", "August", "May"], 1))
+    year = "".join(f"<option value='{y}'>{y}</option>" for y in (2020, 2016))
+    playwright_page.set_content(
+        f"""
+        <div role="dialog"><div>
+          <div><p>Dates attended</p>
+            <div><p>From</p><div>
+              <div><label for="fm"><div></div></label><div><select id="fm"><option value="">Month</option>{month}</select></div></div>
+              <div><label for="fy"><div></div></label><div><select id="fy"><option value="">Year</option>{year}</select></div></div>
+            </div></div>
+          <div><p>To</p><div>
+            <div><label for="tm"><div></div></label><div><select id="tm"><option value="">Month</option>{month}</select></div></div>
+            <div><label for="ty"><div></div></label><div><select id="ty"><option value="">Year</option>{year}</select></div></div>
+          </div></div>
+        </div></div></div>
+        """
+    )
+    answers = {
+        "Dates attended - From - Month": "August",
+        "Dates attended - From - Year": "2016",
+        "Dates attended - To - Month": "May",
+        "Dates attended - To - Year": "2020",
+    }
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(playwright_page.locator("[role=dialog]"), answers.get)
+
+    assert [playwright_page.locator(f"#{i}").input_value() for i in ("fm", "fy", "tm", "ty")] == ["2", "2016", "3", "2020"]

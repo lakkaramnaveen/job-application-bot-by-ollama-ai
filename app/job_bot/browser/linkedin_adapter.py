@@ -172,6 +172,25 @@ _STEP_FIELDS_JS = """
 }
 """
 
+# A question for a <select> with no label of any kind, from the text around
+# it: each enclosing block's own <p> heading, outermost first, then its blank
+# placeholder option. The education step's dates (live 2026-10-06) are four
+# selects under "Dates attended" > "From"/"To", each with an empty <label>
+# and a "Month"/"Year" placeholder - so "Dates attended - From - Month".
+_SELECT_CONTEXT_LABEL_JS = """
+(el) => {
+  const parts = [];
+  let node = el.parentElement;
+  for (let i = 0; i < 6 && node && !node.matches('[role=dialog], dialog, form'); i++, node = node.parentElement) {
+    const heading = [...node.children].find((c) => c.tagName === 'P' && !c.contains(el));
+    if (heading && heading.innerText.trim()) parts.unshift(heading.innerText.trim());
+  }
+  const first = el.options[0];
+  if (first && first.value === '' && first.text.trim()) parts.push(first.text.trim());
+  return parts.length > 1 ? parts.join(' - ') : '';
+}
+"""
+
 # Consecutive Next/Review clicks that left the dialog on the same step
 # before giving up - one more than 1, since a slow render can look like a
 # refusal once.
@@ -1506,7 +1525,9 @@ class LinkedInAdapter(JobBoardAdapter):
             el_id = el.get_attribute("id")
             if el_id:
                 label = el.page.locator(f'label[for="{el_id}"]')
-                if label.count() > 0:
+                # An empty <label for> (the education step's date selects,
+                # live 2026-10-06) falls through to the other sources.
+                if label.count() > 0 and label.first.inner_text().strip():
                     return LinkedInAdapter._dedupe_repeated_lines(label.first.inner_text().strip())
             legend = el.locator("legend")
             if legend.count() > 0:
@@ -1527,6 +1548,8 @@ class LinkedInAdapter(JobBoardAdapter):
             placeholder = el.get_attribute("placeholder")
             if placeholder and placeholder.strip():
                 return placeholder.strip()
+            if el.evaluate("el => el.tagName") == "SELECT":
+                return str(el.evaluate(_SELECT_CONTEXT_LABEL_JS) or "")
         except PlaywrightTimeoutError:
             pass
         return ""
