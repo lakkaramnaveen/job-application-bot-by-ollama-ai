@@ -20,6 +20,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from job_bot.browser.linkedin_adapter import (
+    EasyApplyLimitReached,
     FieldsRejected,
     LinkedInSignedOut,
     NavigationFailed,
@@ -131,6 +132,12 @@ def classify_failure(e: Exception, page: Page) -> FailureVerdict:
         return FailureVerdict(fatal=True, message=BROWSER_GONE_MESSAGE, failure_class=FailureClass.FATAL)
     if is_automation_block(e):
         return FailureVerdict(fatal=True, message=AUTOMATION_BLOCK_MESSAGE, failure_class=FailureClass.USER_ACTION)
+    if isinstance(e, EasyApplyLimitReached):
+        return FailureVerdict(
+            fatal=True,
+            message=f"{e} Stopping the run - start it again tomorrow.",
+            failure_class=FailureClass.THROTTLED,
+        )
     if isinstance(e, NavigationFailed):
         return FailureVerdict(navigation_refused=True, failure_class=FailureClass.THROTTLED)
     if isinstance(e, ModelUnavailable):
@@ -147,7 +154,7 @@ def failure_class_of(e: Exception) -> FailureClass:
     used for the per-posting verdict above, and for logging any failure."""
     if is_automation_block(e):
         return FailureClass.USER_ACTION
-    if isinstance(e, NavigationFailed | ModelUnavailable):
+    if isinstance(e, NavigationFailed | ModelUnavailable | EasyApplyLimitReached):
         return FailureClass.THROTTLED
     if isinstance(e, LinkedInSignedOut | UnansweredRequiredQuestion | FieldsRejected):
         # Signed out: `job-bot login`. A question the bot can't answer, or an

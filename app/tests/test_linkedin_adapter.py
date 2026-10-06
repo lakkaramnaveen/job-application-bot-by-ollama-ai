@@ -18,6 +18,7 @@ from job_bot.browser.linkedin_adapter import (
     DATE_POSTED_3_DAYS,
     DATE_POSTED_24H,
     RESULTS_PER_PAGE,
+    EasyApplyLimitReached,
     FieldsRejected,
     LinkedInAdapter,
     LinkedInSignedOut,
@@ -2204,3 +2205,17 @@ def test_the_education_steps_unlabeled_date_selects_are_asked_from_their_context
     LinkedInAdapter(playwright_page)._fill_visible_fields(playwright_page.locator("[role=dialog]"), answers.get)
 
     assert [playwright_page.locator(f"#{i}").input_value() for i in ("fm", "fy", "tm", "ty")] == ["2", "2016", "3", "2020"]
+
+
+def test_linkedins_daily_easy_apply_limit_notice_raises_instead_of_a_stuck_form(playwright_page):
+    """Real failure (2026-10-06, 3 applications): LinkedIn's "You reached
+    today's Easy Apply limit" notice opened in place of the form, and each
+    posting failed as stuck on a step with only 'Got it' - instead of the
+    run stopping for the day."""
+    fixture = Path(__file__).parent / "fixtures" / "easy_apply_daily_limit_reached.html"
+    posting = JobPosting(job_id="9", title="X", company="Acme", url=f"file://{fixture}", description="")
+
+    with pytest.raises(EasyApplyLimitReached, match="Easy Apply limit"):
+        LinkedInAdapter(playwright_page).fill_and_submit(
+            posting, answer_question=lambda label: "", resume_path=None, cover_letter_text=None, dry_run=True
+        )

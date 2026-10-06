@@ -5,6 +5,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from job_bot.browser.linkedin_adapter import (
+    EasyApplyLimitReached,
     FieldsRejected,
     LinkedInSignedOut,
     NavigationFailed,
@@ -33,6 +34,7 @@ class Page:
         (ClaudeProviderError("Invalid ANTHROPIC_API_KEY."), "Claude provider is misconfigured"),
         (PlaywrightError("Page.goto: Target page, context or browser has been closed"), BROWSER_GONE_MESSAGE),
         (Exception("Page.title: Connection closed while reading from the driver"), BROWSER_GONE_MESSAGE),
+        (EasyApplyLimitReached("LinkedIn says you reached today's Easy Apply limit (job 1)"), "LinkedIn says"),
     ],
 )
 def test_run_ending_failures_are_fatal_with_their_message(error, message_start):

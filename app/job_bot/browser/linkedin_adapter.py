@@ -384,6 +384,13 @@ class FieldsRejected(RuntimeError):
         super().__init__(message)
 
 
+class EasyApplyLimitReached(RuntimeError):
+    """LinkedIn's own daily Easy Apply limit - the dialog opens on "You
+    reached today's Easy Apply limit" with only a "Got it" button instead
+    of the form. Every later posting today shows the same, so the run stops.
+    """
+
+
 class UnansweredRequiredQuestion(RuntimeError):
     """A required text/radio/select question fill_and_submit() couldn't
     answer confidently and deliberately left unanswered rather than guess -
@@ -1024,6 +1031,15 @@ class LinkedInAdapter(JobBoardAdapter):
                 "stopped accepting applications since it was found, or LinkedIn's own "
                 "rendering was unusually slow this time."
             ) from e
+
+        # Real failure (2026-10-06, 3 applications): LinkedIn's daily limit
+        # notice opens in place of the form, and each posting after it
+        # failed as "stuck on a step ... buttons visible: 'Got it'".
+        if "easy apply limit" in dialog.inner_text().casefold():
+            raise EasyApplyLimitReached(
+                f"LinkedIn says you reached today's Easy Apply limit (job {posting.job_id}) - "
+                "no more Easy Apply applications go through until tomorrow."
+            )
 
         max_steps = 20  # hard cap so a stuck form can't loop forever
         stalled = 0
