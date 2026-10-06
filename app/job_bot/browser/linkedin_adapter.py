@@ -403,6 +403,9 @@ def is_signed_out_url(url: str) -> bool:
 # values. tel/email included: the native <dialog> Easy Apply modal asks for
 # "Mobile phone number" as <input type="tel">, which text/number alone missed
 # entirely - never filled, and never reported when required.
+# How long a typeahead gets to show suggestions after typing.
+TYPEAHEAD_WAIT_MS = 4000
+
 _TEXT_FIELD_SELECTOR = (
     'input[type="text"], input[type="number"], input[type="tel"], input[type="email"], textarea'
 )
@@ -1354,7 +1357,10 @@ class LinkedInAdapter(JobBoardAdapter):
                     answer = self._email_value(answer) or answer
                 elif field_type == "number" or self._asks_for_a_number(label) or self._is_a_year_count(answer):
                     answer = self._numeric_value(answer) or answer
-                text_input.fill(answer)
+                if self._is_typeahead(text_input):
+                    self._fill_typeahead(text_input, answer)
+                else:
+                    text_input.fill(answer)
 
         for group in dialog.locator("fieldset").all():
             radios = group.locator('input[type="radio"]')
@@ -1514,9 +1520,45 @@ class LinkedInAdapter(JobBoardAdapter):
             )
             if labelled_by:
                 return LinkedInAdapter._dedupe_repeated_lines(str(labelled_by))
+            # Last resort: the placeholder. LinkedIn's 2026-10 contact step
+            # has a location box with no label of any kind - only
+            # placeholder="Enter city or location" (live 2026-10-05); left
+            # unlabeled it was never filled, and the step never advanced.
+            placeholder = el.get_attribute("placeholder")
+            if placeholder and placeholder.strip():
+                return placeholder.strip()
         except PlaywrightTimeoutError:
             pass
         return ""
+
+    @staticmethod
+    def _is_typeahead(el: Locator) -> bool:
+        return el.get_attribute("data-testid") == "typeahead-input" or el.get_attribute("aria-autocomplete") == "list"
+
+    def _fill_typeahead(self, el: Locator, answer: str) -> None:
+        """Type into a search-as-you-type box and pick a suggestion - the
+        value only counts once one is chosen, as when a person does it.
+
+        Real failure (2026-10-05, 3 applications): the contact step's
+        "Enter city or location" box. Picks the suggestion containing the
+        answer's first part (e.g. "Dallas" of "Dallas, TX"), else the first
+        suggestion via ArrowDown+Enter; with no suggestions, the typed text
+        is left as is.
+        """
+        el.fill("")
+        el.press_sequentially(answer, delay=40)
+        options = self._page.locator('[role="option"]').filter(visible=True)
+        try:
+            options.first.wait_for(state="visible", timeout=TYPEAHEAD_WAIT_MS)
+        except PlaywrightTimeoutError:
+            return
+        key = answer.split(",")[0].strip().casefold()
+        for i in range(options.count()):
+            if key and key in options.nth(i).inner_text().casefold():
+                options.nth(i).click()
+                return
+        el.press("ArrowDown")
+        el.press("Enter")
 
     @staticmethod
     def _dedupe_repeated_lines(text: str) -> str:

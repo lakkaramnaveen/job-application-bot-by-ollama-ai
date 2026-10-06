@@ -2128,3 +2128,44 @@ def test_easy_apply_is_clicked_again_when_the_first_click_opens_nothing(playwrig
     assert playwright_page.evaluate("window.__clicks") == 2
     assert playwright_page.evaluate("window.__wrongClick") is None  # never the similar-jobs link
     assert playwright_page.locator("#c").input_value() == "Springfield"
+
+
+def test_the_unlabeled_location_typeahead_is_answered_and_a_suggestion_picked(playwright_page):
+    """Real failure (2026-10-05, 3 applications): the contact step's location
+    box has no label - only placeholder="Enter city or location" - and only
+    accepts a value picked from its suggestions. It was never filled and the
+    step never advanced."""
+    playwright_page.set_content(
+        """
+        <div role="dialog">
+          <input id="_r_i_" type="text" data-testid="typeahead-input" placeholder="Enter city or location"
+                 aria-autocomplete="list" autocomplete="off" value="">
+          <div id="list" role="listbox"></div>
+        </div>
+        <script>
+          const box = document.getElementById('_r_i_');
+          box.addEventListener('input', () => {
+            const list = document.getElementById('list');
+            list.innerHTML = '';
+            if (box.value.length < 3) return;
+            for (const city of ['Dallas, Texas, United States', 'Dallas Center, Iowa, United States']) {
+              const o = document.createElement('div');
+              o.setAttribute('role', 'option');
+              o.textContent = city;
+              o.onclick = () => { box.value = city; box.dataset.picked = city; list.innerHTML = ''; };
+              list.appendChild(o);
+            }
+          });
+        </script>
+        """
+    )
+    asked = []
+
+    def answer(question):
+        asked.append(question)
+        return "Dallas, TX"
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(playwright_page.locator("[role=dialog]"), answer)
+
+    assert asked == ["Enter city or location"]
+    assert playwright_page.locator("#_r_i_").get_attribute("data-picked") == "Dallas, Texas, United States"
