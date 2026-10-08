@@ -672,6 +672,12 @@ class LinkedInAdapter(JobBoardAdapter):
             # applicable jobs behind it.
             new_ids_on_this_page = 0
             for card in cards:
+                if card.count() == 0:
+                    # Unrendered since the scroll and not coming back (live
+                    # 2026-10-06, 2026-10-07): reading it would wait out a
+                    # 30s timeout and fail the whole search over one card.
+                    logger.info("Skipping a search result that is no longer on the page")
+                    continue
                 job_id = card.get_attribute("data-job-id") or ""
                 if not job_id or job_id in seen_ids:
                     continue

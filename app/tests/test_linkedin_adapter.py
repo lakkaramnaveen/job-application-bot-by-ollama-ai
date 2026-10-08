@@ -1217,6 +1217,22 @@ def test_search_skips_already_applied_and_deduplicates_across_pages(playwright_p
     assert all(p.title and p.company for p in postings)
 
 
+def test_search_passes_over_a_card_that_left_the_page_after_the_scroll(playwright_page, monkeypatch):
+    """Live (2026-10-06, 2026-10-07): a card seen while scrolling was gone
+    when read, and the 30s wait for it failed the whole search."""
+    real_goto = playwright_page.goto
+    monkeypatch.setattr(playwright_page, "goto", lambda url, **kw: real_goto(f"file://{SEARCH_FIXTURE_PATH}"))
+    adapter = LinkedInAdapter(playwright_page)
+    real_scroll = adapter._scroll_results_list
+    gone = playwright_page.locator('div[data-job-id][data-job-id="999"]').first
+    monkeypatch.setattr(adapter, "_scroll_results_list", lambda: [gone, *real_scroll()])
+    playwright_page.set_default_timeout(2000)
+
+    postings = adapter.search("python", "Remote", max_results=10)
+
+    assert {p.job_id for p in postings} == {"101", "103"}
+
+
 def test_search_does_not_count_postings_the_caller_would_skip(playwright_page, monkeypatch):
     """Real case: over half of each 25-posting pool was companies already
     applied to (MAX_APPLICATIONS_PER_COMPANY). A skipped posting must not
