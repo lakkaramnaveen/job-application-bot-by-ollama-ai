@@ -787,6 +787,25 @@ def test_dismisses_a_safety_reminder_that_renders_shortly_after_the_submit_click
     assert playwright_page.evaluate("window.__dismissed") is True
 
 
+def test_stuck_error_says_what_a_dialog_with_no_buttons_shows(playwright_page, tmp_path):
+    """Live (2026-10-06 to 2026-10-08): four applications ended "buttons
+    visible on this step: none", with no hint of what was on screen."""
+    fixture = tmp_path / "no_buttons.html"
+    fixture.write_text(
+        '<a class="jobs-apply-button" href="#" onclick="document.querySelector(\'[role=dialog]\').hidden=false">'
+        'Easy Apply</a><div role="dialog" hidden><p>Something   went wrong.\nTry again later</p></div>',
+        encoding="utf-8",
+    )
+    posting = JobPosting(job_id="7", title="X", company="Acme", url=f"file://{fixture}", description="")
+
+    with pytest.raises(RuntimeError, match="buttons visible on this step: none") as excinfo:
+        LinkedInAdapter(playwright_page).fill_and_submit(
+            posting, answer_question=lambda label: "", resume_path=None, cover_letter_text=None, dry_run=True
+        )
+
+    assert "The dialog shows: 'Something went wrong. Try again later'." in str(excinfo.value)
+
+
 def test_stuck_error_names_the_buttons_that_were_actually_on_screen(playwright_page):
     """The generic "stuck" message used to give zero lead on why - every
     occurrence looked identical in failed_applications.log regardless of
