@@ -46,4 +46,5 @@ class RunContext:
     experience_levels: list[str] | None
     max_years_experience: int | None
     require_w2: bool
+    needs_visa_sponsorship: bool
     include_external: bool

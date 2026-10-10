@@ -274,6 +274,18 @@ def test_run_passes_settings_max_years_experience_and_require_w2_to_the_scorer(t
     assert "Corp-to-Corp" in system
 
 
+def test_run_passes_settings_needs_visa_sponsorship_to_the_scorer(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, needs_visa_sponsorship=True)
+    cmd_run(settings, make_args())
+
+    assert "will not sponsor" in provider.job_match_system_prompts[0]
+
+
 def test_run_persists_the_scorers_reasoning_to_the_tracker(tmp_path, monkeypatch):
     """cmd_run must actually thread JobMatchScore.reasoning and the
     eligibility verdict/note through to Tracker.record_score() - the
@@ -1975,6 +1987,40 @@ def test_run_reuses_an_earlier_runs_score_instead_of_rescoring(tmp_path, monkeyp
 
     assert JobMatchScore not in provider.schemas_requested
     assert tracker.has_applied(JOB.job_id) is True
+
+
+def test_run_rescores_a_posting_scored_under_different_eligibility_rules(tmp_path, monkeypatch):
+    """Live (2026-10-10): a posting scored 81 under MAX_YEARS_EXPERIENCE=6
+    was applied to, unscored, two days after the cap was lowered to 2."""
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, max_years_experience=2)
+    tracker = Tracker(settings.db_path)
+    tracker.record_score(
+        JOB.job_id, JOB.title, JOB.company, JOB.url, score=90, should_apply=True, scoring_rules="max_years=6"
+    )
+    cmd_run(settings, make_args())
+
+    assert len(provider.job_match_system_prompts) == 1
+    assert tracker.get_job(JOB.job_id)["scoring_rules"] == "max_years=2"
+
+
+def test_run_reuses_a_score_made_under_the_same_eligibility_rules(tmp_path, monkeypatch):
+    provider = FakeProvider()
+    monkeypatch.setattr("job_bot.cli.get_provider", lambda settings: provider)
+    monkeypatch.setattr("job_bot.cli.browser_session", fake_browser_session)
+    monkeypatch.setattr("job_bot.cli.LinkedInAdapter", FakeAdapter)
+
+    settings = make_settings(tmp_path, max_years_experience=2, needs_visa_sponsorship=True)
+    Tracker(settings.db_path).record_score(
+        JOB.job_id, JOB.title, JOB.company, JOB.url, score=90, should_apply=True, scoring_rules="max_years=2,visa"
+    )
+    cmd_run(settings, make_args())
+
+    assert provider.job_match_system_prompts == []
 
 
 def test_run_skips_a_posting_already_skipped_in_an_earlier_run(tmp_path, monkeypatch):

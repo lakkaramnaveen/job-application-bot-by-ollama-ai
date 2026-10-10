@@ -34,7 +34,7 @@ from job_bot.data_files import CorruptDataFile
 from job_bot.generation.artifacts import file_as_applied
 from job_bot.generation.qa_answerer import answer_question
 from job_bot.llm.circuit_breaker import ModelUnavailable
-from job_bot.matching.scorer import score_job_match
+from job_bot.matching.scorer import eligibility_rules_signature, score_job_match
 from job_bot.models.schemas import CoverLetter, JobMatchScore
 from job_bot.pipeline.answers import AnswerService
 from job_bot.pipeline.context import RunContext
@@ -207,6 +207,7 @@ def run_cycle(
     min_score, exclude_keywords = ctx.min_score, ctx.exclude_keywords
     experience_levels, max_years_experience = ctx.experience_levels, ctx.max_years_experience
     require_w2, include_external = ctx.require_w2, ctx.include_external
+    needs_visa_sponsorship = ctx.needs_visa_sponsorship
 
     requested_ids: list[str] = getattr(args, "job_id", None) or []
     # This cycle's search - one of SEARCH_KEYWORDS' titles, rotated by the
@@ -221,6 +222,7 @@ def run_cycle(
         company_limit_window_days=settings.company_limit_window_days,
         exclude_keywords=exclude_keywords,
         requested_ids=requested_ids,
+        max_years_experience=max_years_experience,
     )
     is_dead_end = skip_policy.is_dead_end
 
@@ -324,6 +326,9 @@ def run_cycle(
             # between runs and a posting excluded today should still be
             # re-evaluated normally if it's removed later.
             audit.log("skip_excluded_keyword", job_id=posting.job_id, title=posting.title)
+        elif reason is SkipReason.ABOVE_LEVEL:
+            # Not persisted either, for the same reason: the cap can change.
+            audit.log("skip_above_level", job_id=posting.job_id, title=posting.title)
         return True
 
     def clears_the_bar(posting: JobPosting, description: str, existing: dict[str, Any] | None) -> bool:
@@ -336,7 +341,13 @@ def run_cycle(
         through) - a "seen" status recorded under a looser floor shouldn't
         silently keep clearing a floor that's since been raised.
         """
-        if existing is not None and existing["match_score"] is not None:
+        # A score made under different eligibility rules is not reused at
+        # all. Live (2026-10-10): two days after MAX_YEARS_EXPERIENCE went
+        # from 6 to 2, a "Senior Backend Software Engineer" scored under the
+        # old cap was applied to as "scored 81 earlier - still a fit".
+        rules = eligibility_rules_signature(max_years_experience, require_w2, needs_visa_sponsorship)
+        same_rules = existing is not None and (existing.get("scoring_rules") or "") == rules
+        if existing is not None and existing["match_score"] is not None and same_rules:
             if existing["match_score"] < min_score:
                 tracker.update_status(posting.job_id, "skipped")
                 audit.log("skip_below_min_score", job_id=posting.job_id, score=existing["match_score"])
@@ -352,6 +363,7 @@ def run_cycle(
             description,
             max_years_experience=max_years_experience,
             require_w2=require_w2,
+            needs_visa_sponsorship=needs_visa_sponsorship,
         )
         # min_score is an extra floor on top of the model's own
         # should_apply verdict, not a replacement for it - the scorer's
@@ -369,6 +381,7 @@ def run_cycle(
             eligibility=match.eligibility,
             eligibility_note=match.eligibility_note,
             missing_qualifications=match.missing_qualifications,
+            scoring_rules=rules,
         )
         audit.log("scored", job_id=posting.job_id, score=match.score, should_apply=should_apply)
         print(f"  {_score_verdict(match, should_apply, min_score)}")

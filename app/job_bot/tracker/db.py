@@ -198,6 +198,8 @@ class Tracker:
                 conn.execute("ALTER TABLE jobs ADD COLUMN missing_qualifications TEXT")
             if "apply_failures" not in columns:
                 conn.execute("ALTER TABLE jobs ADD COLUMN apply_failures INTEGER NOT NULL DEFAULT 0")
+            if "scoring_rules" not in columns:
+                conn.execute("ALTER TABLE jobs ADD COLUMN scoring_rules TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS qa_history (
@@ -250,6 +252,7 @@ class Tracker:
         eligibility: str = "",
         eligibility_note: str = "",
         missing_qualifications: list[str] | None = None,
+        scoring_rules: str = "",
     ) -> None:
         """Upsert a job together with its LLM match score and the resulting
         seen/skipped status, in one transaction - as opposed to an
@@ -288,7 +291,11 @@ class Tracker:
         the same way Tracker.get_resume_generation() decodes skills_json/
         bullets_json.
 
-        All four are optional and defaulted so every existing caller (and
+        `scoring_rules` is scorer.py's eligibility_rules_signature() for
+        the rules this score was made under - what lets a later run tell a
+        score made under looser rules from one it can still trust.
+
+        All five are optional and defaulted so every existing caller (and
         every db.sqlite3 already on disk, via the same PRAGMA table_info
         migration notes uses) keeps working.
         """
@@ -300,16 +307,17 @@ class Tracker:
                 INSERT INTO jobs (
                     job_id, title, company, url, match_score, status,
                     match_reasoning, eligibility, eligibility_note,
-                    missing_qualifications, first_seen_at
+                    missing_qualifications, scoring_rules, first_seen_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(job_id) DO UPDATE SET
                     match_score = excluded.match_score,
                     status = excluded.status,
                     match_reasoning = excluded.match_reasoning,
                     eligibility = excluded.eligibility,
                     eligibility_note = excluded.eligibility_note,
-                    missing_qualifications = excluded.missing_qualifications
+                    missing_qualifications = excluded.missing_qualifications,
+                    scoring_rules = excluded.scoring_rules
                 """,
                 (
                     job_id,
@@ -322,6 +330,7 @@ class Tracker:
                     eligibility,
                     eligibility_note,
                     json.dumps(list(missing_qualifications) if missing_qualifications else []),
+                    scoring_rules,
                     now,
                 ),
             )

@@ -405,6 +405,7 @@ def cmd_run(settings: Settings, args: argparse.Namespace) -> None:
             experience_levels=experience_levels,
             max_years_experience=max_years_experience,
             require_w2=require_w2,
+            needs_visa_sponsorship=settings.needs_visa_sponsorship,
             include_external=include_external,
         )
 

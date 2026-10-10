@@ -4,7 +4,7 @@ and search's silent filter (is_dead_end()) - see job_bot/pipeline/skip.py."""
 import pytest
 
 from job_bot.browser.base_adapter import JobPosting
-from job_bot.pipeline.skip import SkipPolicy, SkipReason
+from job_bot.pipeline.skip import SkipPolicy, SkipReason, title_is_above_level
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import Tracker
 
@@ -115,3 +115,32 @@ def test_a_company_limit_window_counts_only_recent_applications(tmp_path, blackl
     assert policy_at(20, window=14).is_dead_end(new_role) is False
     assert policy_at(10, window=14).reason(new_role) is SkipReason.COMPANY_LIMIT  # inside it
     assert policy_at(400, window=0).reason(new_role) is SkipReason.COMPANY_LIMIT  # 0 = ever, as before
+
+
+@pytest.mark.parametrize(
+    ("title", "cap", "expected"),
+    [
+        ("Senior Developer", 2, True),  # live 2026-10-10: the model passed both of these
+        ("Founding Full-Stack Engineer", 2, True),
+        ("Software Engineer III", 2, True),
+        ("Sr. Backend Engineer", 2, True),
+        ("Software Engineer", 2, False),
+        ("Junior Software Engineer", 2, False),
+        ("Engineer I", 2, False),
+        ("Leading Edge Staffing - Developer", 2, False),  # whole words only
+        ("Software Engineer III", 3, False),
+        ("Senior Developer", 3, True),
+        ("Senior Developer", 6, False),
+        ("Staff Engineer", 6, True),
+        ("Staff Engineer", None, False),
+    ],
+)
+def test_title_is_above_level(title, cap, expected):
+    assert title_is_above_level(title, cap) is expected
+
+
+def test_a_title_above_the_targeted_level_is_skipped(tracker, blacklist):
+    entry_only = policy(tracker, blacklist, max_years_experience=2)
+    assert entry_only.reason(posting("new-4", title="Senior Developer")) is SkipReason.ABOVE_LEVEL
+    assert entry_only.reason(posting("new-5", title="Developer")) is None
+    assert policy(tracker, blacklist).reason(posting("new-4", title="Senior Developer")) is None

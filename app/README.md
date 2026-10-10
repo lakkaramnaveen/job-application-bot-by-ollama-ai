@@ -91,7 +91,9 @@ links to the section with the full detail:
   Before scoring a job's fit, the LLM checks the posting for an explicit
   citizenship/permanent-residency/clearance requirement your resume gives no
   sign you hold. If it finds one, `job_bot/matching/scorer.py` forces the job
-  to be skipped in code - a high fit score elsewhere can't override it. See
+  to be skipped in code - a high fit score elsewhere can't override it. On an
+  H-1B or OPT visa, set `NEEDS_VISA_SPONSORSHIP=true` in `.env` to also skip
+  postings that won't sponsor or won't take H-1B/OPT candidates. See
   `SECURITY.md` for the full threat model.
 
 ## Setup on macOS

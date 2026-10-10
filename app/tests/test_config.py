@@ -167,6 +167,7 @@ def test_max_years_experience_and_require_w2_default_to_off(tmp_path):
 
     assert settings.max_years_experience is None
     assert settings.require_w2 is False
+    assert settings.needs_visa_sponsorship is False
 
 
 def test_every_settings_field_is_documented_in_env_example():

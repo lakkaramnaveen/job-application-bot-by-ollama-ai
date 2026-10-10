@@ -145,6 +145,13 @@ class Settings(BaseSettings):
     # matching/scorer.py's eligibility check. A posting silent on employment
     # type is not excluded by this. False (default) disables the check.
     require_w2: bool = False
+    # For a candidate on an H-1B or OPT visa: a posting that explicitly
+    # requires citizenship, a green card, or a clearance, or that says it
+    # won't sponsor or won't take H-1B/OPT candidates, is treated as
+    # ineligible whatever the resume says - see matching/scorer.py's
+    # eligibility check. A posting silent on work authorization is not
+    # excluded by this. False (default) keeps the plain citizenship check.
+    needs_visa_sponsorship: bool = False
 
     # EXPERIMENTAL, off by default - see README.md's "Applying on company
     # websites (experimental)" section and browser/external_apply_adapter.py's

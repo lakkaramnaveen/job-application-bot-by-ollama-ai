@@ -17,11 +17,13 @@ See docs/architecture.md.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Collection
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 
 from job_bot.browser.base_adapter import JobPosting
+from job_bot.matching.scorer import ENTRY_LEVEL_MAX_YEARS, SENIOR_TITLE_MIN_YEARS
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import Tracker
 
@@ -32,6 +34,29 @@ class SkipReason(Enum):
     BLACKLISTED = "blacklisted"
     COMPANY_LIMIT = "company_limit"
     EXCLUDED_KEYWORD = "excluded_keyword"
+    ABOVE_LEVEL = "above_level"
+
+
+# Title words that put a posting above the level MAX_YEARS_EXPERIENCE
+# targets - the same tiers the scorer's seniority rule asks the model to
+# apply (see matching/scorer.py). Checked here in code as well because the
+# model doesn't reliably apply them: live (2026-10-10, cap 2) it passed
+# "Senior Developer" and "Founding Full-Stack Engineer". Whole words only,
+# so "Leading" or "Staffing" don't match.
+_STAFF_TITLE_WORDS = ("staff", "principal", "lead", "director", "head", "vp", "architect")
+_SENIOR_TITLE_WORDS = ("senior", "sr")
+_MID_TITLE_WORDS = ("founding", "ii", "iii", "iv", "mid", "mid-level")
+
+
+def title_is_above_level(title: str, max_years_experience: int | None) -> bool:
+    if max_years_experience is None:
+        return False
+    words: tuple[str, ...] = _STAFF_TITLE_WORDS
+    if max_years_experience < SENIOR_TITLE_MIN_YEARS:
+        words += _SENIOR_TITLE_WORDS
+    if max_years_experience <= ENTRY_LEVEL_MAX_YEARS:
+        words += _MID_TITLE_WORDS
+    return re.search(rf"(?<![\w-])({'|'.join(words)})(?![\w-])", title.casefold()) is not None
 
 
 class SkipPolicy:
@@ -46,6 +71,7 @@ class SkipPolicy:
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         exclude_keywords: Collection[str] = (),
         requested_ids: Collection[str] = (),
+        max_years_experience: int | None = None,
     ):
         """exclude_keywords must already be casefolded. requested_ids are
         `job-bot run --job-id` postings: a deliberate retry, so the retry
@@ -58,6 +84,7 @@ class SkipPolicy:
         self._max_attempts = max_apply_attempts
         self._exclude_keywords = tuple(exclude_keywords)
         self._requested_ids = frozenset(requested_ids)
+        self._max_years_experience = max_years_experience
 
     def reason(self, posting: JobPosting) -> SkipReason | None:
         """Why this run passes over `posting` before scoring it, or None.
@@ -74,6 +101,8 @@ class SkipPolicy:
             return SkipReason.COMPANY_LIMIT
         if self._has_excluded_keyword(posting):
             return SkipReason.EXCLUDED_KEYWORD
+        if title_is_above_level(posting.title, self._max_years_experience):
+            return SkipReason.ABOVE_LEVEL
         return None
 
     def is_dead_end(self, posting: JobPosting) -> bool:
@@ -82,8 +111,9 @@ class SkipPolicy:
 
         Deliberately not included: a blacklisted company (rare, and its
         skip_blacklisted audit entry is a safety record that reason()'s
-        caller must still write) and an excluded keyword (cheap to check
-        after search, and the list changes between runs).
+        caller must still write), and an excluded keyword or a title above
+        the targeted level (cheap to check after search, and both settings
+        change between runs).
         """
         return (
             self._already_applied(posting)

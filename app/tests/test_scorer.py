@@ -102,6 +102,19 @@ def test_a_senior_title_alone_disqualifies_only_below_a_5_year_cap():
         assert ("entry-to-mid-level roles only" in system) is senior_excluded
 
 
+def test_a_cap_of_2_or_less_targets_entry_level_only():
+    """Live (2026-10-08, cap 2): "Software Engineer III" and "Founding
+    Engineer" passed, while "Software Developer - Entry Level" was turned
+    down because the resume shows more experience than it asks for."""
+    for cap, entry_only in ((1, True), (2, True), (3, False)):
+        provider = FakeProvider()
+        score_job_match(provider, resume_text="resume", job_description="job", max_years_experience=cap)
+        system = provider.calls[0]["system"]
+        assert ("Mid-level (e.g. 'Engineer II' or 'III')/Senior" in system) is entry_only, cap
+        assert ("entry-level and junior roles only" in system) is entry_only, cap
+        assert "more experience than the posting asks for is never" in system
+
+
 def test_require_w2_adds_an_employment_type_eligibility_rule():
     provider = FakeProvider()
     score_job_match(provider, resume_text="resume", job_description="job", require_w2=True)
@@ -109,6 +122,28 @@ def test_require_w2_adds_an_employment_type_eligibility_rule():
     system = provider.calls[0]["system"]
     assert "Corp-to-Corp" in system
     assert "1099" in system
+
+
+def test_needs_visa_sponsorship_swaps_in_the_stricter_authorization_rule():
+    """On a work visa nothing in the resume satisfies a citizenship or
+    green card requirement, and a no-sponsorship posting is out too."""
+    provider = FakeProvider()
+    score_job_match(provider, resume_text="resume", job_description="job", needs_visa_sponsorship=True)
+
+    system = provider.calls[0]["system"]
+    assert "H-1B" in system
+    assert "green card" in system
+    assert "will not sponsor" in system
+    assert "the resume gives no indication" not in system
+
+
+def test_the_plain_citizenship_rule_is_the_default():
+    provider = FakeProvider()
+    score_job_match(provider, resume_text="resume", job_description="job")
+
+    system = provider.calls[0]["system"]
+    assert "the resume gives no indication" in system
+    assert "H-1B" not in system
 
 
 def test_system_prompt_forbids_narrating_reasoning_in_the_shown_fields():
