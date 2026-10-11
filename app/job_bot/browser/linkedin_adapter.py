@@ -172,22 +172,101 @@ _STEP_FIELDS_JS = """
 }
 """
 
-# A question for a <select> with no label of any kind, from the text around
-# it: each enclosing block's own <p> heading, outermost first, then its blank
-# placeholder option. The education step's dates (live 2026-10-06) are four
-# selects under "Dates attended" > "From"/"To", each with an empty <label>
-# and a "Month"/"Year" placeholder - so "Dates attended - From - Month".
-_SELECT_CONTEXT_LABEL_JS = """
-(el) => {
+# A question for a field with no label of any kind, from the text around
+# it: each enclosing block's own heading, outermost first, then (a <select>)
+# its blank placeholder option. The education step's dates (live 2026-10-06)
+# are four selects under "Dates attended" > "From"/"To", each with an empty
+# <label> and a "Month"/"Year" placeholder - so "Dates attended - From -
+# Month".
+#
+# A block's heading is its own <p>, or else the nearest short text-only
+# element before the field in it: the work experience step's date selects
+# (live 2026-10-08, 2026-10-10) came out unlabeled under the <p>-only rule.
+# A select needs two parts, or one heading; any other field needs a heading
+# within `levels` blocks of it.
+_CONTEXT_LABEL_JS = """
+(el, levels) => {
+  const textOnly = (c) => !c.matches('input, select, textarea, button, label')
+    && !c.querySelector('input, select, textarea, button')
+    && c.innerText && c.innerText.trim() && c.innerText.trim().length <= 80;
   const parts = [];
   let node = el.parentElement;
-  for (let i = 0; i < 6 && node && !node.matches('[role=dialog], dialog, form'); i++, node = node.parentElement) {
-    const heading = [...node.children].find((c) => c.tagName === 'P' && !c.contains(el));
-    if (heading && heading.innerText.trim()) parts.unshift(heading.innerText.trim());
+  let inside = el;
+  for (let i = 0; i < levels && node && !node.matches('[role=dialog], dialog, form');
+       i++, inside = node, node = node.parentElement) {
+    const children = [...node.children];
+    let heading = children.find((c) => c.tagName === 'P' && !c.contains(el) && c.innerText.trim());
+    if (!heading) {
+      heading = children.slice(0, children.indexOf(inside)).reverse().find(textOnly);
+    }
+    if (heading) parts.unshift(heading.innerText.trim().split('\\n')[0]);
   }
-  const first = el.options[0];
-  if (first && first.value === '' && first.text.trim()) parts.push(first.text.trim());
-  return parts.length > 1 ? parts.join(' - ') : '';
+  const headings = parts.length;
+  if (el.tagName === 'SELECT') {
+    const first = el.options[0];
+    if (first && first.value === '' && first.text.trim()) parts.push(first.text.trim());
+  }
+  return headings > 0 || parts.length > 1 ? parts.join(' - ') : '';
+}
+"""
+
+# The groups of two or more checkboxes on a step, each a "select all that
+# apply" question: [{question, options: [text], ids: [marker]}]. A group is
+# the checkboxes sharing a <fieldset>, or else the nearest block holding
+# more than one. Its question is the fieldset's <legend>, the block's
+# aria-label, or the nearest short text-only element before the block. Each
+# checkbox is marked with data-job-bot-checkbox so it can be found again.
+_CHECKBOX_GROUPS_JS = """
+(dialog) => {
+  const boxes = [...dialog.querySelectorAll('input[type=checkbox]')];
+  const groupOf = (box) => {
+    const fieldset = box.closest('fieldset');
+    if (fieldset && dialog.contains(fieldset)) return fieldset;
+    let node = box.parentElement;
+    while (node && node !== dialog && node.querySelectorAll('input[type=checkbox]').length < 2) {
+      node = node.parentElement;
+    }
+    return node && node !== dialog ? node : null;
+  };
+  const optionText = (box) => {
+    const label = (box.labels && box.labels[0]) || null;
+    if (label && label.innerText.trim()) return label.innerText.trim();
+    if (box.getAttribute('aria-label')) return box.getAttribute('aria-label').trim();
+    let el = box;
+    while (el.parentElement && el.parentElement.querySelectorAll('input[type=checkbox]').length === 1) {
+      el = el.parentElement;
+    }
+    return el === box ? '' : el.innerText.trim();
+  };
+  const textOnly = (c) => !c.querySelector('input, select, textarea, button')
+    && c.innerText && c.innerText.trim() && c.innerText.trim().length <= 300;
+  const questionOf = (group) => {
+    const legend = group.querySelector('legend');
+    if (legend && legend.innerText.trim()) return legend.innerText.trim();
+    if (group.getAttribute('aria-label')) return group.getAttribute('aria-label').trim();
+    let node = group;
+    for (let i = 0; i < 3 && node && node !== dialog; i++, node = node.parentElement) {
+      let prev = node.previousElementSibling;
+      while (prev && !textOnly(prev)) prev = prev.previousElementSibling;
+      if (prev) return prev.innerText.trim();
+    }
+    return '';
+  };
+  const groups = new Map();
+  for (const box of boxes) {
+    const group = groupOf(box);
+    if (!group) continue;
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(box);
+  }
+  const out = [];
+  let n = 0;
+  for (const [group, members] of groups) {
+    if (members.length < 2 || members.some((b) => b.checked)) continue;
+    const ids = members.map((b) => { b.setAttribute('data-job-bot-checkbox', String(n)); return String(n++); });
+    out.push({ question: questionOf(group), options: members.map(optionText), ids });
+  }
+  return out;
 }
 """
 
@@ -1439,6 +1518,37 @@ class LinkedInAdapter(JobBoardAdapter):
                 choices = [o for o in options if o.strip() and not o.strip().casefold().startswith("select")]
                 self._select_best_option(select, options, self._ask_with_choices(answer_question, label, choices))
 
+        self._fill_checkbox_groups(dialog, answer_question)
+
+    def _fill_checkbox_groups(self, dialog: Locator, answer_question: Callable[[str], str]) -> None:
+        """Answers each "select all that apply" question - a group of two or
+        more checkboxes, none ticked yet - by ticking the options the answer
+        names. A lone checkbox (a consent box) is never touched, and a group
+        whose question can't be found, or whose answer names no option, is
+        left as it is rather than guessed at.
+
+        Real failure (2026-10-07/08, one posting three times): a step with
+        seven checkboxes that were never asked about, so LinkedIn refused to
+        leave it.
+        """
+        for group in dialog.evaluate(_CHECKBOX_GROUPS_JS):
+            question = self._dedupe_repeated_lines(group["question"])
+            options = [self._dedupe_repeated_lines(o) for o in group["options"]]
+            if not question or not all(options):
+                continue
+            if any(marker in question.casefold() for marker in SENSITIVE_FIELD_MARKERS):
+                continue
+            answer = answer_question(
+                f"{question} (select all that apply - answer with any of: {' / '.join(options)})"
+            ).casefold()
+            for option, marker in zip(options, group["ids"], strict=True):
+                if not re.search(rf"(?<!\w){re.escape(option.casefold())}(?!\w)", answer):
+                    continue
+                box = dialog.locator(f'input[data-job-bot-checkbox="{marker}"]')
+                self._check_hidden_radio(box)
+                if not box.is_checked():
+                    box.evaluate("el => el.click()")
+
     def _first_unanswered_required_text_field_label(self, dialog: Locator) -> str | None:
         """A required text/number/textarea field _fill_visible_fields()
         left empty - either answer_question() returned "" for it, or it has
@@ -1575,8 +1685,13 @@ class LinkedInAdapter(JobBoardAdapter):
             placeholder = el.get_attribute("placeholder")
             if placeholder and placeholder.strip():
                 return placeholder.strip()
-            if el.evaluate("el => el.tagName") == "SELECT":
-                return str(el.evaluate(_SELECT_CONTEXT_LABEL_JS) or "")
+            # A select's context can sit several blocks up ("Dates attended"
+            # > "From"); any other field only takes a heading right by it.
+            # A radio group (a <fieldset>) is asked by its radios instead -
+            # see _radio_group_question().
+            levels = {"SELECT": 6, "INPUT": 2, "TEXTAREA": 2}.get(el.evaluate("el => el.tagName"))
+            if levels:
+                return str(el.evaluate(_CONTEXT_LABEL_JS, levels) or "")
         except PlaywrightTimeoutError:
             pass
         return ""

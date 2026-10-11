@@ -2242,6 +2242,133 @@ def test_the_education_steps_unlabeled_date_selects_are_asked_from_their_context
     assert [playwright_page.locator(f"#{i}").input_value() for i in ("fm", "fy", "tm", "ty")] == ["2", "2016", "3", "2020"]
 
 
+def test_unlabeled_date_selects_under_non_paragraph_headings_are_asked_too(playwright_page):
+    """Real failure (2026-10-08, 2026-10-10): the work experience step's
+    four date selects stayed unlabeled and empty - the context rule only
+    read <p> headings. Not live markup: the same shape as the education
+    step's, with <span>/<h4> headings."""
+    month = "".join(f"<option value='{i}'>{m}</option>" for i, m in enumerate(["January", "August", "May"], 1))
+    year = "".join(f"<option value='{y}'>{y}</option>" for y in (2024, 2021))
+    playwright_page.set_content(
+        f"""
+        <div role="dialog"><div>
+          <label for="t">Your title</label><input id="t" type="text" value="Engineer">
+          <div><h4>Dates of employment</h4>
+            <div><span>From</span><div>
+              <div><label for="fm"></label><select id="fm"><option value="">Month</option>{month}</select></div>
+              <div><label for="fy"></label><select id="fy"><option value="">Year</option>{year}</select></div>
+            </div></div>
+            <div><span>To</span><div>
+              <div><label for="tm"></label><select id="tm"><option value="">Month</option>{month}</select></div>
+              <div><label for="ty"></label><select id="ty"><option value="">Year</option>{year}</select></div>
+            </div></div>
+          </div>
+        </div></div>
+        """
+    )
+    answers = {
+        "Dates of employment - From - Month": "August",
+        "Dates of employment - From - Year": "2021",
+        "Dates of employment - To - Month": "May",
+        "Dates of employment - To - Year": "2024",
+    }
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(playwright_page.locator("[role=dialog]"), answers.get)
+
+    assert [playwright_page.locator(f"#{i}").input_value() for i in ("fm", "fy", "tm", "ty")] == ["2", "2021", "3", "2024"]
+
+
+def test_an_unlabeled_text_field_is_asked_by_the_heading_right_before_it(playwright_page):
+    """Real failure (2026-10-07, 6 applications): the contact step ended on
+    "'(unlabeled)' (text, empty)" - a field with no label, aria-label, or
+    placeholder is asked by the text just above it, if there is any."""
+    playwright_page.set_content(
+        """
+        <div role="dialog">
+          <div><span>City</span><div><input id="c" type="text"></div></div>
+          <div><div><input id="lone" type="text"></div></div>
+        </div>
+        """
+    )
+    asked: list[str] = []
+
+    def answer(label: str) -> str:
+        asked.append(label)
+        return "Dallas"
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(playwright_page.locator("[role=dialog]"), answer)
+
+    assert asked == ["City"]
+    assert playwright_page.locator("#c").input_value() == "Dallas"
+    assert playwright_page.locator("#lone").input_value() == ""
+
+
+def test_a_group_of_checkboxes_is_asked_as_one_question_and_the_named_options_ticked(playwright_page):
+    """Real failure (2026-10-07/08, one posting three times): seven
+    checkboxes on a step were never asked about, and it never advanced.
+    Not live markup: one group in a <fieldset>, one with no fieldset,
+    labels, or ids at all."""
+    playwright_page.set_content(
+        """
+        <div role="dialog">
+          <fieldset><legend>Which languages do you use?</legend>
+            <input type="checkbox" id="java"><label for="java">Java</label>
+            <input type="checkbox" id="js"><label for="js">JavaScript</label>
+            <input type="checkbox" id="go"><label for="go">Go</label>
+          </fieldset>
+          <div><p>Which shifts can you work?</p>
+            <div>
+              <div><input type="checkbox" class="s"><p>Day</p></div>
+              <div><input type="checkbox" class="s"><p>Night</p></div>
+            </div>
+          </div>
+          <input type="checkbox" id="terms"><label for="terms">I agree to the terms</label>
+        </div>
+        """
+    )
+    asked: list[str] = []
+
+    def answer(label: str) -> str:
+        asked.append(label)
+        return "Java, Go" if "languages" in label else "Day"
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(playwright_page.locator("[role=dialog]"), answer)
+
+    assert asked == [
+        "Which languages do you use? (select all that apply - answer with any of: Java / JavaScript / Go)",
+        "Which shifts can you work? (select all that apply - answer with any of: Day / Night)",
+    ]
+    checked = playwright_page.evaluate("[...document.querySelectorAll('input:checked')].map(e => e.id || e.nextElementSibling.innerText)")
+    assert checked == ["java", "go", "Day"]  # "Java" doesn't tick "JavaScript"; the lone consent box is untouched
+
+
+def test_a_checkbox_group_is_left_alone_when_the_answer_names_no_option_or_one_is_ticked(playwright_page):
+    playwright_page.set_content(
+        """
+        <div role="dialog">
+          <fieldset><legend>Which languages do you use?</legend>
+            <input type="checkbox" id="java"><label for="java">Java</label>
+            <input type="checkbox" id="go"><label for="go">Go</label>
+          </fieldset>
+          <fieldset><legend>Preferred locations</legend>
+            <input type="checkbox" id="nyc" checked><label for="nyc">New York</label>
+            <input type="checkbox" id="sf"><label for="sf">San Francisco</label>
+          </fieldset>
+        </div>
+        """
+    )
+    asked: list[str] = []
+
+    def answer(label: str) -> str:
+        asked.append(label)
+        return "I'm not sure"
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(playwright_page.locator("[role=dialog]"), answer)
+
+    assert len(asked) == 1 and asked[0].startswith("Which languages")
+    assert playwright_page.evaluate("[...document.querySelectorAll('input:checked')].map(e => e.id)") == ["nyc"]
+
+
 def test_linkedins_daily_easy_apply_limit_notice_raises_instead_of_a_stuck_form(playwright_page):
     """Real failure (2026-10-06, 3 applications): LinkedIn's "You reached
     today's Easy Apply limit" notice opened in place of the form, and each
