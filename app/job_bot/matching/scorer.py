@@ -22,6 +22,7 @@ _BASE_SYSTEM_PROMPT = (
     "qualification is clearly missing - eligibility='fail' postings should "
     "also get should_apply=false, though the caller enforces that "
     "independently of what you set here.\n\n"
+    "{overqualified_rule}"
     "List in missing_qualifications each specific required or strongly "
     "preferred qualification the posting asks for that the resume doesn't "
     "demonstrate - a skill, tool, certification, or years of experience in "
@@ -69,6 +70,21 @@ _SENIORITY_RULE = (
     "a reason to fail this check, lower a score, or set should_apply to "
     "false.\n"
 )
+# Its own paragraph next to the scoring instructions: as one sentence inside
+# the seniority rule above it was ignored. Live (2026-10-10, cap 2): "Junior
+# Full Stack Engineer" scored 65 and "Entry-Level Data & AI Consultant" 43,
+# both for "5+ years experience but job is for [a] junior role".
+_OVERQUALIFIED_RULE = (
+    "The candidate is deliberately applying to roles that ask for less "
+    "experience than the resume shows. Having more years, more senior "
+    "responsibilities, or a more senior past title than the posting asks "
+    "for fully meets its experience requirement: score experience_fit as "
+    "if the candidate had exactly the experience asked for. Never treat "
+    "being overqualified, or the posting being junior, entry-level, or for "
+    "recent graduates, as a gap, a reason for a lower score, or an entry "
+    "in missing_qualifications.\n\n"
+)
+
 # "Senior" roles typically ask for about 5 years. With a cap below that, a
 # Senior title is out of range on its own; with a cap of 5 or more, it's
 # the years the posting asks for that decide - a "Senior Software Engineer,
@@ -91,8 +107,9 @@ def _build_system_prompt(
     max_years_experience: int | None, require_w2: bool, needs_visa_sponsorship: bool
 ) -> str:
     authorization_rule = _VISA_AUTHORIZATION_RULE if needs_visa_sponsorship else _AUTHORIZATION_RULE
-    seniority_rule = ""
+    seniority_rule = overqualified_rule = ""
     if max_years_experience is not None:
+        overqualified_rule = _OVERQUALIFIED_RULE
         if max_years_experience >= SENIOR_TITLE_MIN_YEARS:
             levels, target = "Staff/Principal/Lead/Director", "entry-to-senior-level (not staff or above)"
         elif max_years_experience > ENTRY_LEVEL_MAX_YEARS:
@@ -105,7 +122,10 @@ def _build_system_prompt(
         )
     w2_rule = _W2_RULE if require_w2 else ""
     return _BASE_SYSTEM_PROMPT.format(
-        authorization_rule=authorization_rule, seniority_rule=seniority_rule, w2_rule=w2_rule
+        authorization_rule=authorization_rule,
+        seniority_rule=seniority_rule,
+        w2_rule=w2_rule,
+        overqualified_rule=overqualified_rule,
     )
 
 

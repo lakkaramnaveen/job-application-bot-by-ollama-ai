@@ -115,6 +115,18 @@ def test_a_cap_of_2_or_less_targets_entry_level_only():
         assert "more experience than the posting asks for is never" in system
 
 
+def test_an_experience_cap_tells_the_model_being_overqualified_is_not_a_gap():
+    """Live (2026-10-10, cap 2): junior and entry-level postings were scored
+    down for "5+ years experience but job is for [a] junior role"."""
+    provider = FakeProvider()
+    score_job_match(provider, resume_text="resume", job_description="job", max_years_experience=2)
+    assert "Never treat being overqualified" in provider.calls[0]["system"]
+
+    provider = FakeProvider()
+    score_job_match(provider, resume_text="resume", job_description="job")
+    assert "overqualified" not in provider.calls[0]["system"]
+
+
 def test_require_w2_adds_an_employment_type_eligibility_rule():
     provider = FakeProvider()
     score_job_match(provider, resume_text="resume", job_description="job", require_w2=True)
