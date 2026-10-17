@@ -2207,6 +2207,58 @@ def test_the_unlabeled_location_typeahead_is_answered_and_a_suggestion_picked(pl
     assert playwright_page.locator("#_r_i_").get_attribute("data-picked") == "Dallas, Texas, United States"
 
 
+def _location_typeahead(suggestions):
+    return f"""
+        <div role="dialog">
+          <input id="loc" type="text" data-testid="typeahead-input" placeholder="Enter city or location"
+                 aria-autocomplete="list" value="">
+          <div id="list" role="listbox"></div>
+        </div>
+        <script>
+          const box = document.getElementById('loc');
+          box.addEventListener('input', () => {{
+            const list = document.getElementById('list');
+            list.innerHTML = '';
+            if (box.value.length < 3) return;
+            for (const city of {suggestions!r}) {{
+              const o = document.createElement('div');
+              o.setAttribute('role', 'option');
+              o.textContent = city;
+              o.onclick = () => {{ box.value = city; box.dataset.picked = city; list.innerHTML = ''; }};
+              list.appendChild(o);
+            }}
+          }});
+        </script>
+        """
+
+
+def test_the_location_typeahead_matches_a_suggestion_despite_punctuation(playwright_page):
+    """Real failure (2026-10-07 to 10-16, 5 applications): "St Paul, MN"
+    never matched "St. Paul, Minnesota, United States" over the period, and
+    the contact step's location box was left empty."""
+    playwright_page.set_content(
+        _location_typeahead(["South St. Paul, Minnesota, United States", "St. Paul, Minnesota, United States"])
+    )
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(
+        playwright_page.locator("[role=dialog]"), lambda question: "St Paul, MN"
+    )
+
+    assert playwright_page.locator("#loc").get_attribute("data-picked") == "St. Paul, Minnesota, United States"
+
+
+def test_the_location_typeahead_clicks_the_first_suggestion_when_none_matches(playwright_page):
+    """The old ArrowDown+Enter fallback didn't take on a list that only
+    accepts a click, leaving the box empty."""
+    playwright_page.set_content(_location_typeahead(["Saint Louis Park, Minnesota, United States"]))
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(
+        playwright_page.locator("[role=dialog]"), lambda question: "Somewhere Else, MO"
+    )
+
+    assert playwright_page.locator("#loc").get_attribute("data-picked") == "Saint Louis Park, Minnesota, United States"
+
+
 def test_the_education_steps_unlabeled_date_selects_are_asked_from_their_context(playwright_page):
     """Real failure (2026-10-05/06, 2 applications): an education entry with
     no dates opens an edit form whose four required date selects each have

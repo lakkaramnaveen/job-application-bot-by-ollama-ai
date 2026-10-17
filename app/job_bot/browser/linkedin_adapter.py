@@ -153,7 +153,8 @@ _STEP_FIELDS_JS = """
     const label = (el.type === 'radio' && legend && legend.innerText.trim())
       || (el.labels && el.labels[0] && el.labels[0].innerText.trim())
       || el.getAttribute('aria-label')
-      || (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map((id) => (document.getElementById(id) || {}).innerText || '').join(' ').trim() || '(unlabeled)';
+      || (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map((id) => (document.getElementById(id) || {}).innerText || '').join(' ').trim()
+      || (el.placeholder && `(placeholder) ${el.placeholder.trim()}`) || '(unlabeled)';
     const kind = el.tagName === 'SELECT' ? 'select' : (el.type || el.tagName.toLowerCase());
     let state;
     if (el.type === 'radio') {
@@ -1705,10 +1706,15 @@ class LinkedInAdapter(JobBoardAdapter):
         value only counts once one is chosen, as when a person does it.
 
         Real failure (2026-10-05, 3 applications): the contact step's
-        "Enter city or location" box. Picks the suggestion containing the
-        answer's first part (e.g. "Dallas" of "Dallas, TX"), else the first
-        suggestion via ArrowDown+Enter; with no suggestions, the typed text
-        is left as is.
+        "Enter city or location" box. Picks the suggestion starting with,
+        else containing, the answer's first part (e.g. "Dallas" of "Dallas,
+        TX"), ignoring punctuation, else clicks the first suggestion; with
+        no suggestions, the typed text is left as is.
+
+        Real failure (2026-10-07 to 10-16, 5 more applications): "St Paul,
+        MN" never matched "St. Paul, Minnesota, United States" over the
+        period, and the ArrowDown+Enter fallback didn't take - the box was
+        left empty and the contact step never advanced.
         """
         el.fill("")
         el.press_sequentially(answer, delay=40)
@@ -1717,13 +1723,20 @@ class LinkedInAdapter(JobBoardAdapter):
             options.first.wait_for(state="visible", timeout=TYPEAHEAD_WAIT_MS)
         except PlaywrightTimeoutError:
             return
-        key = answer.split(",")[0].strip().casefold()
-        for i in range(options.count()):
-            if key and key in options.nth(i).inner_text().casefold():
-                options.nth(i).click()
-                return
-        el.press("ArrowDown")
-        el.press("Enter")
+        key = self._without_punctuation(answer.split(",")[0])
+        texts = [self._without_punctuation(options.nth(i).inner_text()) for i in range(options.count())]
+        # One starting with the city before one merely containing it: "St
+        # Paul" is "St. Paul, Minnesota", not "South St. Paul, Minnesota".
+        for matches in (lambda t: t.startswith(key), lambda t: key in t):
+            for i, text in enumerate(texts):
+                if key and matches(text):
+                    options.nth(i).click()
+                    return
+        options.first.click()
+
+    @staticmethod
+    def _without_punctuation(text: str) -> str:
+        return " ".join(re.sub(r"[^\w\s]", " ", text).casefold().split())
 
     @staticmethod
     def _dedupe_repeated_lines(text: str) -> str:
