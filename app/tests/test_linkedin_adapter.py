@@ -806,6 +806,25 @@ def test_stuck_error_says_what_a_dialog_with_no_buttons_shows(playwright_page, t
     assert "The dialog shows: 'Something went wrong. Try again later'." in str(excinfo.value)
 
 
+def test_stuck_error_says_what_a_dialog_with_only_a_refresh_button_shows(playwright_page, tmp_path):
+    """Live (2026-10-06 to 2026-10-17): five applications ended "buttons
+    visible on this step: 'Refresh'", with no hint of why."""
+    fixture = tmp_path / "refresh_only.html"
+    fixture.write_text(
+        '<a class="jobs-apply-button" href="#" onclick="document.querySelector(\'[role=dialog]\').hidden=false">'
+        'Easy Apply</a><div role="dialog" hidden><p>This form could not load.</p><button>Refresh</button></div>',
+        encoding="utf-8",
+    )
+    posting = JobPosting(job_id="8", title="X", company="Acme", url=f"file://{fixture}", description="")
+
+    with pytest.raises(RuntimeError, match="buttons visible on this step: 'Refresh'") as excinfo:
+        LinkedInAdapter(playwright_page).fill_and_submit(
+            posting, answer_question=lambda label: "", resume_path=None, cover_letter_text=None, dry_run=True
+        )
+
+    assert "The dialog shows: 'This form could not load. Refresh'." in str(excinfo.value)
+
+
 def test_stuck_error_names_the_buttons_that_were_actually_on_screen(playwright_page):
     """The generic "stuck" message used to give zero lead on why - every
     occurrence looked identical in failed_applications.log regardless of

@@ -1188,9 +1188,10 @@ class LinkedInAdapter(JobBoardAdapter):
                 f"Could not complete the Easy Apply form for job {posting.job_id} (stuck on a step with "
                 f"no Next/Review/Submit button found - buttons visible on this step: {buttons_seen})."
             )
-            if buttons_seen == "none":
+            if buttons_seen in ("none", "'Refresh'"):
                 # Four applications (2026-10-06 to 2026-10-08) ended here
-                # with nothing to go on - say what the dialog shows instead.
+                # with no buttons, five (2026-10-06 to 10-17) with only
+                # 'Refresh', nothing to go on - say what the dialog shows.
                 shown = " ".join(dialog.inner_text().split())[:200]
                 message += f" The dialog shows: {shown!r}." if shown else " The dialog is empty."
         field_errors = self._field_errors(dialog)
