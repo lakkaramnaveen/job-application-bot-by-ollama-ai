@@ -806,6 +806,29 @@ def test_stuck_error_says_what_a_dialog_with_no_buttons_shows(playwright_page, t
     assert "The dialog shows: 'Something went wrong. Try again later'." in str(excinfo.value)
 
 
+def test_a_form_whose_buttons_render_late_is_waited_for_instead_of_failing(playwright_page, tmp_path, monkeypatch):
+    """Live (2026-10-18): "buttons visible on this step: none", the dialog
+    showing only its "Apply to <company>" header - the form hadn't rendered
+    yet."""
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.FORM_BUTTONS_WAIT_SECONDS", 12)
+    fixture = tmp_path / "late_form.html"
+    fixture.write_text(
+        '<a class="jobs-apply-button" href="#" onclick="'
+        "document.querySelector('[role=dialog]').hidden=false;"
+        "setTimeout(() => document.getElementById('form').innerHTML ="
+        " '<button aria-label=&quot;Submit application&quot;>Submit application</button>', 6000)"
+        '">Easy Apply</a><div role="dialog" hidden><h2>Apply to Acme</h2><div id="form"></div></div>',
+        encoding="utf-8",
+    )
+    posting = JobPosting(job_id="9", title="X", company="Acme", url=f"file://{fixture}", description="")
+
+    submitted = LinkedInAdapter(playwright_page).fill_and_submit(
+        posting, answer_question=lambda label: "", resume_path=None, cover_letter_text=None, dry_run=True
+    )
+
+    assert submitted is False  # dry run: reached Submit without clicking it
+
+
 def test_stuck_error_says_what_a_dialog_with_only_a_refresh_button_shows(playwright_page, tmp_path):
     """Live (2026-10-06 to 2026-10-17): five applications ended "buttons
     visible on this step: 'Refresh'", with no hint of why."""

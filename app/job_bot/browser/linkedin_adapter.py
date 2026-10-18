@@ -276,6 +276,10 @@ _CHECKBOX_GROUPS_JS = """
 # refusal once.
 MAX_STALLED_CLICKS = 2
 
+# How long a step with no Next/Review/Submit button gets for one to show
+# up before the form counts as stuck - once per application.
+FORM_BUTTONS_WAIT_SECONDS = 10.0
+
 # Marks the scrollable panel holding the search results (the nearest
 # scrolling ancestor of a card) for _SCROLL_RESULTS_STEP_JS; false if none.
 _MARK_RESULTS_SCROLLER_JS = """
@@ -1129,6 +1133,7 @@ class LinkedInAdapter(JobBoardAdapter):
 
         max_steps = 20  # hard cap so a stuck form can't loop forever
         stalled = 0
+        waited_for_buttons = False
         for _ in range(max_steps):
             self._upload_resume_if_requested(dialog, resume_path)
             self._fill_visible_fields(dialog, answer_question, cover_letter_text)
@@ -1160,6 +1165,15 @@ class LinkedInAdapter(JobBoardAdapter):
                 if stalled >= MAX_STALLED_CLICKS:
                     break
                 continue
+
+            # Real failure (2026-10-18): "buttons visible on this step:
+            # none", the dialog showing only its "Apply to <company>"
+            # header - the form hadn't rendered yet. Four earlier ones
+            # (2026-10-06 to 10-08) had an empty dialog. Give it once.
+            if not waited_for_buttons:
+                waited_for_buttons = True
+                if self._wait_for_a_form_button(dialog):
+                    continue
 
             # No progress button found and no submit button - the form is
             # stuck (e.g. a required field we couldn't resolve). Stop rather
@@ -2101,6 +2115,18 @@ class LinkedInAdapter(JobBoardAdapter):
             if candidate.count() > 0:
                 return candidate.first
         return None
+
+    @classmethod
+    def _wait_for_a_form_button(cls, dialog: Locator) -> bool:
+        """True once a Submit/Review/Next button shows up in the dialog,
+        False after FORM_BUTTONS_WAIT_SECONDS without one."""
+        deadline = time.monotonic() + FORM_BUTTONS_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+            for selectors in (SUBMIT_BUTTON_SELECTORS, REVIEW_BUTTON_SELECTORS, NEXT_BUTTON_SELECTORS):
+                if cls._find_button(dialog, selectors) is not None:
+                    return True
+        return False
 
     def _dismiss_safety_reminder_if_present(self) -> None:
         """Checked immediately after the submit click, with no delay before

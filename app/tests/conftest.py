@@ -23,3 +23,10 @@ def _no_search_pacing(monkeypatch):
     loaded, not how slowly."""
     monkeypatch.setattr("job_bot.browser.linkedin_adapter.SEARCH_PAGE_PAUSE_SECONDS", 0)
     monkeypatch.setattr("job_bot.browser.linkedin_adapter.RESULTS_SCROLL_WAIT_SECONDS", 0)
+
+
+@pytest.fixture(autouse=True)
+def _no_form_button_wait(monkeypatch):
+    """A stuck Easy Apply step waits real seconds for a late button - zero
+    in tests, except the one that checks the wait itself."""
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.FORM_BUTTONS_WAIT_SECONDS", 0)
