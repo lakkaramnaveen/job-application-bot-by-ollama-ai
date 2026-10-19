@@ -2289,6 +2289,25 @@ def test_the_location_typeahead_matches_a_suggestion_despite_punctuation(playwri
     assert playwright_page.locator("#loc").get_attribute("data-picked") == "St. Paul, Minnesota, United States"
 
 
+def test_the_location_typeahead_retries_with_the_city_alone_when_the_whole_answer_finds_nothing(
+    playwright_page, monkeypatch
+):
+    """Real failure (2026-10-18): the box was still empty - the whole "St
+    Paul, MN" brought up no suggestions, and an unpicked value is cleared."""
+    monkeypatch.setattr("job_bot.browser.linkedin_adapter.TYPEAHEAD_WAIT_MS", 1000)
+    playwright_page.set_content(
+        _location_typeahead(["St. Paul, Minnesota, United States"]).replace(
+            "if (box.value.length < 3) return;", "if (box.value.length < 3 || box.value.includes(',')) return;"
+        )
+    )
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(
+        playwright_page.locator("[role=dialog]"), lambda question: "St Paul, MN"
+    )
+
+    assert playwright_page.locator("#loc").get_attribute("data-picked") == "St. Paul, Minnesota, United States"
+
+
 def test_the_location_typeahead_clicks_the_first_suggestion_when_none_matches(playwright_page):
     """The old ArrowDown+Enter fallback didn't take on a list that only
     accepts a click, leaving the box empty."""

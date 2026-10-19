@@ -1730,15 +1730,25 @@ class LinkedInAdapter(JobBoardAdapter):
         MN" never matched "St. Paul, Minnesota, United States" over the
         period, and the ArrowDown+Enter fallback didn't take - the box was
         left empty and the contact step never advanced.
+
+        Real failure (2026-10-18, after that fix): the box was still empty -
+        a typed value is cleared unless a suggestion is picked, and the
+        whole "St Paul, MN" brings up none. With no suggestions for the
+        whole answer, the city alone ("St Paul") is tried.
         """
-        el.fill("")
-        el.press_sequentially(answer, delay=40)
+        city = answer.split(",")[0].strip()
         options = self._page.locator('[role="option"]').filter(visible=True)
-        try:
-            options.first.wait_for(state="visible", timeout=TYPEAHEAD_WAIT_MS)
-        except PlaywrightTimeoutError:
+        for query in dict.fromkeys((answer, city)):
+            el.fill("")
+            el.press_sequentially(query, delay=40)
+            try:
+                options.first.wait_for(state="visible", timeout=TYPEAHEAD_WAIT_MS)
+                break
+            except PlaywrightTimeoutError:
+                continue
+        else:
             return
-        key = self._without_punctuation(answer.split(",")[0])
+        key = self._without_punctuation(city)
         texts = [self._without_punctuation(options.nth(i).inner_text()) for i in range(options.count())]
         # One starting with the city before one merely containing it: "St
         # Paul" is "St. Paul, Minnesota", not "South St. Paul, Minnesota".
