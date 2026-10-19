@@ -2308,6 +2308,25 @@ def test_the_location_typeahead_retries_with_the_city_alone_when_the_whole_answe
     assert playwright_page.locator("#loc").get_attribute("data-picked") == "St. Paul, Minnesota, United States"
 
 
+def test_a_location_typeahead_with_no_type_attribute_is_asked_and_filled(playwright_page):
+    """Real failure (2026-10-07 to 10-19, 12+ applications): the location
+    box was never asked about - not once in qa_history. An <input> with no
+    type attribute matched none of the text field selectors."""
+    playwright_page.set_content(
+        _location_typeahead(["St. Paul, Minnesota, United States"]).replace(' type="text"', "")
+    )
+    asked = []
+
+    def answer(question):
+        asked.append(question)
+        return "St Paul, MN"
+
+    LinkedInAdapter(playwright_page)._fill_visible_fields(playwright_page.locator("[role=dialog]"), answer)
+
+    assert asked == ["Enter city or location"]
+    assert playwright_page.locator("#loc").get_attribute("data-picked") == "St. Paul, Minnesota, United States"
+
+
 def test_the_location_typeahead_clicks_the_first_suggestion_when_none_matches(playwright_page):
     """The old ArrowDown+Enter fallback didn't take on a list that only
     accepts a click, leaving the box empty."""

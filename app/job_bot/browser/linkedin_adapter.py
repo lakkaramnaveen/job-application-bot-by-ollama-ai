@@ -516,8 +516,13 @@ def is_signed_out_url(url: str) -> bool:
 # How long a typeahead gets to show suggestions after typing.
 TYPEAHEAD_WAIT_MS = 4000
 
+# input:not([type]) too: an <input> with no type attribute is a text box,
+# and matches none of the others. The contact step's location typeahead
+# (2026-10-07 to 10-19, 12+ applications) was never even asked about - not
+# once in qa_history - while the stall diagnostic, reading el.type, called
+# it "text".
 _TEXT_FIELD_SELECTOR = (
-    'input[type="text"], input[type="number"], input[type="tel"], input[type="email"], textarea'
+    'input[type="text"], input:not([type]), input[type="number"], input[type="tel"], input[type="email"], textarea'
 )
 
 
