@@ -38,7 +38,22 @@ def is_echoed_question(question: str, answer: str) -> bool:
 # data/failed_applications.log (7 different companies' forms) - one set per
 # position, each with its own dates. Exact labels only, not a pattern: a
 # "From"/"To" question elsewhere can be perfectly answerable.
-_PER_POSITION_FIELD_LABELS = frozenset({"month of from", "year of from", "month of to", "year of to"})
+#
+# Also the labels the adapter builds from context for the same kind of
+# block when it has no label of its own (linkedin_adapter.py's
+# _CONTEXT_LABEL_JS): the work experience and education entries' date
+# selects. Without them here those were answered and cached as one date
+# range for every entry - the start of one position and the end of
+# another, matching no single position on the resume (2026-10-19).
+_PER_POSITION_FIELD_LABELS = frozenset(
+    {"month of from", "year of from", "month of to", "year of to"}
+    | {
+        f"{block} - {end} - {part}"
+        for block in ("dates of employment", "dates attended")
+        for end in ("from", "to")
+        for part in ("month", "year")
+    }
+)
 
 
 def is_per_position_field(label: str) -> bool:

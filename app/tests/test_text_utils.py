@@ -46,7 +46,21 @@ def test_is_echoed_question_leaves_real_or_empty_answers_alone(question, answer)
     assert is_echoed_question(question, answer) is False
 
 
-@pytest.mark.parametrize("label", ["Year of From", "Month of From", "year of to", " Month of To* "])
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Year of From",
+        "Month of From",
+        "year of to",
+        " Month of To* ",
+        # Built from context by the adapter for unlabeled date selects; were
+        # answered and cached as one date for every entry (2026-10-19).
+        "Dates of employment - From - Month",
+        "Dates of employment - To - Year",
+        "Dates attended - From - Year",
+        "Dates attended - To - Month",
+    ],
+)
 def test_is_per_position_field_matches_linkedins_work_history_date_labels(label):
     assert is_per_position_field(label) is True
 
