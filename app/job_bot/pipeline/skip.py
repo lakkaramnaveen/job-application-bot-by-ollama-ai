@@ -35,6 +35,7 @@ class SkipReason(Enum):
     COMPANY_LIMIT = "company_limit"
     EXCLUDED_KEYWORD = "excluded_keyword"
     ABOVE_LEVEL = "above_level"
+    NEEDS_STATUS = "needs_status"
 
 
 # Title words that put a posting above the level MAX_YEARS_EXPERIENCE
@@ -59,6 +60,24 @@ def title_is_above_level(title: str, max_years_experience: int | None) -> bool:
     return re.search(rf"(?<![\w-])({'|'.join(words)})(?![\w-])", title.casefold()) is not None
 
 
+# Title words saying the posting is closed to someone on a visa: a
+# citizenship, permanent residency, or security clearance requirement -
+# the scorer's NEEDS_VISA_SPONSORSHIP rule, checked here in code too because
+# the model doesn't reliably apply it when the requirement is only in the
+# title: live (2026-10-20) it passed "AI GTM Engineer (VIE, EU citizen)".
+# Whole words only.
+_STATUS_TITLE_PATTERN = re.compile(
+    r"(?<![\w-])("
+    r"citizens?|citizenship|green card|gc|usc|permanent residents?"
+    r"|clearance|cleared|ts/sci|top secret|secret|public trust|polygraph"
+    r")(?![\w-])"
+)
+
+
+def title_requires_status(title: str, needs_visa_sponsorship: bool) -> bool:
+    return needs_visa_sponsorship and _STATUS_TITLE_PATTERN.search(title.casefold()) is not None
+
+
 class SkipPolicy:
     def __init__(
         self,
@@ -72,6 +91,7 @@ class SkipPolicy:
         exclude_keywords: Collection[str] = (),
         requested_ids: Collection[str] = (),
         max_years_experience: int | None = None,
+        needs_visa_sponsorship: bool = False,
     ):
         """exclude_keywords must already be casefolded. requested_ids are
         `job-bot run --job-id` postings: a deliberate retry, so the retry
@@ -85,6 +105,7 @@ class SkipPolicy:
         self._exclude_keywords = tuple(exclude_keywords)
         self._requested_ids = frozenset(requested_ids)
         self._max_years_experience = max_years_experience
+        self._needs_visa_sponsorship = needs_visa_sponsorship
 
     def reason(self, posting: JobPosting) -> SkipReason | None:
         """Why this run passes over `posting` before scoring it, or None.
@@ -103,6 +124,8 @@ class SkipPolicy:
             return SkipReason.EXCLUDED_KEYWORD
         if title_is_above_level(posting.title, self._max_years_experience):
             return SkipReason.ABOVE_LEVEL
+        if title_requires_status(posting.title, self._needs_visa_sponsorship):
+            return SkipReason.NEEDS_STATUS
         return None
 
     def is_dead_end(self, posting: JobPosting) -> bool:

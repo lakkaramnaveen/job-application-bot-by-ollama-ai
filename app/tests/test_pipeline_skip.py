@@ -4,7 +4,7 @@ and search's silent filter (is_dead_end()) - see job_bot/pipeline/skip.py."""
 import pytest
 
 from job_bot.browser.base_adapter import JobPosting
-from job_bot.pipeline.skip import SkipPolicy, SkipReason, title_is_above_level
+from job_bot.pipeline.skip import SkipPolicy, SkipReason, title_is_above_level, title_requires_status
 from job_bot.safety.blacklist import CompanyBlacklist
 from job_bot.tracker.db import Tracker
 
@@ -144,3 +144,29 @@ def test_a_title_above_the_targeted_level_is_skipped(tracker, blacklist):
     assert entry_only.reason(posting("new-4", title="Senior Developer")) is SkipReason.ABOVE_LEVEL
     assert entry_only.reason(posting("new-5", title="Developer")) is None
     assert policy(tracker, blacklist).reason(posting("new-4", title="Senior Developer")) is None
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("AI GTM Engineer (VIE, EU citizen)", True),  # live 2026-10-20: the model passed it
+        ("Software Engineer - US Citizens Only", True),
+        ("Java Developer (USC/GC only)", True),
+        ("Systems Engineer - Active Secret Clearance", True),
+        ("Cloud Engineer, TS/SCI with Polygraph", True),
+        ("Data Engineer - Public Trust", True),
+        ("Junior Full Stack Engineer-OPT", False),
+        ("Software Engineer", False),
+        ("Citizenship Data Platform Engineer", True),  # whole word: still a status word
+        ("Secretariat Systems Developer", False),  # whole words only
+    ],
+)
+def test_title_requires_status(title, expected):
+    assert title_requires_status(title, needs_visa_sponsorship=True) is expected
+
+
+def test_a_title_requiring_citizenship_is_skipped_only_when_sponsorship_is_needed(tracker, blacklist):
+    on_a_visa = policy(tracker, blacklist, needs_visa_sponsorship=True)
+    assert on_a_visa.reason(posting("new-6", title="AI GTM Engineer (VIE, EU citizen)")) is SkipReason.NEEDS_STATUS
+    assert on_a_visa.reason(posting("new-7", title="AI GTM Engineer")) is None
+    assert policy(tracker, blacklist).reason(posting("new-6", title="AI GTM Engineer (VIE, EU citizen)")) is None

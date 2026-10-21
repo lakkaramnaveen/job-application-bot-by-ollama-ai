@@ -223,6 +223,7 @@ def run_cycle(
         exclude_keywords=exclude_keywords,
         requested_ids=requested_ids,
         max_years_experience=max_years_experience,
+        needs_visa_sponsorship=needs_visa_sponsorship,
     )
     is_dead_end = skip_policy.is_dead_end
 
@@ -329,6 +330,9 @@ def run_cycle(
         elif reason is SkipReason.ABOVE_LEVEL:
             # Not persisted either, for the same reason: the cap can change.
             audit.log("skip_above_level", job_id=posting.job_id, title=posting.title)
+        elif reason is SkipReason.NEEDS_STATUS:
+            # Not persisted either: NEEDS_VISA_SPONSORSHIP can change.
+            audit.log("skip_needs_status", job_id=posting.job_id, title=posting.title)
         return True
 
     def clears_the_bar(posting: JobPosting, description: str, existing: dict[str, Any] | None) -> bool:
