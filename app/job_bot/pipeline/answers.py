@@ -28,7 +28,7 @@ from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import ApplicationAnswer
 from job_bot.resume.store import ResumeStore
 from job_bot.safety.answer_gaps import AnswerGapStore
-from job_bot.text_utils import is_echoed_question, is_per_position_field
+from job_bot.text_utils import is_echoed_question, is_numberless_pay_answer, is_per_position_field
 from job_bot.tracker.db import Tracker
 
 AnswerFn = Callable[..., ApplicationAnswer]
@@ -104,6 +104,11 @@ class AnswerService:
         # An echoed entry cached before is_echoed_question() existed is
         # ignored rather than replayed.
         cached = faq_answers.get(question)
+        if cached is not None and is_numberless_pay_answer(question, cached):
+            # A bad cached pay answer is skipped, not replayed - and not
+            # re-derived either: the model invents a figure, and the
+            # user's own one belongs in review-answers.
+            return ""
         if cached is not None and not is_echoed_question(question, cached):
             self._tracker.record_qa(job_id, question, cached)
             return cached
@@ -114,7 +119,7 @@ class AnswerService:
             question,
             recent_answers=self._tracker.recent_qa_pairs(),
         )
-        if is_echoed_question(question, result.answer):
+        if is_echoed_question(question, result.answer) or is_numberless_pay_answer(question, result.answer):
             # No answer, not a bad one: never recorded or cached, so it
             # can't be replayed from FAQ_PATH or reused as a few-shot example.
             return ""

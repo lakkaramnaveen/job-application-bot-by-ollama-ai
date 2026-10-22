@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 
@@ -11,6 +12,28 @@ def normalize_company_name(name: str) -> str:
     company.
     """
     return " ".join(name.strip().casefold().split())
+
+
+_PAY_QUESTION = re.compile(r"\b(salary|compensation|pay|wage|hourly rate|pay rate|rate expectations?)\b")
+_YES_NO_START = re.compile(r"^(are|is|do|does|did|would|will|can|could|have|has|should)\b")
+
+
+def is_numberless_pay_answer(question: str, answer: str) -> bool:
+    """True if `question` asks for a pay figure and `answer` names none.
+
+    Real data (2026-09-15 to 10-21): a degree sentence was cached as the
+    answer to "What are your salary expectations?" and replayed for every
+    salary or compensation question after it - rejected by LinkedIn as
+    "Invalid input" where the field was numeric, and submitted as-is where
+    it was free text. A yes/no question about pay ("Are you comfortable
+    with the salary outlined...?", "Our range is $X-$Y. Does that work?")
+    is a different question and is left alone: one that states a figure or
+    starts like a yes/no question.
+    """
+    q = " ".join(question.casefold().split())
+    if not _PAY_QUESTION.search(q) or re.search(r"\d", q) or _YES_NO_START.match(q):
+        return False
+    return not re.search(r"\d", answer)
 
 
 def is_echoed_question(question: str, answer: str) -> bool:

@@ -82,6 +82,31 @@ def test_an_echoed_answer_is_no_answer(env):
     assert faq_now() == {}
 
 
+def test_a_cached_pay_answer_with_no_figure_is_not_replayed(env):
+    """Real data (2026-09-15 to 10-21): a degree sentence cached for "What
+    are your salary expectations?" was replayed for every pay question -
+    rejected where the field was numeric, submitted where it was free text."""
+    make, calls, _, _, _ = env
+    question = "What are your salary expectations?"
+    service = make(faq_contents={question: "I have a degree in computer science."})
+    assert service.answer(question, "j1") == ""
+    assert calls == []  # not re-derived either: the figure is the user's to give
+
+
+def test_a_model_pay_answer_with_no_figure_is_no_answer(env):
+    make, _, _, faq_now, _ = env
+    question = "What is your desired fixed (base) salary for this position?"
+    assert make(answer="I have relevant experience.").answer(question, "j1") == ""
+    assert faq_now() == {}
+
+
+def test_yes_no_pay_questions_and_pay_figures_are_left_alone(env):
+    make, _, _, _, _ = env
+    assert make(answer="Yes").answer("Our salary range is $125000-$165000. Does that work for you?", "j1") == "Yes"
+    assert make(answer="Yes").answer("Are you comfortable with the salary outlined in the posting?", "j1") == "Yes"
+    assert make(answer="$90,000").answer("What are your salary expectations?", "j1") == "$90,000"
+
+
 def test_a_per_position_field_is_never_answered(env):
     """Work-history date fields ("Year of From") differ per position - one
     cached answer would be wrong for every other entry."""
