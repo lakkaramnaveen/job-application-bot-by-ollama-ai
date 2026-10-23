@@ -1,5 +1,7 @@
+import pytest
+
 from job_bot.llm.base import LLMProvider
-from job_bot.matching.scorer import score_job_match
+from job_bot.matching.scorer import posting_excludes_candidate, score_job_match
 from job_bot.models.schemas import JobMatchScore
 
 
@@ -194,3 +196,45 @@ def test_system_prompt_covers_missing_qualifications():
     system = provider.calls[0]["system"].lower()
     assert "missing_qualifications" in system
     assert "self-review" in system  # the shared instruction now names all three fields
+
+
+def test_a_required_clearance_fails_eligibility_even_if_the_model_passed_it():
+    """Live (2026-10-22): the model wrote "posting requires active Secret
+    Clearance" in its own reasoning and still returned eligibility='pass'."""
+    provider = FakeProvider(make_score(eligibility="pass", should_apply=True))
+
+    result = score_job_match(
+        provider, resume_text="resume", job_description="Must hold an active Secret clearance. Java, Python."
+    )
+
+    assert result.eligibility == "fail"
+    assert result.eligibility_note == "secret clearance"
+    assert result.should_apply is False
+
+
+@pytest.mark.parametrize(
+    ("description", "needs_visa", "expected"),
+    [
+        ("Candidates must be a U.S. citizen.", False, True),
+        ("US citizenship is required for this role.", False, True),
+        ("Requires TS/SCI clearance with polygraph.", False, True),
+        ("Security clearance required.", False, True),
+        ("We are unable to sponsor visas at this time.", True, True),
+        ("No sponsorship available.", True, True),
+        ("No sponsorship available.", False, False),  # only with NEEDS_VISA_SPONSORSHIP
+        ("No security clearance required.", False, False),
+        ("Clearance not required; must be authorized to work in the US.", False, False),
+        ("We sponsor H-1B and welcome OPT candidates.", True, False),
+        ("Candidates who do not require sponsorship are welcome too.", True, False),
+        ("No C2C. W2 only.", True, False),
+    ],
+)
+def test_posting_excludes_candidate(description, needs_visa, expected):
+    assert bool(posting_excludes_candidate(description, needs_visa)) is expected
+
+
+def test_a_score_made_before_the_posting_phrase_check_is_not_reused():
+    from job_bot.matching.scorer import eligibility_rules_signature
+
+    assert eligibility_rules_signature(2, True, True) == "max_years=2,w2,visa2"
+    assert eligibility_rules_signature(2, True, True) != "max_years=2,w2,visa"

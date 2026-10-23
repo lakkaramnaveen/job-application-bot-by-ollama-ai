@@ -2016,7 +2016,7 @@ def test_run_reuses_a_score_made_under_the_same_eligibility_rules(tmp_path, monk
 
     settings = make_settings(tmp_path, max_years_experience=2, needs_visa_sponsorship=True)
     Tracker(settings.db_path).record_score(
-        JOB.job_id, JOB.title, JOB.company, JOB.url, score=90, should_apply=True, scoring_rules="max_years=2,visa"
+        JOB.job_id, JOB.title, JOB.company, JOB.url, score=90, should_apply=True, scoring_rules="max_years=2,visa2"
     )
     cmd_run(settings, make_args())
 

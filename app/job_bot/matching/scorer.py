@@ -1,5 +1,48 @@
+import re
+
 from job_bot.llm.base import LLMProvider
 from job_bot.models.schemas import JobMatchScore
+
+# Posting language that's a categorical exclusion however it's read: a
+# required clearance or US citizenship (always), and - with
+# needs_visa_sponsorship - a refusal to sponsor. Checked in code after the
+# model, because live (2026-10-22) it wrote "posting requires active Secret
+# Clearance" in its own reasoning and still returned eligibility='pass'.
+# Narrow on purpose (see score_job_match's docstring on why the other
+# rules stay with the model): each is a stock phrase, and a "no"/"not"
+# before "clearance" in the same sentence ("no clearance required") is
+# left to the model.
+_STATUS_REQUIRED_PATTERNS = (
+    re.compile(r"\b(active|current|secret|top secret|ts/sci|ts-sci|dod|government|federal) (security )?clearance\b"),
+    re.compile(r"\bclearance (is )?required\b"),
+    re.compile(r"\b(must|required to) (be|hold) (a )?(u\.s\.|us|united states) citizen(ship)?\b"),
+    re.compile(r"\b(u\.s\.|us|united states) citizenship (is )?required\b"),
+)
+_NO_SPONSORSHIP_PATTERNS = (
+    re.compile(
+        r"\b(unable to|not able to|cannot|can't|will not|won't|do not|does not|are not able to) "
+        r"(provide |offer )?(visa )?sponsor"
+    ),
+    re.compile(r"\bno (visa |h-?1b |work authorization )?sponsorship\b"),
+    re.compile(r"\bsponsorship (is )?not (available|provided|offered)\b"),
+)
+_NEGATED_CLEARANCE = re.compile(r"\b(no|not|without)\b[^.]{0,40}\bclearance\b")
+
+
+def posting_excludes_candidate(job_description: str, needs_visa_sponsorship: bool) -> str:
+    """The posting phrase that rules the candidate out, or "" if none."""
+    text = " ".join(job_description.casefold().split())
+    patterns = _STATUS_REQUIRED_PATTERNS + (_NO_SPONSORSHIP_PATTERNS if needs_visa_sponsorship else ())
+    # A sentence ends at "!", "?", ";" or a period after a word - not the
+    # periods inside "U.S.".
+    for sentence in re.split(r"(?<=[!?;])\s+|(?<=[^.\s]{2}\.)\s+", text):
+        if "clearance" in sentence and _NEGATED_CLEARANCE.search(sentence):
+            continue
+        for pattern in patterns:
+            match = pattern.search(sentence)
+            if match:
+                return match.group(0)
+    return ""
 
 _BASE_SYSTEM_PROMPT = (
     "You are a job-search assistant evaluating how well a candidate's resume "
@@ -142,7 +185,10 @@ def eligibility_rules_signature(
     if require_w2:
         parts.append("w2")
     if needs_visa_sponsorship:
-        parts.append("visa")
+        # "visa2" since posting_excludes_candidate() (2026-10-22): a score
+        # made before it may have passed a no-sponsorship or clearance
+        # posting, so it's made again rather than reused.
+        parts.append("visa2")
     return ",".join(parts)
 
 
@@ -173,6 +219,10 @@ def score_job_match(
     (e.g. "5+ years" in a "nice to have" bullet vs. a hard requirement, or
     "no C2C" being a *good* signal despite containing "C2C") for a
     substring match to get right without a high false-positive rate.
+
+    The one exception is posting_excludes_candidate(): a few stock phrases
+    for a required clearance or citizenship, or a refusal to sponsor, which
+    force eligibility='fail' even when the model passed the posting.
     """
     prompt = (
         "## Candidate resume\n"
@@ -183,6 +233,10 @@ def score_job_match(
     )
     system_prompt = _build_system_prompt(max_years_experience, require_w2, needs_visa_sponsorship)
     result = provider.generate_structured(system=system_prompt, prompt=prompt, schema=JobMatchScore)
+
+    excluded_by = posting_excludes_candidate(job_description, needs_visa_sponsorship)
+    if excluded_by and result.eligibility != "fail":
+        result = result.model_copy(update={"eligibility": "fail", "eligibility_note": excluded_by})
 
     if result.eligibility == "fail" and result.should_apply:
         # Defense in depth: a categorical exclusion (e.g. "must be a US
